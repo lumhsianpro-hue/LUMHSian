@@ -535,33 +535,12 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
   <div class="modal-box" style="max-width:540px">
     <div class="modal-header">
       <span class="modal-title">🤖 AI Tutor</span>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-ghost btn-xs" onclick="aiConversation=[];document.getElementById('aiChatHistory').innerHTML='';showToast('Chat cleared')">🗑 Clear</button>
-        <button class="modal-close" onclick="closeModal('modalAI')">✕</button>
-      </div>
+      <button class="modal-close" onclick="closeModal('modalAI')">✕</button>
     </div>
-    <div style="font-size:11px;color:var(--ink-4);padding:6px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px">
-      Understands English, Roman Urdu, and Urdu · Can analyze images · Ask anything about the MCQ
-    </div>
-    <div id="aiChatHistory" style="min-height:120px;max-height:350px;overflow-y:auto;margin-bottom:10px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth"></div>
-    <!-- Image preview -->
-    <div id="aiImgPreview" style="display:none;margin-bottom:8px">
-      <div style="position:relative;display:inline-block">
-        <img id="aiImgPreviewImg" style="max-height:80px;border-radius:var(--radius-md)">
-        <button onclick="document.getElementById('aiImgInput').value='';document.getElementById('aiImgPreview').style.display='none'" style="position:absolute;top:-6px;right:-6px;background:var(--red);color:white;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:11px">✕</button>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:flex-end">
-      <div style="flex:1">
-        <textarea id="aiUserInput" class="input-field" placeholder="Ask in English, Roman Urdu, or Urdu... (Enter to send)" rows="2" style="border-radius:var(--radius-lg);margin:0;resize:none" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIMsg()}"></textarea>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-        <button class="btn btn-primary btn-sm" style="width:60px" onclick="sendAIMsg()">Send</button>
-        <label id="aiImageUploadBtn" style="display:none" class="btn btn-secondary btn-sm" style="width:60px;cursor:pointer;text-align:center">
-          🖼
-          <input type="file" id="aiImgInput" accept="image/*" style="display:none" onchange="previewAIImage(this)">
-        </label>
-      </div>
+    <div id="aiChatHistory" style="max-height:320px;overflow-y:auto;margin-bottom:12px;display:flex;flex-direction:column;gap:10px"></div>
+    <div class="input-group" style="align-items:flex-end">
+      <textarea id="aiUserInput" class="input-field" placeholder="Ask a follow-up question..." rows="2" style="border-radius:var(--radius-lg);flex:1;margin:0"></textarea>
+      <button class="btn btn-primary btn-sm" style="width:auto;flex-shrink:0" onclick="sendAIMsg()">Send</button>
     </div>
   </div>
 </div>
@@ -754,7 +733,7 @@ function goBack() {
   if (navStack.length > 1) {
     navStack.pop();
     const prev = navStack[navStack.length - 1];
-    if (prev === 'test') { openModal('modalExitTest'); return; }
+    if (prev === 'test') { requestExitTest(); return; }
     const renders = { home: renderHome, profile: renderProfile, stats: renderStats, ranking: renderRanking, search: renderSearch, bookmarks: renderBookmarks, planner: renderPlanner };
     if (renders[prev]) renders[prev]();
     showScreen(prev, false);
@@ -895,6 +874,7 @@ async function doLogin() {
   startHeartbeat();
   requestNotificationPermission();
   loadYearScreen();
+  checkResumableTest();
 }
 
 // showForgotPw defined below with dynamic email from settings
@@ -1124,127 +1104,125 @@ async function renderHome() {
 // ==================== MODULE DETAIL ====================
 async function openModule(moduleId, moduleName, iconUrl, color) {
   showLoading(true, 'Loading module...');
-  try {
-  const [subjectsRes, pastPapersRes, qCountRes] = await Promise.all([
+  const [subjectsRes, papersRes, qCountRes] = await Promise.all([
     db(sb.from('subjects').select('*').eq('module_id', moduleId).order('display_order'), 'Subjects error'),
-    db(sb.from('questions').select('year_id, years(id,name)').eq('module_id', moduleId).not('year_id', 'is', null), 'Past papers error'),
-    sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId).is('year_id', null)
+    db(sb.from('past_papers').select('*').eq('module_id', moduleId).eq('is_active', true).order('display_order'), 'Past papers error'),
+    sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId)
   ]);
   const subjects = subjectsRes.data || [];
-  const totalPracticeQ = qCountRes.count || 0;
+  const papers = papersRes.data || [];
+  const totalQ = qCountRes.count || 0;
   const stats = await getUserStats();
+  showLoading(false);
 
-  // Get unique past papers (by year)
-  const ppMap = {};
-  for (const q of (pastPapersRes.data || [])) {
-    if (q.year_id && q.years) ppMap[q.year_id] = q.years.name;
-  }
-  // Count questions per year
-  const yearIds = Object.keys(ppMap);
-  const ppCountResults = yearIds.length ? await Promise.all(
-    yearIds.map(yid => sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId).eq('year_id', yid))
-  ) : [];
-  const ppCounts = {};
-  yearIds.forEach((yid, i) => { ppCounts[yid] = ppCountResults[i]?.count || 0; });
-
-  // Batch fetch subject q counts
-  const subCountResults = subjects.length ? await Promise.all(
+  // Batch fetch subject counts in parallel
+  const subCountResults = await Promise.all(
     subjects.map(s => sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId).eq('subject_id', s.id))
-  ) : [];
+  );
   const subCounts = {};
-  subjects.forEach((s, i) => { subCounts[s.id] = subCountResults[i]?.count || 0; });
+  subjects.forEach((s, i) => { subCounts[s.id] = subCountResults[i].count || 0; });
+
+  // Batch fetch past paper question counts
+  const ppCountResults = await Promise.all(
+    papers.map(p => sb.from('questions').select('*', { count: 'exact', head: true }).eq('paper_id', p.id))
+  );
+  const ppCounts = {};
+  papers.forEach((p, i) => { ppCounts[p.id] = ppCountResults[i].count || 0; });
 
   let subjectHtml = '';
   for (const s of subjects) {
-    const sCount = subCounts[s.id] || 0;
+    const sCount = subCounts[s.id];
     const sStats = stats.subject_stats?.[`${moduleId}_${s.id}`] || {};
     const sAcc = sStats.total ? Math.round((sStats.correct / sStats.total) * 100) : null;
     subjectHtml += `
-      <div class="list-item" onclick="startTest('practice',${moduleId},'${moduleName.replace(/'/g,"\\'")}',${s.id},null)">
+      <div class="list-item" onclick="startTest('practice',${moduleId},'${moduleName.replace(/'/g,"\\'")}',${s.id},null,null)">
         <div class="list-item-left">
           <div class="list-item-icon">📖</div>
           <div>
             <div class="list-item-title">${s.name}</div>
-            <div class="list-item-sub">${sCount} questions${sAcc !== null ? ` · ${sAcc}% accuracy` : ' · Not started yet'}</div>
-            ${sAcc !== null ? `<div class="progress-track" style="height:3px;margin-top:4px;width:120px"><div class="progress-fill" style="width:${sAcc}%"></div></div>` : ''}
+            <div class="list-item-sub">${sCount || 0} questions${sAcc !== null ? ` · ${sAcc}% last accuracy` : ' · Not started'}</div>
           </div>
         </div>
         <span style="color:var(--ink-4)">›</span>
       </div>`;
   }
 
+  // Past Papers — each gets its own admin-given name (college/uni + year) and TWO clear actions:
+  // "Review" = just browse/view (untimed, no score saved) and "Solve" = real timed graded attempt.
   let pastPaperHtml = '';
-  for (const yid of yearIds) {
-    const pCount = ppCounts[yid] || 0;
+  for (const p of papers) {
+    const pCount = ppCounts[p.id] || 0;
     if (!pCount) continue;
-    const yname = ppMap[yid];
-    const timeStr = `${Math.round(pCount * 1.5)} min`;
+    const pStats = stats.paper_stats?.[p.id] || null;
+    const metaBits = [`${pCount} questions`, `⏱ ~${Math.ceil(pCount * 1.5)} min`];
+    if (p.college_name) metaBits.push(p.college_name);
+    if (p.paper_year) metaBits.push(p.paper_year);
+    const bestLine = pStats ? `<div style="font-size:11px;color:var(--teal-600);font-weight:700;margin-top:3px">🏅 Best score: ${pStats.bestScore}% · ${pStats.attempts} attempt${pStats.attempts > 1 ? 's' : ''}</div>` : '';
     pastPaperHtml += `
-      <div class="card" style="margin-bottom:10px;padding:16px">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-          <div style="width:44px;height:44px;background:linear-gradient(135deg,var(--teal-800),var(--teal-600));border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">📜</div>
-          <div style="flex:1;min-width:0">
-            <div class="fw-700" style="font-size:15px">${yname}</div>
-            <div class="text-xs text-muted">${pCount} MCQs · Timed: ${timeStr} · 1.5 min per question</div>
+      <div class="list-item no-hover" style="flex-direction:column;align-items:stretch;cursor:default">
+        <div class="list-item-left" style="width:100%">
+          <div class="list-item-icon">📜</div>
+          <div style="min-width:0">
+            <div class="list-item-title">${p.title}</div>
+            <div class="list-item-sub">${metaBits.join(' · ')}</div>
+            ${bestLine}
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <button class="btn btn-secondary" onclick="startTest('review',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,${yid})" style="font-size:13px;padding:10px 12px">
-            👁 Review Mode<div style="font-size:11px;color:var(--ink-4);font-weight:400;margin-top:2px">See questions, untimed</div>
-          </button>
-          <button class="btn btn-primary" onclick="startTest('attempt',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,${yid})" style="font-size:13px;padding:10px 12px">
-            ✏️ Attempt Test<div style="font-size:11px;opacity:.8;font-weight:400;margin-top:2px">Timed · Score counted</div>
-          </button>
+        <div class="btn-row mt-2">
+          <button class="btn btn-secondary btn-sm" onclick="startTest('browse',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,${p.id},'${p.title.replace(/'/g,"\\'")}')">👁 Review</button>
+          <button class="btn btn-primary btn-sm" onclick="startTest('attempt',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,${p.id},'${p.title.replace(/'/g,"\\'")}')">📝 Solve</button>
         </div>
       </div>`;
   }
 
-  const totalAllQ = totalPracticeQ + Object.values(ppCounts).reduce((a, b) => a + b, 0);
+  // Mixed practice (all questions)
+  const mixedHtml = `
+    <div class="list-item" onclick="startTest('practice',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,null,null)">
+      <div class="list-item-left">
+        <div class="list-item-icon">🎲</div>
+        <div>
+          <div class="list-item-title">Mixed Practice</div>
+          <div class="list-item-sub">All ${totalQ} questions · Shuffled · Untimed</div>
+        </div>
+      </div>
+      <span class="badge badge-teal">New</span>
+    </div>`;
 
   const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
 
-    <div style="background:linear-gradient(135deg,var(--teal-900),var(--teal-700));border-radius:var(--radius-xl);padding:20px;margin-bottom:16px;color:white;display:flex;align-items:center;gap:14px">
+    <div class="card-teal" style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
       <img src="${iconUrl || 'https://placehold.co/56x56/ffffff/0f7e82?text=📚'}" style="width:56px;height:56px;border-radius:var(--radius-lg);object-fit:cover;background:rgba(255,255,255,.15)" onerror="this.src='https://placehold.co/56x56/ffffff/0f7e82?text=📚'">
       <div>
-        <div style="font-family:var(--font-display);font-size:20px;font-weight:800">${moduleName}</div>
-        <div style="font-size:13px;opacity:.7;margin-top:2px">${totalAllQ} total questions</div>
+        <h2>${moduleName}</h2>
+        <p>${totalQ} total questions</p>
       </div>
     </div>
 
-    ${totalPracticeQ > 0 ? `
-    <div class="section-label">🎯 Practice by Subject</div>
-    ${subjectHtml || `<div class="list-item" onclick="startTest('practice',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,null)">
-      <div class="list-item-left"><div class="list-item-icon">🎲</div><div><div class="list-item-title">Mixed Practice</div><div class="list-item-sub">${totalPracticeQ} questions · Shuffled · Untimed</div></div></div>
-      <span style="color:var(--ink-4)">›</span>
-    </div>`}
-    ` : ''}
+    ${mixedHtml}
 
+    ${subjects.length ? `<div class="section-label">By Subject</div>${subjectHtml}` : ''}
     <div class="section-label">📜 Past Papers</div>
-    ${pastPaperHtml || '<div class="card"><p class="text-muted">No past papers added for this module yet.</p></div>'}
+    ${pastPaperHtml || '<div class="card"><p>No past papers added yet for this module. Check back soon.</p></div>'}
   `;
   showScreen('module');
-  } catch(e) {
-    console.error('openModule error:', e);
-    showToast('Failed to load module. Please try again.');
-  } finally {
-    showLoading(false);
-  }
 }
 
 // ==================== TEST ENGINE ====================
-async function startTest(mode, moduleId, moduleName, subjectId, yearId) {
-  showLoading(true, 'Preparing...');
-  try {
-  let query = sb.from('questions').select('*').eq('module_id', moduleId).eq('is_published', true);
+// Modes:
+//   'attempt'  = real timed graded test (Solve a past paper) → saved to history, resumable if interrupted
+//   'practice' = untimed subject / mixed practice, instant right-or-wrong feedback → saved to history
+//   'browse'   = "just view" review of a past paper, instant feedback, NOT timed, NOT saved as an attempt
+async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle) {
+  showLoading(true, mode === 'browse' ? 'Loading paper for review...' : 'Preparing test...');
+  let query = sb.from('questions').select('*').eq('module_id', moduleId);
   if (subjectId) query = query.eq('subject_id', subjectId);
-  if (yearId) query = query.eq('year_id', yearId);
-  else if (mode !== 'review') query = query.is('year_id', null);
+  if (paperId) query = query.eq('paper_id', paperId);
   const { data: qs } = await db(query, 'Failed to load questions');
-  if (!qs || qs.length === 0) { showToast('No questions in this category yet.'); return; }
+  if (!qs || qs.length === 0) { showLoading(false); showToast('No questions in this category yet.'); return; }
 
-  // practice = shuffled untimed, attempt = ordered timed, review = ordered untimed no-save
+  // Only shuffle free practice — past papers keep their original exam order/numbering
   const questions = mode === 'practice' ? shuffleArray([...qs]) : qs;
   const mapped = questions.map(q => ({
     id: q.id, text: q.text, options: Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]'),
@@ -1254,24 +1232,20 @@ async function startTest(mode, moduleId, moduleName, subjectId, yearId) {
   }));
 
   if (activeTest?.timerInterval) clearInterval(activeTest.timerInterval);
+  clearPersistedTest();
   activeTest = {
     questions: mapped, answers: new Array(mapped.length).fill(null),
     flagged: new Array(mapped.length).fill(false),
+    explanationShown: new Array(mapped.length).fill(false),
     bookmarked: new Set(),
-    currentIndex: 0, mode, moduleId, moduleName, subjectId, yearId,
-    startTime: Date.now(),
-    timeLimit: mode === 'attempt' ? mapped.length * 90 : null,
+    currentIndex: 0, mode, moduleId, moduleName, subjectId, paperId: paperId || null, paperTitle: paperTitle || null,
+    startTime: Date.now(), timeLimit: mode === 'attempt' ? mapped.length * 90 : null,
     timerInterval: null, submitted: false
   };
 
-  if (mode === 'attempt') startTimer();
+  showLoading(false);
+  if (mode === 'attempt') { startTimer(); persistActiveTest(); }
   renderTestScreen();
-  } catch(e) {
-    console.error('startTest error:', e);
-    showToast('Failed to start. Please try again.');
-  } finally {
-    showLoading(false);
-  }
 }
 
 function shuffleArray(arr) {
@@ -1287,13 +1261,71 @@ function startTimer() {
   activeTest.timerInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - activeTest.startTime) / 1000);
     const remaining = activeTest.timeLimit - elapsed;
-    if (remaining <= 0) { clearInterval(activeTest.timerInterval); submitTest(); return; }
+    if (remaining <= 0) { clearInterval(activeTest.timerInterval); showToast('⏰ Time up! Submitting your test...'); submitTest(); return; }
     const el = document.getElementById('timerEl');
-    if (!el) return;
-    const m = Math.floor(remaining / 60), s = remaining % 60;
-    el.textContent = `${m}:${s.toString().padStart(2, '0')}`;
-    el.className = 'timer-display' + (remaining < 120 ? ' warn' : '') + (remaining < 30 ? ' danger' : '');
+    if (el) {
+      const m = Math.floor(remaining / 60), s = remaining % 60;
+      el.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+      el.className = 'timer-display' + (remaining < 120 ? ' warn' : '') + (remaining < 30 ? ' danger' : '');
+    }
+    if (remaining % 10 === 0) persistActiveTest(); // periodic autosave so a refresh/crash never loses the attempt
   }, 1000);
+}
+
+// ==================== RESUME (timed attempts only) ====================
+// If a student closes the app / refreshes mid-attempt, we keep the last known
+// state in localStorage so they can pick up exactly where they left off
+// instead of starting the whole paper over.
+const RESUME_KEY = 'lum_active_attempt';
+function persistActiveTest() {
+  if (!activeTest || activeTest.mode !== 'attempt' || activeTest.submitted) return;
+  try {
+    const snapshot = { ...activeTest, bookmarked: Array.from(activeTest.bookmarked), timerInterval: null };
+    localStorage.setItem(RESUME_KEY, JSON.stringify(snapshot));
+  } catch (e) { /* storage unavailable — fail silently, not critical */ }
+}
+function clearPersistedTest() { localStorage.removeItem(RESUME_KEY); }
+
+function checkResumableTest() {
+  const raw = localStorage.getItem(RESUME_KEY);
+  if (!raw) return;
+  let saved;
+  try { saved = JSON.parse(raw); } catch { clearPersistedTest(); return; }
+  if (!saved || saved.submitted) { clearPersistedTest(); return; }
+  const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
+  if (saved.timeLimit && elapsed >= saved.timeLimit) { clearPersistedTest(); return; }
+  if (elapsed > 6 * 3600) { clearPersistedTest(); return; }
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.85);z-index:10004;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:380px;text-align:center">
+      <div style="font-size:30px;margin-bottom:10px">⏳</div>
+      <h3 style="margin-bottom:6px">Unfinished Test Found</h3>
+      <p style="margin-bottom:18px">You have an in-progress timed attempt for <strong>${saved.paperTitle || saved.moduleName}</strong>. Resume where you left off?</p>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="discardResumableTest(this)">Discard</button>
+        <button class="btn btn-primary" onclick="resumeTest(this)">Resume Test</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  window._resumeSnapshot = saved;
+}
+
+function discardResumableTest(btn) {
+  clearPersistedTest();
+  btn.closest('[style*=fixed]').remove();
+}
+
+function resumeTest(btn) {
+  const saved = window._resumeSnapshot;
+  btn.closest('[style*=fixed]').remove();
+  if (!saved) return;
+  activeTest = { ...saved, bookmarked: new Set(saved.bookmarked || []), timerInterval: null, submitted: false };
+  startTimer();
+  renderTestScreen();
+  showScreen('test');
+  showToast('⏳ Test resumed');
 }
 
 function renderTestScreen() {
@@ -1302,53 +1334,41 @@ function renderTestScreen() {
   const total = t.questions.length;
   const answered = t.answers.filter(a => a !== null).length;
   const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const userAns = t.answers[t.currentIndex];
+  const isInstantFeedback = t.mode === 'practice' || t.mode === 'browse'; // reveal correctness as soon as the student taps an option
 
-  // Timer / mode badge
-  let timerHtml = '';
+  // Header mode indicator
+  let modeLabelHtml = '';
   if (t.mode === 'attempt') {
-    const rem = Math.max(0, t.timeLimit - Math.floor((Date.now() - t.startTime) / 1000));
-    const m = Math.floor(rem / 60), s = rem % 60;
-    timerHtml = `<div class="timer-display" id="timerEl">${m}:${s.toString().padStart(2,'0')}</div>`;
-  } else if (t.mode === 'review') {
-    timerHtml = `<span class="badge badge-amber" style="font-size:12px;padding:6px 14px">👁 Review</span>`;
+    const rem = t.timeLimit - Math.floor((Date.now() - t.startTime) / 1000);
+    const m = Math.max(0, Math.floor(rem / 60)), s = Math.max(0, rem % 60);
+    modeLabelHtml = `<div class="timer-display" id="timerEl">${m}:${s.toString().padStart(2, '0')}</div>`;
+  } else if (t.mode === 'browse') {
+    modeLabelHtml = `<span class="badge badge-amber" style="font-size:12px;padding:6px 14px">👁 Review Mode</span>`;
   } else {
-    timerHtml = `<span class="badge badge-teal" style="font-size:12px;padding:6px 14px">🎯 Practice</span>`;
+    modeLabelHtml = `<span class="badge badge-teal" style="font-size:12px;padding:6px 14px">Practice Mode</span>`;
   }
 
+  // Image
   const imgHtml = q.imageUrl ? `<img src="${q.imageUrl}" style="max-width:100%;border-radius:var(--radius-lg);margin-top:12px;display:block" onerror="this.style.display='none'">` : '';
 
   // Options
-  let optHtml = '';
-  if (t.mode === 'review') {
-    const revealed = userAns !== null;
-    optHtml = q.options.map((opt, idx) => {
-      let cls = 'opt-btn', icon = '';
-      if (revealed) {
-        if (idx === q.answer) { cls += ' correct'; icon = '✓ '; }
-        else if (idx === userAns && userAns !== q.answer) { cls += ' wrong'; icon = '✗ '; }
-      }
-      return `<button class="${cls}" onclick="selectOption(${idx})" ${revealed ? 'disabled' : ''}>
-        <span class="opt-letter">${letters[idx]}</span><span>${icon}${opt}</span></button>`;
-    }).join('');
-  } else if (t.mode === 'practice') {
-    optHtml = q.options.map((opt, idx) => {
-      let cls = 'opt-btn', icon = '';
-      if (userAns !== null) {
-        if (idx === q.answer) { cls += ' correct'; icon = '✓ '; }
-        else if (idx === userAns && userAns !== q.answer) { cls += ' wrong'; icon = '✗ '; }
-      } else if (idx === userAns) cls += ' selected';
-      return `<button class="${cls}" onclick="selectOption(${idx})" ${userAns !== null ? 'disabled' : ''}>
-        <span class="opt-letter">${letters[idx]}</span><span>${icon}${opt}</span></button>`;
-    }).join('');
-  } else {
-    optHtml = q.options.map((opt, idx) =>
-      `<button class="opt-btn${idx === userAns ? ' selected' : ''}" onclick="selectOption(${idx})">
-        <span class="opt-letter">${letters[idx]}</span><span>${opt}</span></button>`
-    ).join('');
-  }
+  const userAns = t.answers[t.currentIndex];
+  const optHtml = q.options.map((opt, idx) => {
+    let cls = 'opt-btn';
+    let icon = '';
+    if (isInstantFeedback && userAns !== null) {
+      if (idx === q.answer) { cls += ' correct'; icon = '✓ '; }
+      else if (idx === userAns) { cls += ' wrong'; icon = '✗ '; }
+    } else {
+      if (idx === userAns) cls += ' selected';
+    }
+    return `<button class="${cls}" onclick="selectOption(${idx})" ${isInstantFeedback && userAns !== null ? 'disabled' : ''}>
+      <span class="opt-letter">${letters[idx]}</span>
+      <span>${icon}${opt}</span>
+    </button>`;
+  }).join('');
 
-  // Q nav
+  // Q nav grid — answered/marked questions show dark, current is highlighted, flagged shows separately
   const navHtml = t.questions.map((_, i) => {
     let cls = 'qnav-btn';
     if (i === t.currentIndex) cls += ' current';
@@ -1357,86 +1377,122 @@ function renderTestScreen() {
     return `<button class="${cls}" onclick="jumpToQ(${i})">${i + 1}</button>`;
   }).join('');
 
-  // Explanation
+  // Explanation — hidden by default, shown only when the student taps "Show Explanation"
   let expHtml = '';
-  const showExp = (t.mode === 'practice' || t.mode === 'review') && userAns !== null;
-  if (showExp) {
+  if (isInstantFeedback && userAns !== null) {
     const correct = userAns === q.answer;
+    const shown = !!t.explanationShown[t.currentIndex];
     const expImgHtml = q.expImageUrl ? `<img src="${q.expImageUrl}" style="max-width:100%;border-radius:var(--radius-md);margin-top:10px" onerror="this.style.display='none'">` : '';
-    expHtml = `<div class="explanation-box show">
-      <div class="exp-label">${correct ? '✅ Correct!' : '❌ Wrong · Correct: ' + q.options[q.answer]}</div>
-      ${q.explanation ? `<div style="color:var(--ink-2);line-height:1.7;font-size:14px">${q.explanation}</div>` : '<div style="color:var(--ink-4);font-size:13px">No explanation added yet.</div>'}
-      ${expImgHtml}
-      <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Ask AI Tutor</button>
-    </div>`;
-  } else if (t.mode === 'review') {
-    expHtml = `<div style="text-align:center;padding:12px;color:var(--ink-4);font-size:13px">👆 Tap an option to reveal the answer and explanation</div>`;
+    expHtml = `
+      <div class="explanation-box show">
+        <div class="flex-between" style="gap:8px">
+          <div class="exp-label" style="margin-bottom:0">${correct ? '✅ Correct!' : '❌ Incorrect · Correct answer: ' + q.options[q.answer]}</div>
+          <button class="btn btn-ghost btn-xs" style="flex-shrink:0" onclick="toggleExplanationView()">${shown ? '🙈 Hide' : '👁 Show'}</button>
+        </div>
+        ${shown ? `
+          <div style="margin-top:10px;color:var(--ink-2);line-height:1.6">${q.explanation || '<span style="color:var(--ink-4)">No explanation added yet.</span>'}</div>
+          ${expImgHtml}
+          <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>
+        ` : ''}
+      </div>`;
   }
 
   const isFlagged = t.flagged[t.currentIndex];
   const isBookmarked = t.bookmarked.has(t.currentIndex);
-  const isLastQ = t.currentIndex === total - 1;
+  const onLastQ = t.currentIndex === total - 1;
+
+  // Inline next/finish button (changes label only on the last question)
+  let primaryBtnHtml;
+  if (!onLastQ) {
+    primaryBtnHtml = `<button class="btn btn-primary" style="width:auto;padding:11px 20px" onclick="testNext()">Next →</button>`;
+  } else if (t.mode === 'attempt') {
+    primaryBtnHtml = `<button class="btn btn-primary" style="width:auto;padding:11px 20px" onclick="confirmSubmitTest()">✓ Submit</button>`;
+  } else if (t.mode === 'practice') {
+    primaryBtnHtml = `<button class="btn btn-primary" style="width:auto;padding:11px 20px" onclick="confirmSubmitTest()">✓ Finish</button>`;
+  } else {
+    primaryBtnHtml = `<button class="btn btn-primary" style="width:auto;padding:11px 20px" onclick="finishBrowseReview()">✓ Finish</button>`;
+  }
+
+  // Always-visible finish row, so a student can end the session at any question, not just the last one
+  let finishRowHtml;
+  if (t.mode === 'attempt') finishRowHtml = `<button class="btn btn-primary" style="margin-bottom:16px" onclick="confirmSubmitTest()">✓ Submit Test</button>`;
+  else if (t.mode === 'practice') finishRowHtml = `<button class="btn btn-secondary" style="margin-bottom:16px" onclick="confirmSubmitTest()">✓ Finish &amp; See Results</button>`;
+  else finishRowHtml = `<button class="btn btn-secondary" style="margin-bottom:16px" onclick="finishBrowseReview()">✓ Finish Review</button>`;
 
   document.getElementById('testPageWrap').innerHTML = `
-    <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:10px 14px;margin:-12px -14px 16px;position:sticky;top:0;z-index:100">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <div style="font-size:11px;font-weight:700;color:var(--ink-4);text-transform:uppercase;letter-spacing:.5px">${t.moduleName}</div>
-          <div style="font-size:14px;font-weight:700;margin-top:1px">Q${t.currentIndex+1}<span style="color:var(--ink-4);font-weight:400"> / ${total}</span>${t.mode!=='review'?` · <span style="color:var(--teal-600)">${answered} answered</span>`:''}</div>
-        </div>
-        ${timerHtml}
+    <!-- Header -->
+    <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:12px 14px;margin:-12px -14px 16px;position:sticky;top:0;z-index:100;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:12px;font-weight:700;color:var(--ink-4);text-transform:uppercase;letter-spacing:.5px">${t.paperTitle || t.moduleName}</div>
+        <div style="font-size:14px;font-weight:700;margin-top:2px">Q${t.currentIndex + 1} <span style="color:var(--ink-4);font-weight:500">/ ${total}</span> · <span style="color:var(--teal-600)">${answered} ${isInstantFeedback ? 'viewed' : 'answered'}</span></div>
       </div>
-      <div class="progress-track" style="margin-top:8px;margin-bottom:0"><div class="progress-fill" style="width:${((t.currentIndex+1)/total)*100}%"></div></div>
+      ${modeLabelHtml}
     </div>
 
+    <!-- Progress -->
+    <div class="progress-track" style="margin-bottom:16px">
+      <div class="progress-fill" style="width:${(answered / total) * 100}%"></div>
+    </div>
+
+    <!-- Question -->
     <div class="card-elevated" style="margin-bottom:14px">
-      <div style="font-size:15px;font-weight:600;line-height:1.7;color:var(--ink)">${q.text}</div>
+      <div style="font-size:15px;font-weight:600;line-height:1.6;color:var(--ink)">${q.text}</div>
       ${imgHtml}
     </div>
 
-    <div id="optionsArea">${optHtml}</div>
+    <!-- Options -->
+    <div id="optionsArea">
+      ${optHtml}
+    </div>
+
     ${expHtml}
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 10px">
-      <button class="btn btn-secondary btn-sm" onclick="toggleFlag()" style="flex:1">${isFlagged ? '🚩 Flagged' : '📌 Flag'}</button>
-      ${t.mode!=='review'?`<button class="btn btn-secondary btn-sm" onclick="bookmarkQuestion()" style="flex:1">${isBookmarked ? '🔖 Saved' : '📖 Bookmark'}</button>`:''}
+    <!-- Action row -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:16px 0">
+      <button class="btn btn-secondary btn-sm" onclick="toggleFlag()" style="flex:1">
+        ${isFlagged ? '🚩 Flagged' : '📌 Flag for Review'}
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="bookmarkQuestion()" style="flex:1">
+        ${isBookmarked ? '🔖 Bookmarked' : '📖 Bookmark'}
+      </button>
     </div>
 
-    <div class="flex-between" style="margin-bottom:14px">
-      <button class="btn btn-secondary" style="width:auto;padding:11px 18px" onclick="testPrev()" ${t.currentIndex===0?'disabled':''}>← Prev</button>
-      <button class="btn btn-secondary" style="width:auto;padding:11px 14px;color:var(--red);border-color:var(--red)" onclick="openModal('modalExitTest')">✕ Exit</button>
-      ${isLastQ
-        ? (t.mode==='attempt'
-            ? `<button class="btn btn-primary" style="width:auto;padding:11px 18px" onclick="submitTest()">Submit ✓</button>`
-            : `<button class="btn btn-primary" style="width:auto;padding:11px 18px" onclick="openModal('modalExitTest')">Finish</button>`)
-        : `<button class="btn btn-primary" style="width:auto;padding:11px 18px" onclick="testNext()">Next →</button>`
-      }
+    <!-- Nav buttons -->
+    <div class="flex-between" style="margin-bottom:16px">
+      <button class="btn btn-secondary" style="width:auto;padding:11px 20px" onclick="testPrev()" ${t.currentIndex === 0 ? 'disabled' : ''}>← Prev</button>
+      <button class="btn btn-danger" style="width:auto;padding:11px 16px" onclick="requestExitTest()">Exit</button>
+      ${primaryBtnHtml}
     </div>
 
-    ${t.mode==='attempt'?`<button class="btn btn-primary w-full" style="margin-bottom:16px" onclick="submitTest()">✓ Submit Test Now</button>`:''}
+    ${finishRowHtml}
 
+    <!-- Q Nav Grid -->
     <div class="card">
-      <div style="font-size:11px;font-weight:700;color:var(--ink-4);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Question Navigator</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-        <span class="qnav-btn answered" style="cursor:default;font-size:10px;width:auto;padding:0 8px;height:26px">✓ Done</span>
-        <span class="qnav-btn review" style="cursor:default;font-size:10px;width:auto;padding:0 8px;height:26px">📌 Flagged</span>
-        <span class="qnav-btn" style="cursor:default;font-size:10px;width:auto;padding:0 8px;height:26px">— Pending</span>
+      <div style="font-size:12px;font-weight:700;color:var(--ink-4);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Question Navigator <span style="font-weight:500;text-transform:none">(tap a number to jump)</span></div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <span class="qnav-btn answered" style="cursor:default;font-size:10px;width:auto;padding:0 8px">${isInstantFeedback ? 'Viewed' : 'Answered'}</span>
+        <span class="qnav-btn review" style="cursor:default;font-size:10px;width:auto;padding:0 8px">Flagged</span>
+        <span class="qnav-btn" style="cursor:default;font-size:10px;width:auto;padding:0 8px">${isInstantFeedback ? 'Not viewed' : 'Unanswered'}</span>
       </div>
       <div class="qnav-grid">${navHtml}</div>
     </div>
   `;
+
   showScreen('test');
 }
 
-
 function selectOption(idx) {
-  if (activeTest.submitted) return;
-  const cur = activeTest.answers[activeTest.currentIndex];
-  // practice: once answered, locked
-  if (activeTest.mode === 'practice' && cur !== null) return;
-  // review: once answered (revealed), locked
-  if (activeTest.mode === 'review' && cur !== null) return;
-  activeTest.answers[activeTest.currentIndex] = idx;
+  if (!activeTest || activeTest.submitted) return;
+  const t = activeTest;
+  const isInstantFeedback = t.mode === 'practice' || t.mode === 'browse';
+  if (isInstantFeedback && t.answers[t.currentIndex] !== null) return; // already revealed — locked
+  t.answers[t.currentIndex] = idx;
+  if (t.mode === 'attempt') persistActiveTest();
+  renderTestScreen();
+}
+
+function toggleExplanationView() {
+  activeTest.explanationShown[activeTest.currentIndex] = !activeTest.explanationShown[activeTest.currentIndex];
   renderTestScreen();
 }
 
@@ -1444,14 +1500,47 @@ function testPrev() { if (activeTest.currentIndex > 0) { activeTest.currentIndex
 function testNext() { if (activeTest.currentIndex < activeTest.questions.length - 1) { activeTest.currentIndex++; renderTestScreen(); } }
 function jumpToQ(i) { activeTest.currentIndex = i; renderTestScreen(); }
 function toggleFlag() { activeTest.flagged[activeTest.currentIndex] = !activeTest.flagged[activeTest.currentIndex]; renderTestScreen(); }
+
+function requestExitTest() {
+  const t = activeTest;
+  const msgEl = document.querySelector('#modalExitTest p');
+  if (msgEl) {
+    msgEl.textContent = t?.mode === 'attempt'
+      ? 'Your answers so far are auto-saved — you can resume this timed test later from exactly where you left off. Exit now?'
+      : 'Your progress in this session will be lost (it was not a graded attempt). Are you sure you want to exit?';
+  }
+  openModal('modalExitTest');
+}
+
+function confirmSubmitTest() {
+  const t = activeTest;
+  const unanswered = t.answers.filter(a => a === null).length;
+  if (unanswered > 0) {
+    showConfirm(`You have <strong>${unanswered}</strong> unanswered question${unanswered > 1 ? 's' : ''}. Submit anyway?`, submitTest, t.mode === 'attempt' ? 'Submit' : 'Finish', false);
+  } else {
+    submitTest();
+  }
+}
+
+// "Just viewing" a past paper — no timer, no score saved. Gives a quick informal tally and exits.
+function finishBrowseReview() {
+  const t = activeTest;
+  if (t.timerInterval) clearInterval(t.timerInterval);
+  let correct = 0, wrong = 0;
+  t.questions.forEach((q, i) => {
+    const a = t.answers[i];
+    if (a !== null) { if (a === q.answer) correct++; else wrong++; }
+  });
+  const viewed = correct + wrong;
+  showToast(`📖 Review complete — viewed ${viewed}/${t.questions.length} · ✅ ${correct} right · ❌ ${wrong} wrong`, 4500);
+  activeTest = null;
+  renderHome(); showScreen('home');
+}
+
 function forceExitTest() {
   if (activeTest?.timerInterval) clearInterval(activeTest.timerInterval);
-  const mid = activeTest?.moduleId;
-  const mname = activeTest?.moduleName;
-  activeTest = null;
-  closeModal('modalExitTest');
-  if (mid && mname) { openModule(mid, mname, null, null); }
-  else { renderHome(); showScreen('home'); }
+  if (activeTest?.mode === 'attempt') persistActiveTest(); // save latest progress so it can be resumed later
+  activeTest = null; closeModal('modalExitTest'); renderHome(); showScreen('home');
 }
 
 async function bookmarkQuestion() {
@@ -1472,9 +1561,10 @@ async function bookmarkQuestion() {
 
 // ==================== SUBMIT & RESULTS ====================
 async function submitTest() {
-  if (activeTest.submitted) return;
+  if (!activeTest || activeTest.submitted) return;
   activeTest.submitted = true;
   if (activeTest.timerInterval) clearInterval(activeTest.timerInterval);
+  if (activeTest.mode === 'attempt') clearPersistedTest();
 
   let correct = 0, wrong = 0, skipped = 0;
   for (let i = 0; i < activeTest.questions.length; i++) {
@@ -1484,137 +1574,123 @@ async function submitTest() {
     else wrong++;
   }
   const total = activeTest.questions.length;
-  const percent = Math.round((correct / total) * 100);
+  const attempted = correct + wrong;
+  const percent = total ? Math.round((correct / total) * 100) : 0;        // score: correct out of ALL questions
+  const accuracy = attempted ? Math.round((correct / attempted) * 100) : 0; // accuracy: correct out of ATTEMPTED only
   const timeTaken = Math.floor((Date.now() - activeTest.startTime) / 1000);
   const mins = Math.floor(timeTaken / 60), secs = timeTaken % 60;
   const timeStr = `${mins}m ${secs}s`;
 
-  // Only save stats for attempt and practice modes, NOT review
-  if (activeTest.mode !== 'review') {
-    const stats = await getUserStats();
-    stats.total_tests = (stats.total_tests || 0) + 1;
-    stats.total_questions = (stats.total_questions || 0) + total;
-    stats.total_correct = (stats.total_correct || 0) + correct;
-    stats.best_score = Math.max(stats.best_score || 0, percent);
+  // Save stats
+  const stats = await getUserStats();
+  stats.total_tests = (stats.total_tests || 0) + 1;
+  stats.total_questions = (stats.total_questions || 0) + total;
+  stats.total_correct = (stats.total_correct || 0) + correct;
+  stats.best_score = Math.max(stats.best_score || 0, percent);
 
-    if (!stats.subject_stats) stats.subject_stats = {};
-    const moduleKey = activeTest.moduleId.toString();
-    if (!stats.subject_stats[moduleKey]) stats.subject_stats[moduleKey] = { total: 0, correct: 0 };
-    stats.subject_stats[moduleKey].total += total;
-    stats.subject_stats[moduleKey].correct += correct;
+  // Module/subject-level stats
+  if (!stats.subject_stats) stats.subject_stats = {};
+  const moduleKey = (activeTest.moduleId || 'none').toString();
+  if (!stats.subject_stats[moduleKey]) stats.subject_stats[moduleKey] = { total: 0, correct: 0 };
+  stats.subject_stats[moduleKey].total += total;
+  stats.subject_stats[moduleKey].correct += correct;
 
-    if (activeTest.subjectId) {
-      const subKey = `${activeTest.moduleId}_${activeTest.subjectId}`;
-      if (!stats.subject_stats[subKey]) stats.subject_stats[subKey] = { total: 0, correct: 0 };
-      stats.subject_stats[subKey].total += total;
-      stats.subject_stats[subKey].correct += correct;
-    }
-
-    const today = new Date().toDateString();
-    const lastDate = stats.last_practice_date;
-    if (lastDate !== today) {
-      const yesterday = new Date(Date.now() - 86400000).toDateString();
-      stats.streak = (lastDate === yesterday) ? (stats.streak || 0) + 1 : 1;
-      stats.last_practice_date = today;
-    }
-
-    const history = stats.history || [];
-    history.unshift({
-      date: new Date().toLocaleDateString(), module: activeTest.moduleName,
-      mode: activeTest.mode,
-      type: activeTest.yearId ? 'Past Paper' : (activeTest.subjectId ? 'Subject Practice' : 'Mixed Practice'),
-      percent, correct, wrong, skipped, total, timeTaken
-    });
-    stats.history = history.slice(0, 60);
-    await saveUserStats(stats);
+  if (activeTest.subjectId) {
+    const subKey = `${activeTest.moduleId}_${activeTest.subjectId}`;
+    if (!stats.subject_stats[subKey]) stats.subject_stats[subKey] = { total: 0, correct: 0 };
+    stats.subject_stats[subKey].total += total;
+    stats.subject_stats[subKey].correct += correct;
   }
 
-  // Performance tier
-  const tier = percent >= 90 ? {
-    emoji: '🏆', title: 'Outstanding Performance!',
-    msg: 'Exceptional work — you\'re in the top percentile. Your preparation is clearly paying off.',
-    color: '#059669', bg: 'linear-gradient(135deg,#064e3b,#065f46)'
-  } : percent >= 75 ? {
-    emoji: '🌟', title: 'Excellent Result!',
-    msg: 'Great job — you have a strong grasp of this topic. Keep up the consistency.',
-    color: '#0f7e82', bg: 'linear-gradient(135deg,#042f2e,#0f4c4e)'
-  } : percent >= 60 ? {
-    emoji: '👍', title: 'Good Effort!',
-    msg: 'You\'re on the right track. A focused review of your wrong answers will push you higher.',
-    color: '#0284c7', bg: 'linear-gradient(135deg,#0c2a42,#0369a1)'
-  } : percent >= 45 ? {
-    emoji: '📖', title: 'Needs Improvement',
-    msg: 'This topic needs more attention. Review the explanations carefully and try again.',
-    color: '#d97706', bg: 'linear-gradient(135deg,#3b2200,#92400e)'
-  } : {
-    emoji: '💪', title: 'Keep Going!',
-    msg: 'Don\'t be discouraged — every attempt is a learning opportunity. Study the material and retry.',
-    color: '#dc2626', bg: 'linear-gradient(135deg,#3b0000,#991b1b)'
-  };
+  // Past-paper-level stats (best score + attempt count per paper)
+  if (activeTest.paperId) {
+    if (!stats.paper_stats) stats.paper_stats = {};
+    const pKey = activeTest.paperId.toString();
+    const prev = stats.paper_stats[pKey] || { attempts: 0, bestScore: 0 };
+    stats.paper_stats[pKey] = { attempts: (prev.attempts || 0) + 1, bestScore: Math.max(prev.bestScore || 0, percent) };
+  }
 
-  const speedPerQ = total > 0 ? Math.round(timeTaken / total) : 0;
-  const testType = activeTest.yearId ? 'Past Paper' : activeTest.subjectId ? 'Subject Practice' : 'Mixed Practice';
-  const isReview = activeTest.mode === 'review';
+  // Streak
+  const today = new Date().toDateString();
+  const lastDate = stats.last_practice_date;
+  if (lastDate !== today) {
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    stats.streak = (lastDate === yesterday) ? (stats.streak || 0) + 1 : 1;
+    stats.last_practice_date = today;
+  }
+
+  // History
+  const sessionType = activeTest.paperId ? 'Past Paper' : (activeTest.subjectId ? 'Subject Practice' : 'Mixed Practice');
+  const history = stats.history || [];
+  history.unshift({
+    date: new Date().toLocaleDateString(), module: activeTest.moduleName,
+    label: activeTest.paperTitle || activeTest.moduleName, type: sessionType,
+    percent, accuracy, correct, wrong, skipped, total, timeTaken, questions: activeTest.questions.length
+  });
+  stats.history = history.slice(0, 60);
+  await saveUserStats(stats);
+
+  // Tiered performance message — phrased professionally like real exam-prep apps
+  let tier;
+  if (percent >= 85) tier = { emoji: '🏆', title: 'Outstanding!', msg: "Excellent work — you've really mastered this material. Keep up this level of preparation.", color: 'var(--green)' };
+  else if (percent >= 70) tier = { emoji: '🚀', title: 'Great Job!', msg: "You're performing well. A bit more revision and you'll be at the next level.", color: 'var(--teal-600)' };
+  else if (percent >= 50) tier = { emoji: '👍', title: 'Good Effort', msg: "You're on the right track. Go through your mistakes and keep practicing consistently.", color: 'var(--teal-600)' };
+  else if (percent >= 35) tier = { emoji: '📖', title: 'Needs Improvement', msg: 'Review the explanations carefully and revise the weaker topics before your next attempt.', color: 'var(--amber)' };
+  else tier = { emoji: '💪', title: 'Poor Performance — Needs Improvement', msg: "Don't be discouraged. Go through every explanation and try again — consistent practice will get you there.", color: 'var(--red)' };
+
+  const headingText = activeTest.mode === 'attempt' ? 'Test Submitted' : 'Practice Complete';
+  const subLabel = activeTest.paperTitle || (activeTest.subjectId ? activeTest.moduleName + ' · Subject Practice' : activeTest.moduleName + ' · Mixed Practice');
 
   document.getElementById('resultsPageWrap').innerHTML = `
-    <div style="background:${tier.bg};border-radius:var(--radius-xl);padding:28px 20px;text-align:center;color:white;margin-bottom:16px">
-      <div style="font-size:56px;margin-bottom:8px">${tier.emoji}</div>
-      <div style="font-family:var(--font-display);font-size:52px;font-weight:800;line-height:1;color:white">${percent}%</div>
-      <div style="font-size:18px;font-weight:700;margin-top:6px">${tier.title}</div>
-      <div style="font-size:13px;opacity:.75;margin-top:10px;line-height:1.6;max-width:280px;margin-left:auto;margin-right:auto">${tier.msg}</div>
-      <div style="font-size:12px;opacity:.55;margin-top:8px">${activeTest.moduleName} · ${testType}${isReview ? ' · 👁 Review (not saved)' : ''}</div>
+    <div class="card-teal text-center" style="padding:32px 24px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.7;margin-bottom:6px">${headingText}</div>
+      <div style="font-size:52px;margin-bottom:8px">${tier.emoji}</div>
+      <div style="font-family:var(--font-display);font-size:48px;font-weight:800;line-height:1">${percent}%</div>
+      <div style="font-size:16px;margin-top:4px;opacity:.92;font-weight:700">${tier.title}</div>
+      <div style="font-size:13px;margin-top:10px;opacity:.85;line-height:1.5">${tier.msg}</div>
+      <div style="font-size:12px;margin-top:10px;opacity:.6">${subLabel}</div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
-      <div class="stat-box"><div class="stat-val" style="color:#10b981">${correct}</div><div class="stat-key">✅ Correct</div></div>
-      <div class="stat-box"><div class="stat-val" style="color:#ef4444">${wrong}</div><div class="stat-key">❌ Wrong</div></div>
-      <div class="stat-box"><div class="stat-val" style="color:var(--ink-4)">${skipped}</div><div class="stat-key">⏭ Skipped</div></div>
-    </div>
-
-    <div class="card" style="margin-bottom:8px">
-      <div class="flex-between mb-2"><span class="text-sm">⏱ Total Time</span><strong>${timeStr}</strong></div>
-      <div class="flex-between mb-2"><span class="text-sm">⚡ Avg per Question</span><strong>${speedPerQ}s</strong></div>
-      <div class="flex-between mb-2"><span class="text-sm">📊 Questions Attempted</span><strong>${correct + wrong} / ${total}</strong></div>
-      <div class="flex-between">
-        <span class="text-sm">🎯 Accuracy</span>
-        <strong style="color:${tier.color}">${correct + wrong > 0 ? Math.round((correct/(correct+wrong))*100) : 0}%</strong>
+    <div class="stat-grid" style="margin-top:12px">
+      <div class="stat-box">
+        <div class="stat-val" style="color:var(--green)">${correct}</div>
+        <div class="stat-key">✅ Correct</div>
       </div>
-      <div class="progress-track" style="margin-top:10px">
-        <div class="progress-fill" style="width:${percent}%;background:${tier.color}"></div>
+      <div class="stat-box">
+        <div class="stat-val" style="color:var(--red)">${wrong}</div>
+        <div class="stat-key">❌ Wrong</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val" style="color:var(--ink-4)">${skipped}</div>
+        <div class="stat-key">⏭ Skipped</div>
       </div>
     </div>
 
-    <button class="btn btn-primary w-full mt-2" onclick="startReview()">🔍 Review All Answers</button>
-    ${wrong > 0 ? `<button class="btn btn-secondary w-full mt-2" onclick="reviewWrongOnly()">❌ Review Wrong Only (${wrong})</button>` : ''}
-    ${!isReview ? `<button class="btn btn-ghost w-full mt-2" onclick="openAITutor('My result: ${correct}/${total} (${percent}%) in ${activeTest.moduleName}. Wrong: ${wrong}, Skipped: ${skipped}.','Give me a focused study plan to improve my weak areas.')">🤖 AI Study Tips</button>` : ''}
-    <button class="btn btn-secondary w-full mt-2" onclick="openModule(${activeTest.moduleId},'${(activeTest.moduleName||'').replace(/'/g,"\\'")}',null,null)">🔁 Back to Module</button>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-val" style="color:var(--teal-700)">${accuracy}%</div>
+        <div class="stat-key">🎯 Accuracy</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val" style="color:var(--teal-700)">${timeStr}</div>
+        <div class="stat-key">⏱ Time Taken</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val" style="color:var(--teal-700)">${total}</div>
+        <div class="stat-key">📊 Total Qs</div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary mt-3" onclick="startReview()">🔍 Review Your Test</button>
+    <button class="btn btn-secondary mt-2" onclick="renderHome(); showScreen('home')">🏠 Back to Home</button>
+    <button class="btn btn-ghost mt-1" onclick="openAITutor('Summarize my performance: ${correct} correct out of ${total} (${percent}% score, ${accuracy}% accuracy) in ${(activeTest.paperTitle || activeTest.moduleName).replace(/'/g,"\\'")}','Provide tips to improve my weak areas')">🤖 AI Performance Tip</button>
   `;
   showScreen('results');
 }
 
-
 // ==================== REVIEW ====================
 function startReview() {
-  window.reviewState = {
-    questions: activeTest.questions,
-    answers: activeTest.answers,
-    currentIndex: 0,
-    wrongOnly: false
-  };
-  renderReview();
-  showScreen('review');
-}
-
-function reviewWrongOnly() {
-  const wrongIdxs = activeTest.answers.map((a, i) => (a !== activeTest.questions[i].answer ? i : -1)).filter(i => i >= 0);
-  const wrongQs = wrongIdxs.map(i => activeTest.questions[i]);
-  const wrongAns = wrongIdxs.map(i => activeTest.answers[i]);
-  window.reviewState = {
-    questions: wrongQs,
-    answers: wrongAns,
-    currentIndex: 0,
-    wrongOnly: true
-  };
+  window.reviewState = { questions: activeTest.questions, answers: activeTest.answers, currentIndex: 0, label: activeTest.paperTitle || activeTest.moduleName };
   renderReview();
   showScreen('review');
 }
@@ -1624,73 +1700,60 @@ function renderReview() {
   const q = rs.questions[rs.currentIndex];
   const userAns = rs.answers[rs.currentIndex];
   const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const isCorrect = userAns === q.answer;
-  const isSkipped = userAns === null;
-
   const imgHtml = q.imageUrl ? `<img src="${q.imageUrl}" style="max-width:100%;border-radius:var(--radius-lg);margin-top:10px" onerror="this.style.display='none'">` : '';
   const expImgHtml = q.expImageUrl ? `<img src="${q.expImageUrl}" style="max-width:100%;border-radius:var(--radius-md);margin-top:10px" onerror="this.style.display='none'">` : '';
 
   const optHtml = q.options.map((opt, idx) => {
-    let cls = 'opt-btn', badge = '';
-    if (idx === q.answer) { cls += ' correct'; badge = ' ✓'; }
-    else if (idx === userAns && !isCorrect) { cls += ' wrong'; badge = ' ✗'; }
+    let cls = 'opt-btn';
+    if (idx === q.answer) cls += ' correct';
+    else if (idx === userAns && userAns !== q.answer) cls += ' wrong';
     return `<button class="${cls}" disabled>
       <span class="opt-letter">${letters[idx]}</span>
-      <span>${opt}${badge}</span>
+      <span>${opt}</span>
     </button>`;
   }).join('');
 
-  const navHtml = rs.questions.map((rq, i) => {
+  const navHtml = rs.questions.map((_, i) => {
     const a = rs.answers[i];
     let cls = 'qnav-btn';
     if (i === rs.currentIndex) cls += ' current';
     else if (a === null) cls += '';
-    else if (a === rq.answer) cls += ' answered';
+    else if (a === rs.questions[i].answer) cls += ' answered';
     else cls += ' review';
     return `<button class="${cls}" onclick="reviewJump(${i})">${i + 1}</button>`;
   }).join('');
 
-  const resultBadge = isSkipped
-    ? `<div style="background:var(--surface-3);border:1px solid var(--border);border-radius:var(--radius-md);padding:8px 14px;margin-bottom:12px;font-size:13px;font-weight:600;color:var(--ink-4)">⏭ Skipped — no answer selected</div>`
-    : isCorrect
-    ? `<div style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);border-radius:var(--radius-md);padding:8px 14px;margin-bottom:12px;font-size:13px;font-weight:600;color:#10b981">✅ You got this correct!</div>`
-    : `<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--radius-md);padding:8px 14px;margin-bottom:12px;font-size:13px;font-weight:600;color:#ef4444">❌ Your answer: ${q.options[userAns] || '—'}</div>`;
-
   document.getElementById('reviewPageWrap').innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back to Results</button>
-
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <span class="badge ${rs.wrongOnly ? 'badge-amber' : 'badge-teal'}">${rs.wrongOnly ? '❌ Wrong Only' : '🔍 Full Review'}</span>
-      <div style="font-size:14px;font-weight:700">Q${rs.currentIndex+1} <span style="color:var(--ink-4);font-weight:400">/ ${rs.questions.length}</span></div>
+    <div class="flex-between" style="margin-bottom:12px">
+      <div><span class="badge badge-teal">Reviewing: ${rs.label}</span></div>
+      <div style="font-size:14px;font-weight:700">Q${rs.currentIndex + 1} / ${rs.questions.length}</div>
     </div>
 
-    <div class="card-elevated" style="margin-bottom:12px">
-      <div style="font-size:15px;font-weight:600;line-height:1.7;color:var(--ink)">${q.text}</div>
+    <div class="card-elevated" style="margin-bottom:14px">
+      <div style="font-size:15px;font-weight:600;line-height:1.6">${q.text}</div>
       ${imgHtml}
     </div>
 
     ${optHtml}
-    ${resultBadge}
+
+    ${userAns === null ? '<div class="badge badge-amber" style="margin-bottom:12px">⏭ This question was skipped</div>' : (userAns === q.answer ? '<div class="badge badge-green" style="margin-bottom:12px">✅ You answered correctly</div>' : '<div class="badge badge-red" style="margin-bottom:12px">❌ You answered incorrectly</div>')}
+
 
     <div class="explanation-box show">
       <div class="exp-label">✅ Correct Answer: ${q.options[q.answer]}</div>
-      ${q.explanation ? `<div style="color:var(--ink-2);line-height:1.7;font-size:14px">${q.explanation}</div>` : '<div style="color:var(--ink-4);font-size:13px">No explanation added yet.</div>'}
+      ${q.explanation ? `<div style="color:var(--ink-2);line-height:1.6">${q.explanation}</div>` : '<div style="color:var(--ink-4)">No explanation yet.</div>'}
       ${expImgHtml}
-      <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Ask AI Tutor</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>
     </div>
 
     <div class="flex-between" style="margin:16px 0">
-      <button class="btn btn-secondary" style="width:auto;padding:11px 18px" onclick="reviewPrev()" ${rs.currentIndex===0?'disabled':''}>← Prev</button>
-      <button class="btn btn-primary" style="width:auto;padding:11px 18px" onclick="${rs.currentIndex < rs.questions.length-1 ? 'reviewNext()' : "showScreen('results')"}">${rs.currentIndex < rs.questions.length-1 ? 'Next →' : '✓ Done'}</button>
+      <button class="btn btn-secondary" style="width:auto" onclick="reviewPrev()" ${rs.currentIndex === 0 ? 'disabled' : ''}>← Prev</button>
+      <button class="btn btn-primary" style="width:auto" onclick="${rs.currentIndex < rs.questions.length - 1 ? 'reviewNext()' : "showScreen('results')"}">${rs.currentIndex < rs.questions.length - 1 ? 'Next →' : 'Finish'}</button>
     </div>
 
     <div class="card">
-      <div style="font-size:11px;font-weight:700;color:var(--ink-4);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Jump to Question</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-        <span class="qnav-btn answered" style="cursor:default;font-size:10px;width:auto;padding:0 8px;height:26px">✓ Correct</span>
-        <span class="qnav-btn review" style="cursor:default;font-size:10px;width:auto;padding:0 8px;height:26px">✗ Wrong</span>
-        <span class="qnav-btn" style="cursor:default;font-size:10px;width:auto;padding:0 8px;height:26px">— Skipped</span>
-      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--ink-4);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Jump to Question</div>
       <div class="qnav-grid">${navHtml}</div>
     </div>
   `;
@@ -1701,69 +1764,15 @@ function reviewNext() { if (window.reviewState.currentIndex < window.reviewState
 function reviewJump(i) { window.reviewState.currentIndex = i; renderReview(); }
 
 // ==================== AI TUTOR ====================
-function onAIProviderChange(provider) {
-  const urlField = document.getElementById('set_ai_url');
-  const modelField = document.getElementById('set_ai_model');
-  if (!urlField) return;
-  const defaults = {
-    deepseek: { url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-    openai:   { url: 'https://api.openai.com/v1', model: 'gpt-4o' },
-    gemini:   { url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-1.5-pro' },
-    custom:   { url: '', model: '' }
-  };
-  if (defaults[provider]) {
-    if (urlField) urlField.value = defaults[provider].url;
-    if (modelField) modelField.value = defaults[provider].model;
-  }
-}
-
-async function saveAISettings() {
-  const provider = document.getElementById('ai_provider')?.value;
-  const url = document.getElementById('set_ai_url')?.value.trim();
-  const key = document.getElementById('set_ai_key')?.value.trim();
-  const model = document.getElementById('set_ai_model')?.value.trim();
-  const prompt = document.getElementById('set_ai_prompt')?.value.trim();
-  await Promise.all([
-    saveSetting('ai_provider', provider),
-    saveSetting('ai_api_url', url),
-    saveSetting('ai_api_key', key),
-    saveSetting('ai_model', model),
-    saveSetting('ai_system_prompt', prompt)
-  ]);
-  showToast('✅ AI settings saved!');
-}
-
-async function testAIConnection() {
-  showToast('Testing AI connection...');
-  const key = (await getSetting('ai_api_key')) || localStorage.getItem('deepseek_api_key');
-  const url = (await getSetting('ai_api_url')) || 'https://api.deepseek.com/v1';
-  const model = (await getSetting('ai_model')) || 'deepseek-chat';
-  if (!key) { showToast('❌ No API key set'); return; }
-  try {
-    const res = await fetch(`${url}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with just: AI connected successfully.' }], max_tokens: 20 })
-    });
-    const data = await res.json();
-    if (data.choices?.[0]) showToast('✅ AI connected: ' + data.choices[0].message.content.substring(0, 40));
-    else showToast('⚠️ Response issue: ' + JSON.stringify(data).substring(0, 60));
-  } catch(e) { showToast('❌ Connection failed: ' + e.message); }
-}
-
-function openAITutor(questionText, explanation, imageUrl = null) {
-  currentAIContext = { questionText, explanation, imageUrl };
+function openAITutor(questionText, explanation) {
+  currentAIContext = { questionText, explanation };
   aiConversation = [];
   document.getElementById('aiChatHistory').innerHTML = '';
-  // Show image upload button in modal if vision enabled
-  const visionEnabled = window._settingsCache?.ai_vision_enabled === 'true';
-  const uploadBtn = document.getElementById('aiImageUploadBtn');
-  if (uploadBtn) uploadBtn.style.display = visionEnabled ? 'block' : 'none';
   openModal('modalAI');
-  const systemCtx = questionText
-    ? `I'm studying this MCQ:\n\nQuestion: ${questionText}${explanation ? '\n\nOfficial explanation: ' + explanation : ''}${imageUrl ? '\n\n[Question has an image attached]' : ''}\n\nPlease explain this clearly for a 2nd year MBBS student.`
-    : null;
-  if (systemCtx) callAI(systemCtx, true);
+  const userMsg = explanation
+    ? `Explain this MCQ for a 2nd year MBBS student:\n\nQuestion: ${questionText}\n\nOfficial explanation: ${explanation}\n\nGive a clear, concise explanation in simple language.`
+    : `Explain this MCQ for a 2nd year MBBS student:\n\nQuestion: ${questionText}\n\nGive a clear, concise explanation.`;
+  callAI(userMsg, true);
 }
 
 async function sendAIMsg() {
@@ -1771,109 +1780,55 @@ async function sendAIMsg() {
   const msg = input.value.trim();
   if (!msg) return;
   input.value = '';
-  const imgInput = document.getElementById('aiImgInput');
-  const imgFile = imgInput?.files?.[0];
-
-  if (imgFile) {
-    // Handle image upload for vision
-    appendAIMsg('user', msg + ' [image attached]');
-    const reader = new FileReader();
-    reader.onload = async e => {
-      const b64 = e.target.result.split(',')[1];
-      const mime = imgFile.type || 'image/jpeg';
-      const fullMsg = currentAIContext
-        ? `MCQ context: "${currentAIContext.questionText}". Student sends image and asks: ${msg}`
-        : msg;
-      await callAI(fullMsg, false, [{ type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } }]);
-      imgInput.value = '';
-    };
-    reader.readAsDataURL(imgFile);
-  } else {
-    const fullMsg = currentAIContext
-      ? `MCQ context: "${currentAIContext.questionText}". ${currentAIContext.explanation ? 'Official explanation: ' + currentAIContext.explanation + '. ' : ''}Student asks: ${msg}`
-      : msg;
-    appendAIMsg('user', msg);
-    callAI(fullMsg, false);
-  }
+  const fullMsg = currentAIContext
+    ? `Context - MCQ: "${currentAIContext.questionText}". ${currentAIContext.explanation ? 'Official explanation: ' + currentAIContext.explanation + '.' : ''}\n\nStudent asks: ${msg}`
+    : msg;
+  appendAIMsg('user', msg);
+  callAI(fullMsg, false);
 }
 
 function appendAIMsg(role, text) {
   const container = document.getElementById('aiChatHistory');
   const div = document.createElement('div');
-  div.style.cssText = `padding:12px 14px;border-radius:var(--radius-lg);font-size:14px;line-height:1.7;max-width:92%;white-space:pre-wrap;word-break:break-word;${role==='user'?'background:var(--teal-600);color:white;align-self:flex-end;margin-left:auto':'background:var(--surface-3);border:1px solid var(--border);color:var(--ink)'}`;
+  div.style.cssText = `padding:12px 14px;border-radius:var(--radius-lg);font-size:14px;line-height:1.6;max-width:90%;${role === 'user' ? 'background:var(--teal-600);color:white;align-self:flex-end;margin-left:auto' : 'background:var(--surface-3);border:1px solid var(--border);color:var(--ink)'}`;
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
 
-async function callAI(userPrompt, showThinking = false, imageContent = null) {
-  const container = document.getElementById('aiChatHistory');
-  if (!container) return;
-
+async function callAI(userPrompt, showThinking = false) {
   if (showThinking) {
     const thinkDiv = document.createElement('div');
     thinkDiv.id = 'aiThinking';
     thinkDiv.style.cssText = 'padding:12px 14px;border-radius:var(--radius-lg);font-size:14px;background:var(--surface-3);border:1px solid var(--border);color:var(--ink-4);display:flex;align-items:center;gap:8px';
     thinkDiv.innerHTML = '<div class="spinner" style="width:18px;height:18px;border-width:2px"></div>AI is thinking...';
-    container.appendChild(thinkDiv);
-    container.scrollTop = container.scrollHeight;
+    document.getElementById('aiChatHistory').appendChild(thinkDiv);
+    document.getElementById('aiChatHistory').scrollTop = document.getElementById('aiChatHistory').scrollHeight;
   }
 
-  // Get settings — prefer Supabase settings, fallback to localStorage
-  const apiUrl  = (window._settingsCache?.ai_api_url  || localStorage.getItem('ai_api_url')  || 'https://api.deepseek.com/v1').replace(/\/$/, '');
-  const apiKey  =  window._settingsCache?.ai_api_key  || localStorage.getItem('deepseek_api_key') || '';
-  const model   =  window._settingsCache?.ai_model    || localStorage.getItem('ai_model')    || 'deepseek-chat';
-  const sysProm =  window._settingsCache?.ai_system_prompt || 'You are an expert MBBS tutor for Pakistani medical students. When students write in Roman Urdu, reply in the same style. Be clear, concise, and encouraging.';
-
-  if (!apiKey) {
-    document.getElementById('aiThinking')?.remove();
-    const key = window.prompt('Enter your DeepSeek/AI API key:');
-    if (key) { localStorage.setItem('deepseek_api_key', key); callAI(userPrompt, false, imageContent); }
-    else appendAIMsg('ai', '❌ API key required. Ask admin to set it in Settings → AI Tutor, or add yours in Profile.');
-    return;
+  let key = localStorage.getItem('deepseek_api_key');
+  if (!key) {
+    key = window.prompt('Enter your DeepSeek API key (stored locally only):');
+    if (key) localStorage.setItem('deepseek_api_key', key);
+    else { document.getElementById('aiThinking')?.remove(); appendAIMsg('ai', '❌ API key required. Set it in Profile → Settings.'); return; }
   }
 
-  // Build message content
-  let userContent;
-  if (imageContent) {
-    userContent = [{ type: 'text', text: userPrompt }, ...imageContent];
-  } else {
-    userContent = userPrompt;
-  }
-
-  aiConversation.push({ role: 'user', content: userContent });
-
-  // Keep conversation short (last 10 turns)
-  const msgs = aiConversation.slice(-10);
-  const payload = {
-    model,
-    messages: [{ role: 'system', content: sysProm }, ...msgs],
-    temperature: 0.6,
-    max_tokens: 1200,
-    stream: false
-  };
-
+  aiConversation.push({ role: 'user', content: userPrompt });
   try {
-    const res = await fetch(`${apiUrl}/chat/completions`, {
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: aiConversation, temperature: 0.6, max_tokens: 800 })
+
     });
     const data = await res.json();
     document.getElementById('aiThinking')?.remove();
     if (data.choices?.[0]) {
-      const reply = data.choices[0].message?.content || '';
+      const reply = data.choices[0].message.content;
       aiConversation.push({ role: 'assistant', content: reply });
       appendAIMsg('ai', reply);
-    } else if (data.error) {
-      appendAIMsg('ai', `❌ API Error: ${data.error.message || JSON.stringify(data.error)}`);
-    } else {
-      appendAIMsg('ai', '⚠️ No response received. Check your API key and URL in admin settings.');
-    }
-  } catch(e) {
-    document.getElementById('aiThinking')?.remove();
-    appendAIMsg('ai', `❌ Connection failed: ${e.message}. Check the API URL in admin settings.`);
-  }
+    } else { appendAIMsg('ai', '⚠️ No response. Check your API key.'); }
+  } catch (e) { document.getElementById('aiThinking')?.remove(); appendAIMsg('ai', '❌ Network error. Check connection.'); }
 }
 
 // ==================== STATS ====================
@@ -2187,9 +2142,9 @@ async function renderProfile() {
       <span style="color:var(--ink-4)">›</span>
     </div>
 
-    <div class="section-label">App Settings</div>
+    <div class="section-label">App</div>
     <div class="list-item no-hover" onclick="setAIKey()">
-      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">Personal AI Key</div><div class="list-item-sub">${window._settingsCache?.ai_api_key ? '🌐 Global key active (set by admin)' : localStorage.getItem('deepseek_api_key') ? '✅ Personal key set' : 'Not set — tap to add your own'}</div></div></div>
+      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor Key</div><div class="list-item-sub">${localStorage.getItem('deepseek_api_key') ? '✅ Key set' : 'Not set — tap to add'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
     <div class="list-item no-hover" onclick="toggleDarkMode()">
@@ -2572,7 +2527,7 @@ async function adminOverview() {
   const [usersRes, statsRes, qRes, subRes, modRes] = await Promise.all([
     db(sb.from('users').select('joined,gender,college,last_active,is_banned'), 'Users error'),
     db(sb.from('user_stats').select('total_tests,total_questions,total_correct,streak,history'), 'Stats error'),
-    db(sb.from('questions').select('module_id,subject_id,year_id'), 'Q error'),
+    db(sb.from('questions').select('module_id,subject_id'), 'Q error'),
     db(sb.from('subjects').select('id,name'), 'Subjects error'),
     db(sb.from('modules').select('id,name'), 'Modules error')
   ]);
@@ -2834,80 +2789,50 @@ async function adminViewStudentDetail(email) {
   const u = allStudentsData.find(s => s.email === email);
   if (!u) return;
   const s = u.stats || {};
-  const history = (s.history || []).slice(0, 15);
+  const history = (s.history || []).slice(0, 10);
   const avatar = u.gender === 'female' ? '👩‍⚕️' : '👨‍⚕️';
-  const acc = s.total_questions ? Math.round((s.total_correct / s.total_questions) * 100) : 0;
-  const wrong = (s.total_questions || 0) - (s.total_correct || 0);
-  const now = Date.now();
-  const isOnline = u.last_active > now - 300000;
-
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.85);z-index:10002;display:flex;align-items:center;justify-content:center;padding:12px;backdrop-filter:blur(8px)';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);width:100%;max-width:460px;max-height:92vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,.4)">
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:0;width:100%;max-width:440px;max-height:90vh;overflow-y:auto">
       <!-- Header -->
-      <div style="background:linear-gradient(135deg,#042f2e,#0f4c4e);border-radius:var(--radius-xl) var(--radius-xl) 0 0;padding:24px;text-align:center;color:white;position:relative">
-        <button onclick="this.closest('[style*=position:fixed]').remove()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,.15);border:none;color:white;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:18px;line-height:32px">✕</button>
-        <div style="font-size:56px;margin-bottom:8px">${u.profile_image ? `<img src="${u.profile_image}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.3)">` : avatar}</div>
-        <div style="font-size:20px;font-weight:800;font-family:var(--font-display)">${u.name}</div>
-        <div style="font-size:12px;opacity:.65;margin-top:2px">${u.email}</div>
-        <div style="margin-top:10px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap">
-          ${isOnline ? '<span style="background:rgba(5,150,105,.4);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🟢 Online Now</span>' : ''}
-          <span style="background:rgba(255,255,255,.15);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🏫 ${u.college||'Unknown'}</span>
-          <span style="background:rgba(255,255,255,.15);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">${u.gender==='female'?'👩 Female':'👨 Male'}</span>
-          ${u.year_of_study ? `<span style="background:rgba(255,255,255,.15);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">📚 ${u.year_of_study}</span>` : ''}
-          ${u.is_banned ? '<span style="background:rgba(220,38,38,.5);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🚫 Banned</span>' : '<span style="background:rgba(5,150,105,.3);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">✅ Active</span>'}
+      <div style="background:linear-gradient(135deg,var(--teal-800),var(--teal-600));border-radius:var(--radius-xl) var(--radius-xl) 0 0;padding:24px;text-align:center;color:white;position:relative">
+        <button onclick="this.closest('[style*=fixed]').remove()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px">✕</button>
+        <div style="font-size:52px;margin-bottom:8px">${avatar}</div>
+        <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">${u.name}</div>
+        <div style="font-size:12px;opacity:.7;margin-top:2px">${u.email}</div>
+        <div style="margin-top:8px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap">
+          <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🏫 ${u.college||'Unknown'}</span>
+          <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">${u.gender==='female'?'👩‍⚕️ Female':'👨‍⚕️ Male'}</span>
+          ${u.is_banned ? '<span style="background:rgba(220,38,38,.4);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🚫 Banned</span>' : '<span style="background:rgba(5,150,105,.3);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">✅ Active</span>'}
         </div>
       </div>
-
-      <div style="padding:18px">
-        <!-- Stats Grid -->
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
-          <div class="stat-box"><div class="stat-val" style="color:var(--teal-600)">${acc}%</div><div class="stat-key">Accuracy</div></div>
-          <div class="stat-box"><div class="stat-val">${s.total_tests||0}</div><div class="stat-key">Tests</div></div>
-          <div class="stat-box"><div class="stat-val" style="color:#10b981">${s.best_score||0}%</div><div class="stat-key">Best Score</div></div>
-          <div class="stat-box"><div class="stat-val">${s.total_questions||0}</div><div class="stat-key">Questions</div></div>
-          <div class="stat-box"><div class="stat-val" style="color:#10b981">${s.total_correct||0}</div><div class="stat-key">✅ Correct</div></div>
-          <div class="stat-box"><div class="stat-val" style="color:#ef4444">${wrong}</div><div class="stat-key">❌ Wrong</div></div>
+      <!-- Body -->
+      <div style="padding:20px">
+        <!-- Stats -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
+          <div class="stat-box"><div class="stat-val">${u.acc}%</div><div class="stat-key">Accuracy</div></div>
+          <div class="stat-box"><div class="stat-val">${s?.total_tests||0}</div><div class="stat-key">Tests</div></div>
+          <div class="stat-box"><div class="stat-val">${s?.best_score||0}%</div><div class="stat-key">Best</div></div>
+          <div class="stat-box"><div class="stat-val">${s?.total_questions||0}</div><div class="stat-key">Questions</div></div>
+          <div class="stat-box"><div class="stat-val">${s?.total_correct||0}</div><div class="stat-key">Correct</div></div>
+          <div class="stat-box"><div class="stat-val">${s?.streak||0}🔥</div><div class="stat-key">Streak</div></div>
         </div>
-
         <!-- Info -->
         <div class="card" style="margin-bottom:12px;padding:14px">
-          <div class="fw-600 mb-2">👤 Account Details</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-            <div class="text-xs"><span class="text-muted">Joined:</span> <strong>${u.joined ? new Date(u.joined).toLocaleDateString('en-PK') : 'N/A'}</strong></div>
-            <div class="text-xs"><span class="text-muted">Last Active:</span> <strong>${u.last_active ? timeAgo(u.last_active) : 'Never'}</strong></div>
-            <div class="text-xs"><span class="text-muted">Streak:</span> <strong>${s.streak||0} 🔥</strong></div>
-            <div class="text-xs"><span class="text-muted">Screen:</span> <strong>${u.current_screen||'N/A'}</strong></div>
-            ${u.phone ? `<div class="text-xs"><span class="text-muted">Phone:</span> <strong>${u.phone}</strong></div>` : ''}
-            ${u.enrollment_number ? `<div class="text-xs"><span class="text-muted">Enrollment:</span> <strong>${u.enrollment_number}</strong></div>` : ''}
-            <div class="text-xs"><span class="text-muted">Leaderboard:</span> <strong>${u.show_on_leaderboard ? '✅ Visible' : '🔒 Hidden'}</strong></div>
-          </div>
+          <div class="text-xs text-muted mb-1">📅 Joined: <strong>${u.joined ? new Date(u.joined).toLocaleDateString() : 'N/A'}</strong></div>
+          <div class="text-xs text-muted mb-1">⏰ Last active: <strong>${timeAgo(u.last_active)}</strong></div>
+          <div class="text-xs text-muted">📺 Last screen: <strong>${u.current_screen || 'N/A'}</strong></div>
         </div>
-
-        <!-- Recent tests -->
-        ${history.length ? `
-        <div class="card" style="padding:14px;margin-bottom:12px">
-          <div class="fw-600 mb-2">📜 Recent Test History</div>
-          ${history.map(h => `
-            <div class="flex-between" style="padding:6px 0;border-bottom:1px solid var(--border)">
-              <div>
-                <div style="font-size:12px;font-weight:600">${h.module||'Unknown Module'}</div>
-                <div style="font-size:11px;color:var(--ink-4)">${h.mode||'practice'} · ${h.date||''}</div>
-              </div>
-              <div style="text-align:right">
-                <div style="font-size:14px;font-weight:700;color:${h.percent>=60?'#10b981':h.percent>=40?'#d97706':'#ef4444'}">${h.percent||0}%</div>
-                <div style="font-size:11px;color:var(--ink-4)">${h.correct||0}/${h.total||0}</div>
-              </div>
-            </div>`).join('')}
-        </div>` : '<div class="card" style="padding:14px;margin-bottom:12px"><p class="text-muted text-xs text-center">No test history yet</p></div>'}
-
-        <!-- Admin Actions -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <button class="btn btn-secondary btn-sm" onclick="adminResetPassword('${u.email}')">🔑 Reset Password</button>
-          <button class="btn ${u.is_banned?'btn-secondary':'btn-danger'} btn-sm" onclick="adminToggleBan('${u.email}',${u.is_banned})">${u.is_banned?'✅ Unban':'🚫 Ban User'}</button>
-          <button class="btn btn-secondary btn-sm" onclick="adminDeleteUser('${u.email}')">🗑 Delete Account</button>
-          <button class="btn btn-ghost btn-sm" onclick="this.closest('[style*=position:fixed]').remove()">✕ Close</button>
+        ${history.length ? `<div class="card" style="padding:14px;margin-bottom:12px">
+          <div class="fw-600 mb-2">📜 Recent Tests</div>
+          ${history.map(h=>`<div class="flex-between mb-1"><span class="text-xs">${h.module||''}</span><span class="text-xs text-muted">${h.date} · <strong>${h.percent}%</strong></span></div>`).join('')}
+        </div>` : ''}
+        <!-- Actions -->
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-sm" onclick="adminResetPassword('${u.email}')">🔑 Reset PW</button>
+          <button class="btn ${u.is_banned?'btn-secondary':'btn-danger'} btn-sm" onclick="adminToggleBan('${u.email}',${u.is_banned})">${u.is_banned?'✅ Unban':'🚫 Ban'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="this.closest('[style*=fixed]').remove()">Close</button>
         </div>
       </div>
     </div>`;
@@ -2974,40 +2899,34 @@ function exportStudentsCSV() {
 }
 
 // ==================== CONTENT TAB ====================
-// Unified Content Manager state
-window._cm = { yearId: null, yearName: '', moduleId: null, moduleName: '' };
-
 async function adminCourses() {
   document.getElementById('adminContent').innerHTML = `
-    <div class="tab-bar" id="contentTabBar">
-      <button class="tab-btn active" onclick="adminContentTab('years',this)" id="tabBtnYears">📅 Years</button>
-      <button class="tab-btn" onclick="adminContentTab('modules',this)" id="tabBtnModules">📦 Modules</button>
-      <button class="tab-btn" onclick="adminContentTab('mapping',this)" id="tabBtnMapping">🔗 Year↔Module</button>
-      <button class="tab-btn" onclick="adminContentTab('subjects',this)" id="tabBtnSubjects">📖 Subjects</button>
-      <button class="tab-btn" onclick="adminContentTab('questions',this)" id="tabBtnQuestions">❓ Questions</button>
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="adminContentTab('years',this)">📅 Years</button>
+      <button class="tab-btn" onclick="adminContentTab('modules',this)">📦 Modules</button>
+      <button class="tab-btn" onclick="adminContentTab('mapping',this)">🔗 Year↔Module</button>
     </div>
     <div id="contentTabBody"></div>`;
-  adminContentTab('years', document.getElementById('tabBtnYears'));
+  adminContentTab('years', document.querySelector('.tab-bar .tab-btn'));
 }
 
-// Keep adminContent as alias
-async function adminContent() { return adminCourses(); }
+async function adminContent() {
+  document.getElementById('adminContent').innerHTML = `
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="adminContentTab('subjects',this)">📖 Subjects</button>
+      <button class="tab-btn" onclick="adminContentTab('papers',this)">📜 Past Papers</button>
+      <button class="tab-btn" onclick="adminContentTab('questions',this)">❓ Questions</button>
+    </div>
+    <div id="contentTabBody"></div>`;
+  adminContentTab('subjects', document.querySelector('.tab-bar .tab-btn'));
+}
 
 function adminContentTab(tab, btn) {
-  document.querySelectorAll('#contentTabBar .tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
-  const fns = { years: adminYears, modules: adminModules, mapping: adminYearModules, subjects: adminSubjects, questions: adminQuestions };
+  const fns = { years: adminYears, modules: adminModules, mapping: adminYearModules, subjects: adminSubjects, papers: adminPastPapers, questions: adminQuestions };
   if (fns[tab]) fns[tab]();
 }
-
-// Called from module list — sets context and opens subjects tab
-function adminOpenModuleContent(moduleId, moduleName) {
-  window._cm.moduleId = moduleId;
-  window._cm.moduleName = moduleName;
-  showToast(`📖 Now managing: ${moduleName}`);
-  adminContentTab('subjects', document.getElementById('tabBtnSubjects'));
-}
-
 
 // --- YEARS CRUD ---
 async function adminYears() {
@@ -3106,19 +3025,6 @@ async function adminDeleteYear(id) {
 // --- MODULES CRUD ---
 async function adminModules() {
   const { data: modules } = await db(sb.from('modules').select('*').order('name'), 'Modules error');
-
-  // Get question counts per module
-  const qCounts = {};
-  const sCounts = {};
-  if (modules?.length) {
-    const [qRes, sRes] = await Promise.all([
-      sb.from('questions').select('module_id'),
-      sb.from('subjects').select('module_id')
-    ]);
-    (qRes.data || []).forEach(q => { qCounts[q.module_id] = (qCounts[q.module_id] || 0) + 1; });
-    (sRes.data || []).forEach(s => { sCounts[s.module_id] = (sCounts[s.module_id] || 0) + 1; });
-  }
-
   const list = (modules || []).map(m => `
     <div class="admin-row">
       <div class="admin-row-left" style="display:flex;align-items:center;gap:10px">
@@ -3126,40 +3032,31 @@ async function adminModules() {
         <div>
           <div class="fw-700">${m.name}</div>
           <div class="text-xs text-muted">${m.description || 'No description'}</div>
-          <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
-            <span class="chip" style="font-size:10px">📖 ${sCounts[m.id]||0} subjects</span>
-            <span class="chip" style="font-size:10px">❓ ${qCounts[m.id]||0} questions</span>
-            ${m.color ? `<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${m.color};vertical-align:middle"></span>` : ''}
-          </div>
+          ${m.color ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${m.color};margin-top:4px"></span>` : ''}
         </div>
       </div>
       <div class="admin-row-actions">
-        <button class="btn btn-primary btn-xs" onclick="adminOpenModuleContent(${m.id},'${m.name.replace(/'/g,"\\'")}')">📝 Add Content</button>
         <button class="btn btn-secondary btn-xs" onclick="adminEditModule(${m.id})">✏️ Edit</button>
         <button class="btn btn-danger btn-xs" onclick="adminDeleteModule(${m.id})">🗑</button>
       </div>
     </div>`).join('');
 
   document.getElementById('contentTabBody').innerHTML = `
-    ${window._cm.moduleId ? `<div style="background:var(--teal-900);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--teal-100)">
-      📝 Active context: <strong>${window._cm.moduleName}</strong> — go to <strong>Subjects</strong> or <strong>Questions</strong> tab to add content
-      <button class="btn btn-ghost btn-xs" style="margin-left:8px" onclick="window._cm={yearId:null,yearName:'',moduleId:null,moduleName:''};showToast('Context cleared')">✕ Clear</button>
-    </div>` : ''}
     <div class="card" style="margin-bottom:12px">
       <div class="fw-700 mb-3">➕ Add Module</div>
       <label class="input-label">Module Name</label>
       <input id="m_name" class="input-field" placeholder="e.g., Anatomy">
       <label class="input-label">Description</label>
       <input id="m_desc" class="input-field" placeholder="Brief description">
-      <label class="input-label">Category</label>
+      <label class="input-label">Category <span class="text-xs text-muted">(for future multi-department support)</span></label>
       <select id="m_category" class="input-field" title="Module category" aria-label="Module category">
         <option value="mbbs">🩺 MBBS</option>
         <option value="bds">🦷 BDS (Future)</option>
         <option value="mdcat">📝 MDCAT (Future)</option>
         <option value="other">📚 Other</option>
       </select>
-      <label class="input-label">Accent Color</label>
-      <input id="m_color" type="color" class="input-field" title="Module color" aria-label="Module color" style="height:44px;padding:4px 12px" value="#0f7e82">
+      <label class="input-label">Accent Color (for UI)</label>
+      <input id="m_color" type="color" class="input-field" title="Module accent color" aria-label="Module accent color" style="height:44px;padding:4px 12px" value="#0f7e82">
       <label class="input-label">Module Image</label>
       <div class="upload-area" onclick="document.getElementById('m_img_file').click()">
         <div style="font-size:32px">📸</div>
@@ -3172,7 +3069,6 @@ async function adminModules() {
       <button class="btn btn-primary" onclick="adminAddModule()">Add Module</button>
     </div>
     <div class="fw-700 mb-2">📦 Existing Modules</div>
-    <div class="text-xs text-muted mb-2">Tap "Add Content" on any module to manage its subjects and questions.</div>
     ${list || '<div class="card"><p class="text-muted">No modules yet.</p></div>'}`;
 }
 
@@ -3247,9 +3143,10 @@ async function adminEditModule(id) {
 }
 
 async function adminDeleteModule(id) {
-  showConfirm('Delete this module?<br><small>All subjects and questions inside will also be permanently deleted.</small>', async () => {
+  showConfirm('Delete this module?<br><small>All subjects, past papers and questions inside will also be permanently deleted.</small>', async () => {
     await db(sb.from('questions').delete().eq('module_id', id), 'Q delete failed');
     await db(sb.from('subjects').delete().eq('module_id', id), 'Sub delete failed');
+    await db(sb.from('past_papers').delete().eq('module_id', id), 'Papers delete failed');
     await db(sb.from('year_modules').delete().eq('module_id', id), 'Mapping delete failed');
     await db(sb.from('modules').delete().eq('id', id), 'Module delete failed');
     showToast('Module deleted'); adminModules();
@@ -3317,22 +3214,15 @@ async function adminRemoveMapping(id) {
 async function adminSubjects() {
   const { data: modules } = await db(sb.from('modules').select('id,name').order('name'), 'Modules error');
   const mList = modules || [];
-
-  // If a module is selected in context, show only that module's subjects
-  const activeModId = window._cm.moduleId;
-  const activeModName = window._cm.moduleName;
-
   let subHtml = '';
-  const displayMods = activeModId ? mList.filter(m => m.id == activeModId) : mList;
-  for (const m of displayMods) {
+  for (const m of mList) {
     const { data: subs } = await db(sb.from('subjects').select('*').eq('module_id', m.id).order('display_order'), 'Subs error');
     const { count: qCount } = await sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', m.id);
     subHtml += `<div class="card" style="margin-bottom:10px">
       <div class="flex-between mb-2">
         <div class="fw-700">📦 ${m.name}</div>
-        <span class="badge badge-teal">${qCount || 0} Qs</span>
+        <span class="badge badge-teal">${qCount || 0} questions</span>
       </div>
-      ${(subs || []).length === 0 ? '<p class="text-muted text-xs">No subjects yet.</p>' : ''}
       ${(subs || []).map(s => `
         <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
           <span class="text-sm fw-600">${s.name} <span class="text-xs text-muted">(order ${s.display_order || '?'})</span></span>
@@ -3345,17 +3235,11 @@ async function adminSubjects() {
   }
 
   document.getElementById('contentTabBody').innerHTML = `
-    ${activeModId ? `<div style="background:var(--teal-900);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--teal-100)">
-      📦 Adding subjects to: <strong>${activeModName}</strong>
-      <button class="btn btn-ghost btn-xs" style="margin-left:8px" onclick="window._cm.moduleId=null;window._cm.moduleName='';adminSubjects()">Show All</button>
-    </div>` : `<div style="background:var(--surface-3);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--ink-4)">
-      💡 Tip: Go to <strong>Modules tab → Add Content</strong> to auto-select a module
-    </div>`}
     <div class="card" style="margin-bottom:12px">
       <div class="fw-700 mb-3">➕ Add Subject</div>
       <label class="input-label">Module</label>
-      <select id="sub_module" class="input-field" title="Select module" aria-label="Select module">
-        ${mList.map(m => `<option value="${m.id}" ${m.id == activeModId ? 'selected' : ''}>${m.name}</option>`).join('')}
+      <select id="sub_module" class="input-field" title="Select module for subject" aria-label="Select module for subject">
+        ${mList.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
       </select>
       <label class="input-label">Subject Name</label>
       <input id="sub_name" class="input-field" placeholder="e.g., Upper Limb">
@@ -3363,7 +3247,7 @@ async function adminSubjects() {
       <input id="sub_order" type="number" class="input-field" title="Display order" aria-label="Display order" placeholder="1" value="1">
       <button class="btn btn-primary" onclick="adminAddSubject()">Add Subject</button>
     </div>
-    <div class="fw-700 mb-2">📖 ${activeModId ? activeModName + ' — Subjects' : 'All Subjects by Module'}</div>
+    <div class="fw-700 mb-2">📖 Subjects by Module</div>
     ${subHtml || '<div class="card"><p class="text-muted">Add modules first.</p></div>'}`;
 }
 
@@ -3410,13 +3294,124 @@ async function adminDeleteSubject(id) {
   }, 'Delete');
 }
 
+// --- PAST PAPERS CRUD ---
+// Past papers are admin-named (e.g. "LUMHS Annual Exam 2023") and fully independent
+// of the student's academic Year (1st/2nd/3rd/4th/Final) — they belong to a Module only.
+async function adminPastPapers() {
+  const { data: modules } = await db(sb.from('modules').select('id,name').order('name'), 'Modules error');
+  const mList = modules || [];
+
+  let paperHtml = '';
+  for (const m of mList) {
+    const { data: papers } = await db(sb.from('past_papers').select('*').eq('module_id', m.id).order('display_order'), 'Papers error');
+    if (!papers?.length) continue;
+    const qCounts = await Promise.all(papers.map(p => sb.from('questions').select('*', { count: 'exact', head: true }).eq('paper_id', p.id)));
+    paperHtml += `<div class="card" style="margin-bottom:10px">
+      <div class="fw-700 mb-2">📦 ${m.name}</div>
+      ${papers.map((p, i) => `
+        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div class="text-sm fw-600">${p.title} ${p.is_active ? '' : '<span class="badge badge-amber" style="font-size:9px">Hidden</span>'}</div>
+            <div class="text-xs text-muted">${p.college_name || '—'} · ${p.paper_year || '—'} · ${qCounts[i].count || 0} questions</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-xs" onclick="adminEditPastPaper(${p.id})">✏️</button>
+            <button class="btn btn-danger btn-xs" onclick="adminDeletePastPaper(${p.id})">🗑</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  document.getElementById('contentTabBody').innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-3">➕ Add Past Paper</div>
+      <label class="input-label">Module</label>
+      <select id="pp_module" class="input-field" title="Select module" aria-label="Select module">
+        ${mList.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+      </select>
+      <label class="input-label">Paper Title <span class="text-xs text-muted">(shown to students)</span></label>
+      <input id="pp_title" class="input-field" placeholder="e.g., LUMHS Annual Exam 2023">
+      <label class="input-label">College / University</label>
+      <input id="pp_college" class="input-field" placeholder="e.g., LUMHS Jamshoro">
+      <label class="input-label">Paper Year / Session</label>
+      <input id="pp_year" class="input-field" placeholder="e.g., 2023 or 2022 Supplementary">
+      <label class="input-label">Display Order</label>
+      <input id="pp_order" type="number" class="input-field" title="Display order" aria-label="Display order" placeholder="1" value="1">
+      <label class="input-label">Status</label>
+      <select id="pp_active" class="input-field" title="Paper status" aria-label="Paper status">
+        <option value="true">✅ Visible to students</option>
+        <option value="false">🔒 Hidden (draft)</option>
+      </select>
+      <button class="btn btn-primary" onclick="adminAddPastPaper()">Add Past Paper</button>
+    </div>
+    <div class="fw-700 mb-2">📜 Past Papers by Module</div>
+    ${paperHtml || '<div class="card"><p class="text-muted">No past papers added yet. Pick a module above, give the paper a name (e.g. its college/university and year), then add its questions from the Questions tab.</p></div>'}`;
+}
+
+async function adminAddPastPaper() {
+  const module_id = document.getElementById('pp_module').value;
+  const title = document.getElementById('pp_title').value.trim();
+  const college_name = document.getElementById('pp_college').value.trim() || null;
+  const paper_year = document.getElementById('pp_year').value.trim() || null;
+  const display_order = parseInt(document.getElementById('pp_order').value) || 1;
+  const is_active = document.getElementById('pp_active').value === 'true';
+  if (!module_id || !title) return showToast('Module and paper title required');
+  await db(sb.from('past_papers').insert({ module_id, title, college_name, paper_year, display_order, is_active }), 'Add failed');
+  showToast('Past paper added ✓ — now add its questions from the Questions tab');
+  adminPastPapers();
+}
+
+async function adminEditPastPaper(id) {
+  const { data: p } = await db(sb.from('past_papers').select('*').eq('id', id).single(), 'Load failed');
+  if (!p) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto">
+      <div class="fw-700 mb-3">✏️ Edit Past Paper</div>
+      <label class="input-label">Paper Title</label>
+      <input id="_ep_title" class="input-field" value="${(p.title||'').replace(/"/g,'&quot;')}">
+      <label class="input-label">College / University</label>
+      <input id="_ep_college" class="input-field" value="${(p.college_name||'').replace(/"/g,'&quot;')}">
+      <label class="input-label">Paper Year / Session</label>
+      <input id="_ep_year" class="input-field" value="${(p.paper_year||'').replace(/"/g,'&quot;')}">
+      <label class="input-label">Display Order</label>
+      <input id="_ep_order" type="number" class="input-field" title="Display order" aria-label="Display order" value="${p.display_order||1}">
+      <label class="input-label">Status</label>
+      <select id="_ep_active" class="input-field" title="Paper status" aria-label="Paper status">
+        <option value="true" ${p.is_active?'selected':''}>✅ Visible to students</option>
+        <option value="false" ${!p.is_active?'selected':''}>🔒 Hidden (draft)</option>
+      </select>
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="(async()=>{
+          const t=document.getElementById('_ep_title').value.trim();
+          const c=document.getElementById('_ep_college').value.trim()||null;
+          const y=document.getElementById('_ep_year').value.trim()||null;
+          const o=parseInt(document.getElementById('_ep_order').value)||1;
+          const a=document.getElementById('_ep_active').value==='true';
+          if(!t)return showToast('Title required');
+          await db(sb.from('past_papers').update({title:t,college_name:c,paper_year:y,display_order:o,is_active:a}).eq('id',${p.id}),'Edit failed');
+          showToast('Past paper updated ✓');
+          this.closest('[style*=fixed]').remove();
+          adminPastPapers();
+        })()">Save Changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function adminDeletePastPaper(id) {
+  showConfirm('Delete this past paper?<br><small>All questions inside it will also be permanently deleted.</small>', async () => {
+    await db(sb.from('questions').delete().eq('paper_id', id), 'Q delete failed');
+    await db(sb.from('past_papers').delete().eq('id', id), 'Delete failed');
+    showToast('Past paper deleted'); adminPastPapers();
+  }, 'Delete');
+}
+
 // --- QUESTIONS CRUD ---
 async function adminQuestions() {
-  const [modulesRes, yearsRes] = await Promise.all([
-    db(sb.from('modules').select('id,name').order('name'), 'Modules error'),
-    db(sb.from('years').select('id,name').order('display_order'), 'Years error')
-  ]);
-  const modules = modulesRes.data || [], years = yearsRes.data || [];
+  const { data: modules } = await db(sb.from('modules').select('id,name').order('name'), 'Modules error');
 
   document.getElementById('contentTabBody').innerHTML = `
     <div class="tab-bar" style="margin-bottom:12px">
@@ -3426,84 +3421,73 @@ async function adminQuestions() {
     </div>
     <div id="qTabBody"></div>`;
 
-  window._adminModules = modules;
-  window._adminYears = years;
-  const firstBtn = document.querySelector('#contentTabBody .tab-bar .tab-btn');
-  qSubTab('add', firstBtn);
+  window._adminModules = modules || [];
+  qSubTab('add', document.querySelector('.tab-bar .tab-btn'));
 }
 
 function qSubTab(tab, btn) {
   document.querySelectorAll('#contentTabBody .tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
-  const mOpts = (window._adminModules || []).map(m => `<option value="${m.id}" ${m.id == window._cm.moduleId ? 'selected' : ''}>${m.name}</option>`).join('');
-  const yOpts = (window._adminYears || []).map(y => `<option value="${y.id}">${y.name}</option>`).join('');
+  const mOpts = (window._adminModules || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
   if (tab === 'add') {
     document.getElementById('qTabBody').innerHTML = `
       <div class="card">
-        ${window._cm.moduleId ? `<div style="background:var(--teal-900);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:12px;font-size:12px;color:var(--teal-100)">📦 Module: <strong>${window._cm.moduleName}</strong></div>` : ''}
-        <label class="input-label">Module *</label>
-        <select id="q_module" class="input-field" title="Select module" aria-label="Select module" onchange="loadSubjectsForQ()">
+        <label class="input-label">Module</label>
+        <select id="q_module" class="input-field" title="Select module" aria-label="Select module" onchange="onQModuleChange()">
           <option value="">Select module...</option>${mOpts}
         </select>
-        <label class="input-label">Subject (optional)</label>
+        <label class="input-label">Subject (optional — for subject-wise practice)</label>
         <select id="q_subject" class="input-field" title="Select subject" aria-label="Select subject">
-          <option value="">— Practice / Mixed —</option>
+          <option value="">— Any / Mixed —</option>
         </select>
-        <label class="input-label">Past Paper Year — leave blank for practice questions</label>
-        <select id="q_year" class="input-field" title="Select year" aria-label="Select year">
-          <option value="">— Practice (no year) —</option>${yOpts}
+        <label class="input-label">Past Paper (optional — only if this question belongs to a specific past paper)</label>
+        <select id="q_paper" class="input-field" title="Select past paper" aria-label="Select past paper">
+          <option value="">— Not part of a past paper —</option>
         </select>
-        <label class="input-label">Question Text *</label>
-        <textarea id="q_text" class="input-field" rows="4" placeholder="Type the MCQ question here..."></textarea>
+        <label class="input-label">Question Text</label>
+        <textarea id="q_text" class="input-field" rows="3" placeholder="Type the MCQ question here..."></textarea>
         <label class="input-label">Question Image (optional)</label>
         <div class="upload-area" onclick="document.getElementById('q_img_file').click()">📸 Upload question image</div>
         <input type="file" id="q_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('q_img_file','q_img_url','q_img_preview')">
         <img id="q_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
-        <input id="q_img_url" class="input-field" placeholder="Image URL (auto-filled after upload)" readonly>
-        <label class="input-label">Answer Options *</label>
+        <input id="q_img_url" class="input-field" placeholder="Image URL" readonly>
+        <label class="input-label">Options (fill all 4 — add 5th/6th if needed)</label>
         <div id="q_opts_container">
           ${['A','B','C','D'].map((l,i) => `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <span style="width:24px;text-align:center;font-weight:700;flex-shrink:0;color:var(--teal-600)">${l}</span>
+            <div class="input-group" style="margin-bottom:8px">
+              <span style="width:28px;text-align:center;font-weight:700;flex-shrink:0;padding-top:14px">${l}</span>
               <input id="q_opt_${i}" class="input-field" placeholder="Option ${l}" style="margin:0">
             </div>`).join('')}
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="addExtraOption()" style="margin-bottom:12px">+ Add Option E / F</button>
-        <label class="input-label">Correct Answer *</label>
-        <select id="q_correct" class="input-field" title="Correct answer" aria-label="Correct answer">
+        <button class="btn btn-ghost btn-sm" onclick="addExtraOption()" style="margin-bottom:10px">+ Add option E/F</button>
+        <label class="input-label">Correct Answer</label>
+        <select id="q_correct" class="input-field" title="Select correct answer" aria-label="Select correct answer">
           <option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option>
         </select>
-        <label class="input-label">Explanation (why this answer is correct)</label>
-        <textarea id="q_exp" class="input-field" rows="4" placeholder="Explain why the correct answer is correct. Be detailed — this is what students learn from."></textarea>
+        <label class="input-label">Explanation</label>
+        <textarea id="q_exp" class="input-field" rows="3" placeholder="Explain why the correct answer is correct..."></textarea>
         <label class="input-label">Explanation Image (optional)</label>
         <div class="upload-area" onclick="document.getElementById('q_exp_img_file').click()">📸 Upload explanation image</div>
         <input type="file" id="q_exp_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('q_exp_img_file','q_exp_img_url','q_exp_img_preview')">
         <img id="q_exp_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
         <input id="q_exp_img_url" class="input-field" placeholder="Explanation image URL" readonly>
-        <label class="input-label">Difficulty</label>
-        <select id="q_diff" class="input-field" title="Difficulty" aria-label="Difficulty">
+        <label class="input-label">Difficulty Level</label>
+        <select id="q_diff" class="input-field" title="Select difficulty" aria-label="Select difficulty">
           <option value="easy">🟢 Easy</option>
           <option value="medium" selected>🟡 Medium</option>
           <option value="hard">🔴 Hard</option>
         </select>
-        <label class="input-label">Tags (optional, comma-separated)</label>
-        <input id="q_tags" class="input-field" placeholder="e.g. anatomy, upper limb, bones">
-        <button class="btn btn-primary mt-3 w-full" onclick="adminAddQuestion()">💾 Save Question</button>
+        <label class="input-label">Tags (comma separated — e.g. anatomy, upper limb)</label>
+        <input id="q_tags" class="input-field" placeholder="tag1, tag2, tag3">
+        <button class="btn btn-primary mt-3" onclick="adminAddQuestion()">💾 Save Question</button>
       </div>`;
-    // Auto-load subjects if module context set
-    if (window._cm.moduleId) loadSubjectsForQ();
   } else if (tab === 'browse') {
     document.getElementById('qTabBody').innerHTML = `
       <div class="card" style="margin-bottom:12px">
         <label class="input-label">Filter by Module</label>
         <select id="qb_module" class="input-field" title="Filter by module" aria-label="Filter by module" onchange="browseQuestions()">
           <option value="">All Modules</option>${mOpts}
-        </select>
-        <label class="input-label">Filter by Year / Past Paper</label>
-        <select id="qb_year" class="input-field" title="Filter by year" aria-label="Filter by year" onchange="browseQuestions()">
-          <option value="">All</option>
-          <option value="none">Practice Only</option>${yOpts}
         </select>
         <label class="input-label">Search</label>
         <input id="qb_search" class="input-field" placeholder="Search question text..." oninput="browseQuestions()">
@@ -3514,7 +3498,7 @@ function qSubTab(tab, btn) {
     document.getElementById('qTabBody').innerHTML = `
       <div class="card">
         <div class="fw-700 mb-2">📂 Bulk Upload via JSON</div>
-        <p class="text-sm mb-3">Upload a JSON file with an array of questions. Each must have: <code>module_id, text, options (array), correct_answer (0-3), explanation</code>. Add <code>year_id</code> for past paper questions.</p>
+        <p class="text-sm mb-3">Upload a JSON file with an array of questions. Each must have: <code>module_id, text, options (array), correct_answer (0-3), explanation</code></p>
         <div class="upload-area" onclick="document.getElementById('bulkFile').click()">
           <div style="font-size:32px">📄</div>
           <div class="text-sm mt-1">Click to select JSON file</div>
@@ -3554,7 +3538,7 @@ async function executeBulkUpload() {
   let success = 0, failed = 0;
   for (const q of bulkQData) {
     const { error } = await sb.from('questions').insert({
-      module_id: q.module_id, subject_id: q.subject_id || null, year_id: q.year_id || null,
+      module_id: q.module_id, subject_id: q.subject_id || null, paper_id: q.paper_id || null,
       text: q.text, options: q.options, correct_answer: q.correct_answer,
       explanation: q.explanation || '', image_url: q.image_url || null,
       explanation_image_url: q.explanation_image_url || null,
@@ -3569,7 +3553,7 @@ async function executeBulkUpload() {
 
 function downloadJSONTemplate() {
   const template = [{
-    module_id: 1, subject_id: null, year_id: null,
+    module_id: 1, subject_id: null, paper_id: null,
     text: "Which nerve innervates the deltoid muscle?",
     options: ["Radial nerve", "Axillary nerve", "Musculocutaneous nerve", "Ulnar nerve"],
     correct_answer: 1, explanation: "The axillary nerve (C5,C6) innervates the deltoid and teres minor.",
@@ -3614,10 +3598,26 @@ async function loadSubjectsForQ() {
   }
 }
 
+async function loadPapersForQ() {
+  const moduleId = document.getElementById('q_module')?.value;
+  const papSel = document.getElementById('q_paper');
+  if (!papSel) return;
+  papSel.innerHTML = '<option value="">— Not part of a past paper —</option>';
+  if (!moduleId) return;
+  const { data: papers } = await db(sb.from('past_papers').select('id,title').eq('module_id', moduleId).order('display_order'), 'Papers error');
+  for (const p of papers || []) {
+    const opt = document.createElement('option');
+    opt.value = p.id; opt.textContent = p.title;
+    papSel.appendChild(opt);
+  }
+}
+
+function onQModuleChange() { loadSubjectsForQ(); loadPapersForQ(); }
+
 async function adminAddQuestion() {
   const module_id = document.getElementById('q_module')?.value;
   const subject_id = document.getElementById('q_subject')?.value || null;
-  const year_id = document.getElementById('q_year')?.value || null;
+  const paper_id = document.getElementById('q_paper')?.value || null;
   const text = document.getElementById('q_text')?.value.trim();
   const correct_answer = parseInt(document.getElementById('q_correct')?.value);
   const explanation = document.getElementById('q_exp')?.value.trim();
@@ -3636,9 +3636,10 @@ async function adminAddQuestion() {
   if (!module_id || !text || options.length < 2) return showToast('Module, question text, and at least 2 options required');
   if (correct_answer >= options.length) return showToast('Correct answer index out of range');
 
-  await db(sb.from('questions').insert({ module_id, subject_id, year_id, text, options, correct_answer, explanation, image_url, explanation_image_url, difficulty, tags }), 'Add question failed');
+  await db(sb.from('questions').insert({ module_id, subject_id, paper_id, text, options, correct_answer, explanation, image_url, explanation_image_url, difficulty, tags }), 'Add question failed');
   showToast('Question added ✓');
-  // Reset form
+  // Reset only the question-specific fields — keep Module/Subject/Past Paper selected
+  // so admins can rapid-fire add many questions to the same paper without re-selecting each time
   ['q_text','q_exp','q_img_url','q_exp_img_url','q_tags'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   ['q_img_preview','q_exp_img_preview'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
   for (let i = 0; i < 4; i++) { const el = document.getElementById(`q_opt_${i}`); if (el) el.value = ''; }
@@ -3647,27 +3648,20 @@ async function adminAddQuestion() {
 
 async function browseQuestions() {
   const moduleId = document.getElementById('qb_module')?.value || '';
-  const yearId = document.getElementById('qb_year')?.value || '';
   const search = document.getElementById('qb_search')?.value.trim() || '';
   const list = document.getElementById('qBrowseList');
   if (!list) return;
   list.innerHTML = `<div class="spinner" style="margin:20px auto"></div>`;
-  let query = sb.from('questions').select('id,text,correct_answer,options,difficulty,module_id,year_id,modules(name),years(name)').order('id', { ascending: false }).limit(50);
+  let query = sb.from('questions').select('id,text,correct_answer,options,difficulty,module_id,paper_id,modules(name),past_papers(title)').order('id', { ascending: false }).limit(50);
   if (moduleId) query = query.eq('module_id', moduleId);
-  if (yearId === 'none') query = query.is('year_id', null);
-  else if (yearId) query = query.eq('year_id', yearId);
   if (search) query = query.ilike('text', `%${search}%`);
   const { data: qs } = await db(query, 'Browse failed');
   if (!qs?.length) { list.innerHTML = '<div class="card"><p class="text-muted">No questions found.</p></div>'; return; }
-  list.innerHTML = `<div class="text-xs text-muted mb-2">${qs.length} questions shown (max 50)</div>` + qs.map(q => `
+  list.innerHTML = qs.map(q => `
     <div class="admin-row">
       <div class="admin-row-left">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">
-          <span class="chip" style="font-size:10px">📦 ${q.modules?.name || 'Unknown'}</span>
-          ${q.years?.name ? `<span class="chip" style="font-size:10px">📜 ${q.years.name}</span>` : '<span class="chip" style="font-size:10px;color:var(--teal-600)">🎯 Practice</span>'}
-          <span class="badge badge-${q.difficulty==='easy'?'green':q.difficulty==='hard'?'red':'teal'}" style="font-size:10px">${q.difficulty||'medium'}</span>
-        </div>
-        <div class="text-sm fw-600" style="line-height:1.5">${q.text?.substring(0, 120)}${q.text?.length > 120 ? '...' : ''}</div>
+        <div class="text-xs text-muted mb-1">${q.modules?.name || 'Unknown'} · <span class="badge badge-${q.difficulty==='easy'?'green':q.difficulty==='hard'?'red':'teal'}">${q.difficulty||'medium'}</span>${q.past_papers?.title ? ` · 📜 ${q.past_papers.title}` : ''}</div>
+        <div class="text-sm fw-600">${q.text?.substring(0, 100)}${q.text?.length > 100 ? '...' : ''}</div>
         <div class="text-xs text-muted mt-1">✅ ${['A','B','C','D','E','F'][q.correct_answer] || '?'}: ${q.options?.[q.correct_answer] || '?'}</div>
       </div>
       <div class="admin-row-actions">
@@ -3680,6 +3674,11 @@ async function browseQuestions() {
 async function adminEditQuestion(id) {
   const { data: q } = await db(sb.from('questions').select('*').eq('id', id).single(), 'Load failed');
   if (!q) return;
+  const [subsRes, papersRes] = await Promise.all([
+    db(sb.from('subjects').select('id,name').eq('module_id', q.module_id).order('display_order'), 'Subs error'),
+    db(sb.from('past_papers').select('id,title').eq('module_id', q.module_id).order('display_order'), 'Papers error')
+  ]);
+  const subs = subsRes.data || [], papers = papersRes.data || [];
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
@@ -3687,6 +3686,16 @@ async function adminEditQuestion(id) {
       <div class="fw-700 mb-3">✏️ Edit Question</div>
       <label class="input-label">Question Text</label>
       <textarea id="_eq_text" class="input-field" rows="4" style="resize:vertical">${(q.text||'').replace(/`/g,"'").replace(/"/g,'&quot;')}</textarea>
+      <label class="input-label">Subject</label>
+      <select id="_eq_subject" class="input-field" title="Subject" aria-label="Subject">
+        <option value="">— Any / Mixed —</option>
+        ${subs.map(s=>`<option value="${s.id}" ${s.id===q.subject_id?'selected':''}>${s.name}</option>`).join('')}
+      </select>
+      <label class="input-label">Past Paper</label>
+      <select id="_eq_paper" class="input-field" title="Past paper" aria-label="Past paper">
+        <option value="">— Not part of a past paper —</option>
+        ${papers.map(p=>`<option value="${p.id}" ${p.id===q.paper_id?'selected':''}>${p.title}</option>`).join('')}
+      </select>
       <label class="input-label">Explanation</label>
       <textarea id="_eq_exp" class="input-field" rows="3" placeholder="Explanation (optional)" style="resize:vertical">${(q.explanation||'').replace(/`/g,"'").replace(/"/g,'&quot;')}</textarea>
       <label class="input-label">Correct Answer</label>
@@ -3699,8 +3708,10 @@ async function adminEditQuestion(id) {
           const t=document.getElementById('_eq_text').value.trim();
           const e=document.getElementById('_eq_exp').value.trim();
           const c=parseInt(document.getElementById('_eq_correct').value);
+          const subj=document.getElementById('_eq_subject').value||null;
+          const pap=document.getElementById('_eq_paper').value||null;
           if(!t)return showToast('Question text required');
-          await db(sb.from('questions').update({text:t,explanation:e||null,correct_answer:c}).eq('id',${id}),'Edit failed');
+          await db(sb.from('questions').update({text:t,explanation:e||null,correct_answer:c,subject_id:subj,paper_id:pap}).eq('id',${id}),'Edit failed');
           showToast('Question updated ✓');
           this.closest('[style*=fixed]').remove();
           browseQuestions();
@@ -4239,57 +4250,23 @@ async function adminAppSettings() {
     <!-- AI Settings -->
     <div class="card" style="margin-bottom:12px">
       <div class="fw-700 mb-3">🤖 AI Tutor Settings</div>
-
       <label class="input-label">AI Provider</label>
-      <select id="ai_provider" class="input-field" title="AI provider" aria-label="AI provider" onchange="onAIProviderChange(this.value)">
-        <option value="deepseek" ${S('ai_provider')==='deepseek'||!S('ai_provider')?'selected':''}>DeepSeek (Recommended)</option>
-        <option value="openai" ${S('ai_provider')==='openai'?'selected':''}>OpenAI (GPT-4o)</option>
-        <option value="gemini" ${S('ai_provider')==='gemini'?'selected':''}>Google Gemini</option>
-        <option value="custom" ${S('ai_provider')==='custom'?'selected':''}>Custom / Self-hosted</option>
+      <select id="ai_provider" class="input-field" title="AI provider" aria-label="AI provider" onchange="saveSetting('ai_provider',this.value)">
+        <option value="deepseek" ${S('ai_provider') === 'deepseek' ? 'selected' : ''}>DeepSeek</option>
+        <option value="openai" ${S('ai_provider') === 'openai' ? 'selected' : ''}>OpenAI GPT-4</option>
+        <option value="gemini" ${S('ai_provider') === 'gemini' ? 'selected' : ''}>Google Gemini</option>
       </select>
-
-      <label class="input-label">AI API Base URL</label>
-      <input id="set_ai_url" class="input-field" value="${S('ai_api_url') || 'https://api.deepseek.com/v1'}" placeholder="https://api.deepseek.com/v1">
-      <div class="text-xs text-muted mb-2">DeepSeek: <code>https://api.deepseek.com/v1</code> &nbsp;|&nbsp; OpenAI: <code>https://api.openai.com/v1</code> &nbsp;|&nbsp; Gemini: <code>https://generativelanguage.googleapis.com/v1beta/openai</code></div>
-
-      <label class="input-label">AI API Key (Global — shared for all students)</label>
-      <div style="position:relative">
-        <input id="set_ai_key" class="input-field" type="password" value="${S('ai_api_key')}" placeholder="sk-..." style="padding-right:48px">
-        <button onclick="togglePw('set_ai_key')" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--ink-4);font-size:16px">👁</button>
-      </div>
-      <div class="text-xs text-muted mb-2">If set here, students won't need to enter their own key. Key is stored in Supabase (encrypted recommended).</div>
-
-      <label class="input-label">AI Model Name</label>
-      <input id="set_ai_model" class="input-field" value="${S('ai_model') || 'deepseek-chat'}" placeholder="e.g. deepseek-chat / gpt-4o / gemini-1.5-pro">
-      <div class="text-xs text-muted mb-2">DeepSeek models: <code>deepseek-chat</code>, <code>deepseek-reasoner</code></div>
-
-      <label class="input-label">AI System Prompt (customize AI behavior)</label>
-      <textarea id="set_ai_prompt" class="input-field" rows="4" placeholder="You are a helpful MBBS tutor...">${S('ai_system_prompt') || 'You are an expert MBBS tutor for Pakistani medical students at LUMHS and affiliated colleges. Explain concepts clearly in simple English. When students write in Roman Urdu (Urdu written in English letters), understand and reply in the same language they used. Be concise, accurate, and encouraging. Use examples relevant to clinical medicine.'}</textarea>
-
-      <div class="flex-between" style="padding:10px 0;border-top:1px solid var(--border);margin-top:10px">
-        <div>
-          <div class="fw-600 text-sm">🤖 AI Tutor Enabled</div>
-          <div class="text-xs text-muted">Students can ask AI to explain MCQs</div>
-        </div>
+      <label class="input-label">Global AI API Key (shared for all students)</label>
+      <input id="set_ai_key" class="input-field" type="password" value="${S('ai_api_key')}" placeholder="Enter global API key...">
+      <div class="text-xs text-muted mb-2">If set, students won't need their own key.</div>
+      <div class="flex-between mb-2">
+        <div><div class="fw-600 text-sm">AI Tutor Feature</div><div class="text-xs text-muted">Enable AI explanations for students</div></div>
         <label class="toggle-switch">
-          <input type="checkbox" ${S('ai_enabled')!=='false'?'checked':''} onchange="saveSetting('ai_enabled',this.checked)">
+          <input type="checkbox" ${S('ai_enabled') !== 'false' ? 'checked' : ''} onchange="saveSetting('ai_enabled',this.checked)">
           <span class="toggle-knob"></span>
         </label>
       </div>
-
-      <div class="flex-between" style="padding:10px 0;border-top:1px solid var(--border)">
-        <div>
-          <div class="fw-600 text-sm">🖼 Image Support in AI</div>
-          <div class="text-xs text-muted">Allow students to send images to AI (requires vision model)</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" ${S('ai_vision_enabled')==='true'?'checked':''} onchange="saveSetting('ai_vision_enabled',this.checked)">
-          <span class="toggle-knob"></span>
-        </label>
-      </div>
-
-      <button class="btn btn-primary mt-2 w-full" onclick="saveAISettings()">💾 Save AI Settings</button>
-      <button class="btn btn-secondary mt-2 w-full" onclick="testAIConnection()">🔌 Test AI Connection</button>
+      <button class="btn btn-primary" onclick="saveSetting('ai_api_key',document.getElementById('set_ai_key').value).then(()=>showToast('AI key saved ✓'))">Save AI Key</button>
     </div>
 
     <!-- Audit Log -->
@@ -4730,6 +4707,7 @@ async function loadAppSettings() {
     'App settings load failed'
   );
   if (!settings) return;
+  // Cache all settings
   window._settingsCache = {};
   for (const s of settings) window._settingsCache[s.key] = s.value;
 
@@ -4738,32 +4716,31 @@ async function loadAppSettings() {
   announcementText = S('announcement') || '';
   window._privacyMsg = S('privacy_message') || 'Your data is safe with us and is never shared with third parties.';
 
+  // Apply dynamic branding
   if (S('primary_color')) document.documentElement.style.setProperty('--teal-600', S('primary_color'));
   if (S('accent_color')) document.documentElement.style.setProperty('--teal-400', S('accent_color'));
   if (S('app_tagline')) { const el = document.getElementById('appTagline'); if (el) el.textContent = S('app_tagline'); }
 }
 
+// Sync getSetting using cache (no DB call needed after boot)
 function getSetting(key, fallback = '') {
   if (window._settingsCache && key in window._settingsCache) return window._settingsCache[key];
   return fallback;
 }
 
-function previewAIImage(input) {
-  const file = input.files?.[0];
-  if (!file) return;
-  const preview = document.getElementById('aiImgPreview');
-  const img = document.getElementById('aiImgPreviewImg');
-  if (preview && img) {
-    img.src = URL.createObjectURL(file);
-    preview.style.display = 'block';
-  }
-}
-
-// ==================== PWA / SERVICE WORKER ====================
+// ==================== PWA / SERVICE WORKER CLEANUP ====================
+// A previous version registered a service worker that cached '/' and '/index.html'.
+// That cache never got invalidated on new deploys, so GitHub Pages visitors kept
+// getting served the OLD cached HTML instead of the freshly uploaded file.
+// This removes any such service worker + cache for every visitor, so the browser
+// always fetches the latest index.html from the network like a normal page.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  });
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => reg.unregister());
+  }).catch(() => {});
+}
+if ('caches' in window) {
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
 }
 
 // ==================== NOTIFICATIONS ====================
@@ -5318,54 +5295,6 @@ async function quickViewQuestion(id) {
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
 }
 
-// ==================== RESUME LAST TEST ====================
-function saveTestProgress() {
-  if (!activeTest) return;
-  localStorage.setItem('lum_test_resume', JSON.stringify({
-    questions: activeTest.questions,
-    answers: activeTest.answers,
-    flagged: activeTest.flagged,
-    currentIndex: activeTest.currentIndex,
-    mode: activeTest.mode,
-    moduleId: activeTest.moduleId,
-    moduleName: activeTest.moduleName,
-    subjectId: activeTest.subjectId,
-    yearId: activeTest.yearId,
-    startTime: activeTest.startTime,
-    timeLimit: activeTest.timeLimit
-  }));
-}
-
-function tryResumeTest() {
-  const saved = localStorage.getItem('lum_test_resume');
-  if (!saved) return false;
-  try {
-    const data = JSON.parse(saved);
-    if (!data.questions?.length) return false;
-    showConfirm(`Resume your last test?<br><small>${data.moduleName} · Q${data.currentIndex + 1}/${data.questions.length}</small>`, () => {
-      if (activeTest?.timerInterval) clearInterval(activeTest.timerInterval);
-      activeTest = { ...data, bookmarked: new Set(), submitted: false, timerInterval: null };
-      if (data.mode === 'attempt' && data.timeLimit) startTimer();
-      renderTestScreen();
-    });
-    localStorage.removeItem('lum_test_resume');
-    return true;
-  } catch(e) { localStorage.removeItem('lum_test_resume'); }
-  return false;
-}
-
-// Save progress periodically during test
-setInterval(() => {
-  if (activeTest && !activeTest.submitted) saveTestProgress();
-}, 15000);
-
-// Clear resume on submit
-const _origSubmit = window.submitTest;
-window.submitTest = async function() {
-  localStorage.removeItem('lum_test_resume');
-  await _origSubmit();
-};
-
 // ==================== WRONG QUESTIONS REVIEW ====================
 async function reviewWrongQuestions() {
   const stats = await getUserStats();
@@ -5397,10 +5326,11 @@ async function reviewWrongQuestions() {
     })),
     answers: new Array(qs.length).fill(null),
     flagged: new Array(qs.length).fill(false),
+    explanationShown: new Array(qs.length).fill(false),
     bookmarked: new Set(),
     currentIndex: 0, mode: 'practice',
     moduleId: null, moduleName: '❌ Wrong Questions Review',
-    subjectId: null, yearId: null,
+    subjectId: null, paperId: null, paperTitle: null,
     startTime: Date.now(), timeLimit: null, timerInterval: null, submitted: false
   };
   renderTestScreen();
@@ -5453,10 +5383,11 @@ async function startRandomQuiz() {
     })),
     answers: new Array(shuffled.length).fill(null),
     flagged: new Array(shuffled.length).fill(false),
+    explanationShown: new Array(shuffled.length).fill(false),
     bookmarked: new Set(),
     currentIndex: 0, mode: 'practice',
     moduleId: null, moduleName: `🎲 Random Quiz (${clampedCount}Q)`,
-    subjectId: null, yearId: null,
+    subjectId: null, paperId: null, paperTitle: null,
     startTime: Date.now(), timeLimit: null, timerInterval: null, submitted: false
   };
   renderTestScreen();
@@ -5477,7 +5408,7 @@ window.renderHome = async function() {
       <div class="btn-row" style="margin-bottom:16px">
         <button class="btn btn-secondary btn-sm" onclick="startRandomQuiz()">🎲 Random Quiz</button>
         <button class="btn btn-secondary btn-sm" onclick="reviewWrongQuestions()">❌ Wrong Q Review</button>
-        ${localStorage.getItem('lum_test_resume') ? `<button class="btn btn-secondary btn-sm" onclick="tryResumeTest()">▶ Resume Test</button>` : ''}
+        ${localStorage.getItem(RESUME_KEY) ? `<button class="btn btn-secondary btn-sm" onclick="checkResumableTest()">▶ Resume Test</button>` : ''}
       </div>`;
     sectionLabel.before(quickDiv);
   }
@@ -5881,36 +5812,7 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_email);
 */
 </script>
 
-<!-- SERVICE WORKER (save as sw.js in same folder as HTML) -->
-<script id="swCode" type="text/plain">
-const CACHE = 'lumhsian-v1';
-const ASSETS = ['/', '/index.html'];
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS).catch(() => {})));
-  self.skipWaiting();
-});
-self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))));
-  self.clients.claim();
-});
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  if (e.request.url.includes('supabase.co')) return;
-  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-});
-</script>
-
 <script>
-// Generate and register SW from inline code
-(function() {
-  const code = document.getElementById('swCode').textContent;
-  const blob = new Blob([code], { type: 'application/javascript' });
-  const url = URL.createObjectURL(blob);
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register(url).catch(() => {});
-  }
-})();
-
 // ==================== FINAL STARTUP ====================
 window.onload = async function() {
   try {
@@ -5925,6 +5827,7 @@ window.onload = async function() {
   if (currentUser && !currentUser.is_admin) {
     startHeartbeat();
     requestNotificationPermission();
+    checkResumableTest();
   }
   } catch(e) {
     console.error('Startup error:', e);
