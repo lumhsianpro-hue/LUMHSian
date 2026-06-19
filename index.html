@@ -226,7 +226,10 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 .module-sub{font-size:12px;color:var(--ink-4);margin-top:2px}
 
 /* ===== ONBOARDING / SPLASH ===== */
-#screen-splash.active{background:linear-gradient(160deg,#031c1c 0%,#052e2e 40%,#0a4a4a 100%);display:flex;align-items:center;justify-content:center;padding:20px;position:fixed;inset:0;min-height:unset;overflow-y:auto}
+#screen-splash{background:linear-gradient(160deg,#031c1c 0%,#052e2e 40%,#0a4a4a 100%);align-items:center;justify-content:center;padding:20px;position:fixed;inset:0;min-height:unset;overflow-y:auto}
+/* Safety net: even if a future rule accidentally forces display on an inactive screen,
+   it must never be able to intercept clicks again. */
+.screen:not(.active){pointer-events:none}
 .splash-card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(20px);border-radius:var(--radius-xl);padding:32px 28px;width:100%;max-width:420px;color:white}
 .splash-logo{font-family:var(--font-display);font-size:36px;font-weight:800;letter-spacing:-1px;margin-bottom:4px}
 .splash-logo span{color:var(--teal-300)}
@@ -442,7 +445,9 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
         <option value="male">👨‍⚕️ Male</option>
         <option value="female">👩‍⚕️ Female</option>
       </select>
-      <input type="text" id="su_college" class="splash-input" placeholder="Your college/university name (e.g. LUMHS Jamshoro)">
+      <select id="su_college" class="splash-input" title="Your college" aria-label="Your college">
+        <option value="">Select your college...</option>
+      </select>
       <div class="splash-otp-row">
         <input type="text" id="su_otp" class="splash-input" placeholder="Enter OTP" maxlength="6">
         <button class="otp-send-btn" id="otpBtn" onclick="sendOTP()">Send OTP</button>
@@ -794,7 +799,7 @@ async function doSignup() {
   const gender = document.getElementById('su_gender').value;
   const college = document.getElementById('su_college').value;
   const otp = document.getElementById('su_otp').value.trim();
-  if (!name || !email || pass.length < 6) return showToast('Fill all fields correctly');
+  if (!name || !email || pass.length < 6 || !college) return showToast('Fill all fields correctly (including your college)');
   if (!currentOTP || Date.now() > otpExpiry || otp !== currentOTP) return showToast('Invalid or expired OTP');
   showLoading(true, 'Creating your account...');
   const hash = await sha256(pass);
@@ -909,6 +914,9 @@ async function loadYearScreen() {
   const wrap = document.getElementById('yearPageWrap');
   if (!years?.length) { wrap.innerHTML = `<div class="card"><p>No years configured yet. Contact admin.</p></div>`; showScreen('year'); return; }
   let html = `<div class="card-teal" style="margin-bottom:20px"><h2>Select Your Year</h2><p>MBBS Program · LUMHS & Affiliated Colleges</p></div>`;
+  if (selectedYear) {
+    html = `<button class="btn btn-secondary btn-sm mb-3" onclick="renderHome();showScreen('home')">← Back</button>` + html;
+  }
   for (const y of years) {
     const active = y.is_active;
     html += `<div class="module-card ${!active ? 'locked' : ''}" onclick="${active ? `selectYear(${y.id},'${y.name.replace(/'/g,"\\'")}')` : `showToast('${y.coming_soon_text || 'Coming soon'}') `}">
@@ -931,10 +939,22 @@ async function loadYearScreen() {
 }
 
 function selectYear(id, name) {
+  const isChange = !!selectedYear && selectedYear.id !== id;
   selectedYear = { id, name };
   localStorage.setItem('lum_year', JSON.stringify(selectedYear));
+  if (currentUser?.email) {
+    db(sb.from('users').update({ year_of_study: name }).eq('email', currentUser.email), 'Year update failed');
+  }
   renderHome();
   showScreen('home');
+  if (isChange) showToast(`✅ Switched to ${name}`);
+}
+
+// Lets a logged-in student switch to a different year at any time
+// (e.g. Profile → Change Year, or tapping the year badge on Home).
+function changeYear() {
+  if (!selectedYear) { loadYearScreen(); return; }
+  showConfirm(`You're currently viewing ${selectedYear.name}. Pick a different year? You'll see that year's modules instead.`, () => loadYearScreen(), 'Change Year', false);
 }
 </script>
 <script>
@@ -1036,7 +1056,7 @@ async function renderHome() {
         </div>
         <div style="text-align:right">
           <div style="font-size:36px">${avatarEmoji}</div>
-          <div style="font-size:11px;opacity:.6;margin-top:2px">${selectedYear.name}</div>
+          <div onclick="changeYear()" style="font-size:11px;opacity:.85;margin-top:2px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${selectedYear.name} ✏️</div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:4px">
@@ -1796,6 +1816,49 @@ function appendAIMsg(role, text) {
   container.scrollTop = container.scrollHeight;
 }
 
+// Builds a provider-aware request (DeepSeek/OpenAI use the OpenAI chat/completions
+// shape; Gemini uses Google's generateContent shape) from the admin's saved settings.
+function buildAIRequest(messages) {
+  const provider = getSetting('ai_provider', 'deepseek');
+  const baseUrl = (getSetting('ai_api_url', 'https://api.deepseek.com/v1') || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
+  const model = getSetting('ai_model', 'deepseek-chat') || 'deepseek-chat';
+  const key = getSetting('ai_api_key', '');
+  if (provider === 'gemini') {
+    const url = `${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    const sys = messages.find(m => m.role === 'system');
+    const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+    const body = { contents };
+    if (sys) body.systemInstruction = { parts: [{ text: sys.content }] };
+    return { provider, url, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  }
+  // DeepSeek, OpenAI, or any other OpenAI-compatible endpoint
+  return {
+    provider, url: `${baseUrl}/chat/completions`, method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify({ model, messages, temperature: 0.6, max_tokens: 800 })
+  };
+}
+
+function extractAIText(provider, data) {
+  if (provider === 'gemini') return (data?.candidates?.[0]?.content?.parts || []).map(p => p.text).join('') || '';
+  return data?.choices?.[0]?.message?.content || '';
+}
+
+// Single-shot helper used by "Test Connection" in Admin Settings (and reusable elsewhere)
+async function callAIRaw(prompt) {
+  if (getSetting('ai_enabled', 'true') === 'false') return { ok: false, text: 'AI Tutor is turned off in Settings.' };
+  if (!getSetting('ai_api_key', '')) return { ok: false, text: 'No API key configured yet.' };
+  const sysPrompt = getSetting('ai_system_prompt', 'You are a helpful MBBS tutor.');
+  const req = buildAIRequest([{ role: 'system', content: sysPrompt }, { role: 'user', content: prompt }]);
+  try {
+    const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, text: data?.error?.message || JSON.stringify(data?.error) || `HTTP ${res.status}` };
+    const text = extractAIText(req.provider, data);
+    return text ? { ok: true, text } : { ok: false, text: 'No reply returned — check the model name and API key.' };
+  } catch (e) { return { ok: false, text: e.message || 'Network error' }; }
+}
+
 async function callAI(userPrompt, showThinking = false) {
   if (showThinking) {
     const thinkDiv = document.createElement('div');
@@ -1806,30 +1869,33 @@ async function callAI(userPrompt, showThinking = false) {
     document.getElementById('aiChatHistory').scrollTop = document.getElementById('aiChatHistory').scrollHeight;
   }
 
-  let key = localStorage.getItem('deepseek_api_key');
-  if (!key) {
-    key = window.prompt('Enter your DeepSeek API key (stored locally only):');
-    if (key) localStorage.setItem('deepseek_api_key', key);
-    else { document.getElementById('aiThinking')?.remove(); appendAIMsg('ai', '❌ API key required. Set it in Profile → Settings.'); return; }
+  if (getSetting('ai_enabled', 'true') === 'false') {
+    document.getElementById('aiThinking')?.remove();
+    appendAIMsg('ai', '⚠️ AI Tutor is currently turned off by the admin.');
+    return;
+  }
+  if (!getSetting('ai_api_key', '')) {
+    document.getElementById('aiThinking')?.remove();
+    appendAIMsg('ai', "⚠️ AI Tutor hasn't been set up yet. Please contact the admin.");
+    return;
   }
 
   aiConversation.push({ role: 'user', content: userPrompt });
+  const sysPrompt = getSetting('ai_system_prompt', 'You are an expert MBBS tutor for Pakistani medical students at LUMHS and affiliated colleges. Be concise, accurate, and encouraging.');
+  const req = buildAIRequest([{ role: 'system', content: sysPrompt }, ...aiConversation]);
   try {
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages: aiConversation, temperature: 0.6, max_tokens: 800 })
-
-    });
+    const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
     const data = await res.json();
     document.getElementById('aiThinking')?.remove();
-    if (data.choices?.[0]) {
-      const reply = data.choices[0].message.content;
+    if (!res.ok) { appendAIMsg('ai', `⚠️ AI error: ${data?.error?.message || 'request failed — check Settings → AI Tutor'}`); aiConversation.pop(); return; }
+    const reply = extractAIText(req.provider, data);
+    if (reply) {
       aiConversation.push({ role: 'assistant', content: reply });
       appendAIMsg('ai', reply);
-    } else { appendAIMsg('ai', '⚠️ No response. Check your API key.'); }
-  } catch (e) { document.getElementById('aiThinking')?.remove(); appendAIMsg('ai', '❌ Network error. Check connection.'); }
+    } else { appendAIMsg('ai', '⚠️ No response. Check the model name / API key in Settings.'); aiConversation.pop(); }
+  } catch (e) { document.getElementById('aiThinking')?.remove(); appendAIMsg('ai', '❌ Network error. Check connection.'); aiConversation.pop(); }
 }
+
 
 // ==================== STATS ====================
 async function getUserStats() {
@@ -2143,9 +2209,12 @@ async function renderProfile() {
     </div>
 
     <div class="section-label">App</div>
-    <div class="list-item no-hover" onclick="setAIKey()">
-      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor Key</div><div class="list-item-sub">${localStorage.getItem('deepseek_api_key') ? '✅ Key set' : 'Not set — tap to add'}</div></div></div>
+    <div class="list-item" onclick="changeYear()">
+      <div class="list-item-left"><div class="list-item-icon">📅</div><div><div class="list-item-title">Change Year</div><div class="list-item-sub">Currently: ${selectedYear?.name || 'Not set'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
+    </div>
+    <div class="list-item no-hover">
+      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_api_key','') && getSetting('ai_enabled','true')!=='false' ? '✅ Available' : '⚠️ Not set up by admin yet'}</div></div></div>
     </div>
     <div class="list-item no-hover" onclick="toggleDarkMode()">
       <div class="list-item-left"><div class="list-item-icon">🌙</div><div><div class="list-item-title">Dark Mode</div><div class="list-item-sub">${localStorage.getItem('dark_mode')==='true'?'On':'Off'}</div></div></div>
@@ -2165,22 +2234,6 @@ async function renderProfile() {
     <div style="height:24px"></div>`;
 }
 
-function setAIKey() {
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px">
-      <div class="fw-700 mb-1">🔑 DeepSeek API Key</div>
-      <div class="text-xs text-muted mb-3">Stored locally on your device only. Never sent to our servers.</div>
-      <input id="_ak_val" class="input-field" type="password" placeholder="sk-..." value="${localStorage.getItem('deepseek_api_key')||''}">
-      <div class="btn-row mt-3">
-        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
-        <button class="btn btn-danger" style="flex:0" onclick="localStorage.removeItem('deepseek_api_key');showToast('Key cleared');renderProfile();this.closest('[style*=fixed]').remove()">Clear</button>
-        <button class="btn btn-primary" onclick="const k=document.getElementById('_ak_val').value.trim();if(k){localStorage.setItem('deepseek_api_key',k);showToast('✅ AI key saved');}renderProfile();this.closest('[style*=fixed]').remove()">Save</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
 function confirmLogout() { showConfirm('Are you sure you want to logout?', logout, 'Logout', false); }
 
 // Profile modals
@@ -2461,7 +2514,7 @@ async function renderAdminPanel() {
           ['⚙️','Settings','adminTab_settings'],
           ['📈','Analytics','adminTab_analytics']
         ].map(([icon,label,id]) => `
-          <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="flex-shrink:0;width:auto;padding:9px 14px">
+          <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="flex-shrink:0">
             ${icon} ${label}
           </button>`).join('')}
       </div>
@@ -2583,6 +2636,25 @@ async function adminOverview() {
   });
 
   document.getElementById('adminContent').innerHTML = `
+    <!-- Quick Start Guide -->
+    <div class="card-teal" style="margin-bottom:16px">
+      <div class="fw-700 mb-2" style="font-size:16px">🚀 How to add content (in order)</div>
+      <div style="font-size:13px;line-height:1.7;opacity:.95">
+        1️⃣ <strong>Courses → Years</strong> — add/activate a year (e.g. 2nd Year MBBS)<br>
+        2️⃣ <strong>Courses → Modules</strong> — add a module (e.g. Anatomy)<br>
+        3️⃣ <strong>Courses → Year↔Module</strong> — link that module to the year<br>
+        4️⃣ <strong>Content → Subjects</strong> — add subjects inside the module (optional)<br>
+        5️⃣ <strong>Content → Past Papers</strong> — name a paper (college + year)<br>
+        6️⃣ <strong>Content → Questions</strong> — add MCQs, pick the module/subject/paper<br>
+      </div>
+      <div class="text-xs mt-2" style="opacity:.85">💡 You can add modules/subjects/questions to a "Coming Soon" year too — students just won't see it until you switch it to Active in Years.</div>
+      <div class="btn-row mt-3">
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:white" onclick="adminShowTab('courses')">🎓 Go to Courses</button>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:white" onclick="adminShowTab('content')">📚 Go to Content</button>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:white" onclick="adminShowTab('settings')">⚙️ AI / Settings</button>
+      </div>
+    </div>
+
     <!-- Key Metrics -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px">
       ${[
@@ -3643,6 +3715,15 @@ async function adminAddQuestion() {
   ['q_text','q_exp','q_img_url','q_exp_img_url','q_tags'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   ['q_img_preview','q_exp_img_preview'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
   for (let i = 0; i < 4; i++) { const el = document.getElementById(`q_opt_${i}`); if (el) el.value = ''; }
+  resetExtraOptions();
+}
+
+// Removes any 5th/6th option fields and their correct-answer entries,
+// returning the Add Question form to a clean 4-option state.
+function resetExtraOptions() {
+  for (let i = 4; i < 6; i++) document.getElementById(`q_opt_${i}`)?.closest('.input-group')?.remove();
+  const correctSel = document.getElementById('q_correct');
+  if (correctSel) [...correctSel.options].forEach(o => { if (parseInt(o.value) >= 4) o.remove(); });
   extraOptCount = 4;
 }
 
@@ -4250,23 +4331,35 @@ async function adminAppSettings() {
     <!-- AI Settings -->
     <div class="card" style="margin-bottom:12px">
       <div class="fw-700 mb-3">🤖 AI Tutor Settings</div>
+      <p class="text-xs text-muted mb-2">This powers the "🤖 Explain with AI" button students see during practice/review. Works with any OpenAI-compatible API (DeepSeek, OpenAI) or Google Gemini.</p>
       <label class="input-label">AI Provider</label>
-      <select id="ai_provider" class="input-field" title="AI provider" aria-label="AI provider" onchange="saveSetting('ai_provider',this.value)">
-        <option value="deepseek" ${S('ai_provider') === 'deepseek' ? 'selected' : ''}>DeepSeek</option>
-        <option value="openai" ${S('ai_provider') === 'openai' ? 'selected' : ''}>OpenAI GPT-4</option>
+      <select id="ai_provider" class="input-field" title="AI provider" aria-label="AI provider">
+        <option value="deepseek" ${S('ai_provider') === 'deepseek' || !S('ai_provider') ? 'selected' : ''}>DeepSeek</option>
+        <option value="openai" ${S('ai_provider') === 'openai' ? 'selected' : ''}>OpenAI GPT</option>
         <option value="gemini" ${S('ai_provider') === 'gemini' ? 'selected' : ''}>Google Gemini</option>
       </select>
+      <label class="input-label">AI API URL</label>
+      <input id="set_ai_url" class="input-field" value="${S('ai_api_url') || 'https://api.deepseek.com/v1'}" placeholder="e.g. https://api.deepseek.com/v1">
+      <div class="text-xs text-muted mb-2">DeepSeek: <code>https://api.deepseek.com/v1</code> · OpenAI: <code>https://api.openai.com/v1</code> · Gemini: <code>https://generativelanguage.googleapis.com/v1beta</code></div>
+      <label class="input-label">AI Model Name</label>
+      <input id="set_ai_model" class="input-field" value="${S('ai_model') || 'deepseek-chat'}" placeholder="e.g. deepseek-chat, gpt-4o-mini, gemini-1.5-flash">
       <label class="input-label">Global AI API Key (shared for all students)</label>
-      <input id="set_ai_key" class="input-field" type="password" value="${S('ai_api_key')}" placeholder="Enter global API key...">
-      <div class="text-xs text-muted mb-2">If set, students won't need their own key.</div>
+      <input id="set_ai_key" class="input-field" type="password" value="${S('ai_api_key')}" placeholder="Enter your API key...">
+      <div class="text-xs text-muted mb-2">Students never see or need their own key — this one key powers AI Tutor for everyone.</div>
+      <label class="input-label">AI Tutor Personality / Instructions</label>
+      <textarea id="set_ai_prompt" class="input-field" rows="3" style="resize:vertical">${S('ai_system_prompt') || 'You are an expert MBBS tutor for Pakistani medical students at LUMHS and affiliated colleges. Explain concepts clearly in simple English. Be concise, accurate, and encouraging.'}</textarea>
       <div class="flex-between mb-2">
         <div><div class="fw-600 text-sm">AI Tutor Feature</div><div class="text-xs text-muted">Enable AI explanations for students</div></div>
         <label class="toggle-switch">
-          <input type="checkbox" ${S('ai_enabled') !== 'false' ? 'checked' : ''} onchange="saveSetting('ai_enabled',this.checked)">
+          <input type="checkbox" id="set_ai_enabled" ${S('ai_enabled') !== 'false' ? 'checked' : ''}>
           <span class="toggle-knob"></span>
         </label>
       </div>
-      <button class="btn btn-primary" onclick="saveSetting('ai_api_key',document.getElementById('set_ai_key').value).then(()=>showToast('AI key saved ✓'))">Save AI Key</button>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="saveAISettings()">💾 Save AI Settings</button>
+        <button class="btn btn-primary" onclick="testAIConnection()">🔌 Test Connection</button>
+      </div>
+      <div id="aiTestResult" style="margin-top:10px"></div>
     </div>
 
     <!-- Audit Log -->
@@ -4276,6 +4369,39 @@ async function adminAppSettings() {
     </div>`;
 
   loadAuditLog();
+}
+
+async function saveAISettings() {
+  const provider = document.getElementById('ai_provider').value;
+  const url = document.getElementById('set_ai_url').value.trim();
+  const model = document.getElementById('set_ai_model').value.trim();
+  const key = document.getElementById('set_ai_key').value.trim();
+  const prompt = document.getElementById('set_ai_prompt').value.trim();
+  const enabled = document.getElementById('set_ai_enabled').checked;
+  await Promise.all([
+    saveSetting('ai_provider', provider),
+    saveSetting('ai_api_url', url),
+    saveSetting('ai_model', model),
+    saveSetting('ai_api_key', key),
+    saveSetting('ai_system_prompt', prompt),
+    saveSetting('ai_enabled', enabled)
+  ]);
+  await loadAppSettings(); // refresh the in-memory cache so it's used immediately
+  showToast('AI settings saved ✓');
+  logAdminAction('Updated AI Tutor settings');
+}
+
+async function testAIConnection() {
+  const el = document.getElementById('aiTestResult');
+  el.innerHTML = `<div class="spinner" style="margin:8px auto"></div>`;
+  // Save first so the test uses exactly what's on screen right now
+  await saveAISettings();
+  const reply = await callAIRaw('Reply with exactly one short sentence confirming you are connected.');
+  if (reply.ok) {
+    el.innerHTML = `<div class="badge badge-green">✅ Connected — AI replied: "${reply.text.slice(0,120)}"</div>`;
+  } else {
+    el.innerHTML = `<div class="badge badge-red">❌ Failed: ${reply.text}</div>`;
+  }
 }
 
 async function loadAuditLog() {
@@ -4958,9 +5084,25 @@ async function editPlan(id) {
   document.body.appendChild(overlay);
 }
 
-// College field on signup is free-text (student types their own college/university),
-// so no dropdown sync is needed here anymore. Kept as a no-op so older calls don't break.
-async function syncCollegesWithSignup() { /* no-op: su_college is now a free-text input */ }
+// College sync with signup dropdown — called on splash load
+async function syncCollegesWithSignup() {
+  const { data: colleges } = await db(
+    sb.from('colleges').select('name').eq('is_active', true).order('name'),
+    'Colleges sync failed'
+  );
+  const sel = document.getElementById('su_college');
+  if (!sel) return;
+  const fallback = [
+    'LUMHS Jamshoro',
+    'LUMHS Thatta',
+    'Bilawal Medical College Jamshoro',
+    'Indus Medical College',
+    'Mirpurkhas Medical College',
+    'PUMHS Nawabshah'
+  ];
+  const list = (colleges?.length ? colleges.map(c => c.name) : fallback);
+  sel.innerHTML = list.map(n => `<option value="${n}">${n}</option>`).join('');
+}
 
 // Show forgot password with dynamic contact email
 async function showForgotPw() {
@@ -5489,16 +5631,311 @@ async function logActivity(action, data = {}) {
   }), 'Log failed');
 }
 
-// ==================== SUPABASE SQL SCHEMA ====================
+// ==================== COMPLETE SUPABASE SQL SCHEMA ====================
 /*
-The full database schema lives in a separate file: lumhsian_pro_schema.sql
-(Paste its entire contents into Supabase Dashboard → SQL Editor → Run.)
-It includes a clean reset (drops old tables/policies/buckets first) plus
-the complete corrected schema — including the `past_papers` table and the
-`questions.paper_id` column that were missing from this app's original
-embedded schema.
-*/
+====================================================
+  PASTE THIS ENTIRE BLOCK IN SUPABASE SQL EDITOR
+  (Dashboard → SQL Editor → New Query → Paste → Run)
+====================================================
 
+-- ENABLE UUID EXTENSION
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============ CORE TABLES ============
+
+CREATE TABLE IF NOT EXISTS users (
+  email TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  gender TEXT DEFAULT 'male',
+  college TEXT,
+  joined BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+  last_active BIGINT,
+  last_heartbeat TIMESTAMPTZ,
+  current_screen TEXT,
+  show_on_leaderboard BOOLEAN DEFAULT FALSE,
+  is_admin BOOLEAN DEFAULT FALSE,
+  is_banned BOOLEAN DEFAULT FALSE,
+  profile_image TEXT,
+  phone TEXT,
+  year_of_study TEXT,
+  enrollment_number TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_stats (
+  email TEXT PRIMARY KEY REFERENCES users(email) ON DELETE CASCADE,
+  total_tests INTEGER DEFAULT 0,
+  total_questions INTEGER DEFAULT 0,
+  total_correct INTEGER DEFAULT 0,
+  best_score INTEGER DEFAULT 0,
+  streak INTEGER DEFAULT 0,
+  last_practice_date TEXT,
+  history JSONB DEFAULT '[]',
+  subject_stats JSONB DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS institutes (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  abbreviation TEXT,
+  city TEXT,
+  province TEXT,
+  logo_url TEXT,
+  website TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Alias: colleges table (same as institutes, keep both for compatibility)
+CREATE TABLE IF NOT EXISTS colleges (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  abbreviation TEXT,
+  city TEXT,
+  province TEXT,
+  logo_url TEXT,
+  website TEXT,
+  university TEXT DEFAULT 'LUMHS', -- parent university (future multi-uni support)
+  type TEXT DEFAULT 'medical',      -- medical | dental | other (future BDS/other support)
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS years (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  display_order INTEGER DEFAULT 1,
+  is_active BOOLEAN DEFAULT TRUE,
+  coming_soon_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS modules (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  icon_url TEXT,
+  color TEXT DEFAULT '#0f7e82',
+  display_order INTEGER DEFAULT 1,
+  category TEXT DEFAULT 'mbbs', -- mbbs | bds | mdcat | other (future multi-dept support)
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS year_modules (
+  id SERIAL PRIMARY KEY,
+  year_id INTEGER REFERENCES years(id) ON DELETE CASCADE,
+  module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+  display_order INTEGER DEFAULT 1,
+  UNIQUE(year_id, module_id)
+);
+
+CREATE TABLE IF NOT EXISTS subjects (
+  id SERIAL PRIMARY KEY,
+  module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  display_order INTEGER DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS questions (
+  id SERIAL PRIMARY KEY,
+  module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+  subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+  year_id INTEGER REFERENCES years(id) ON DELETE SET NULL,
+  text TEXT NOT NULL,
+  options JSONB NOT NULL DEFAULT '[]',
+  correct_answer INTEGER NOT NULL DEFAULT 0,
+  explanation TEXT,
+  image_url TEXT,
+  explanation_image_url TEXT,
+  difficulty TEXT DEFAULT 'medium' CHECK (difficulty IN ('easy','medium','hard')),
+  tags JSONB DEFAULT '[]',
+  is_published BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id SERIAL PRIMARY KEY,
+  email TEXT REFERENCES users(email) ON DELETE CASCADE,
+  question_id INTEGER REFERENCES questions(id) ON DELETE CASCADE,
+  added_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+  was_correct BOOLEAN,
+  UNIQUE(email, question_id)
+);
+
+CREATE TABLE IF NOT EXISTS announcements (
+  id SERIAL PRIMARY KEY,
+  title TEXT,
+  body TEXT,
+  emoji TEXT DEFAULT '📢',
+  image_url TEXT,
+  target_college TEXT,
+  type TEXT DEFAULT 'general',
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS feature_flags (
+  name TEXT PRIMARY KEY,
+  label TEXT,
+  description TEXT,
+  is_enabled BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  price NUMERIC DEFAULT 0,
+  billing_cycle TEXT DEFAULT 'month',
+  duration_days INTEGER DEFAULT 30,
+  features JSONB DEFAULT '[]',
+  is_active BOOLEAN DEFAULT FALSE,
+  is_featured BOOLEAN DEFAULT FALSE,
+  is_free BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_email TEXT REFERENCES users(email) ON DELETE CASCADE,
+  plan_id INTEGER REFERENCES subscription_plans(id),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending','active','expired','cancelled')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  approved_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id SERIAL PRIMARY KEY,
+  action TEXT NOT NULL,
+  details TEXT,
+  admin_email TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id SERIAL PRIMARY KEY,
+  user_email TEXT,
+  action TEXT,
+  data JSONB,
+  screen TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS media_library (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  url TEXT NOT NULL,
+  type TEXT,
+  tag TEXT DEFAULT 'general',
+  size INTEGER,
+  uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+  uploaded_by TEXT
+);
+
+-- ============ DEFAULT DATA ============
+
+INSERT INTO system_settings (key, value) VALUES
+  ('app_name', 'LUMHSian Pro'),
+  ('app_tagline', 'AI-powered MBBS QBank · Past Papers'),
+  ('maintenance_mode', 'false'),
+  ('signup_enabled', 'true'),
+  ('otp_required', 'true'),
+  ('leaderboard_public', 'true'),
+  ('payment_enabled', 'false'),
+  ('currency', 'PKR'),
+  ('free_trial_days', '7'),
+  ('payment_gateway', 'manual'),
+  ('ai_enabled', 'true'),
+  ('ai_provider', 'deepseek'),
+  ('primary_color', '#0f7e82'),
+  ('accent_color', '#19b2a6'),
+  ('privacy_message', 'Your data is safe with us and is never shared with third parties.'),
+  ('contact_email', 'lumhsianpro@gmail.com')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO feature_flags (name, label, description, is_enabled) VALUES
+  ('ai_tutor', '🤖 AI Tutor', 'AI-powered explanation for MCQs', TRUE),
+  ('leaderboard', '🏆 Leaderboard', 'Show student rankings', TRUE),
+  ('bookmarks', '📖 Bookmarks', 'Save MCQs for later review', TRUE),
+  ('past_papers', '📜 Past Papers', 'Timed past paper exams', TRUE),
+  ('planner', '📅 Study Planner', 'Daily goal and streak system', TRUE),
+  ('dark_mode', '🌙 Dark Mode', 'Dark theme for students', TRUE),
+  ('notifications', '🔔 Notifications', 'Browser push notifications', FALSE),
+  ('adaptive_quiz', '🧠 Adaptive Quiz', 'Difficulty adapts to performance', FALSE),
+  ('negative_marking', '➖ Negative Marking', 'Deduct marks for wrong answers', FALSE),
+  ('video_explanations', '🎥 Video Explanations', 'Video support in explanations', FALSE),
+  ('random_quiz', '🎲 Random Quiz', 'Generate random practice quiz', TRUE),
+  ('wrong_review', '❌ Wrong Q Review', 'Review only wrong questions', TRUE),
+  ('subscriptions', '💎 Subscriptions', 'Paid subscription system', FALSE)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO colleges (name, abbreviation, city, province, is_active) VALUES
+  ('LUMHS Jamshoro', 'LUMHS', 'Jamshoro', 'Sindh', TRUE),
+  ('Indus Medical College', 'IMC', 'Tando Muhammad Khan', 'Sindh', TRUE),
+  ('Bilawal Medical College', 'BMC', 'Jamshoro', 'Sindh', TRUE),
+  ('Mirpurkhas Medical College', 'MMC', 'Mirpurkhas', 'Sindh', TRUE),
+  ('LUMHS Thatta', 'LUMHS-T', 'Thatta', 'Sindh', TRUE),
+  ('PUMHS Nawabshah', 'PUMHS', 'Nawabshah', 'Sindh', TRUE)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO years (name, display_order, is_active) VALUES
+  ('1st Year MBBS', 1, FALSE),
+  ('2nd Year MBBS', 2, TRUE),
+  ('3rd Year MBBS', 3, FALSE),
+  ('4th Year MBBS', 4, FALSE),
+  ('Final Year MBBS', 5, FALSE)
+ON CONFLICT DO NOTHING;
+
+-- ============ ROW LEVEL SECURITY ============
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_stats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bookmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE years ENABLE ROW LEVEL SECURITY;
+ALTER TABLE modules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE year_modules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subjects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE feature_flags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscription_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE media_library ENABLE ROW LEVEL SECURITY;
+ALTER TABLE colleges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE institutes ENABLE ROW LEVEL SECURITY;
+
+-- Allow all anon access (we handle auth in app layer)
+DO $$ DECLARE t TEXT;
+BEGIN FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+  EXECUTE format('DROP POLICY IF EXISTS "allow_all_%s" ON %I', t, t);
+  EXECUTE format('CREATE POLICY "allow_all_%s" ON %I FOR ALL USING (true) WITH CHECK (true)', t, t);
+END LOOP; END $$;
+
+-- ============ STORAGE BUCKETS ============
+-- Run these in Supabase Storage UI or SQL:
+-- CREATE BUCKET "module-images" (public: true)
+-- CREATE BUCKET "question-images" (public: true)
+
+-- ============ INDEXES ============
+CREATE INDEX IF NOT EXISTS idx_questions_module ON questions(module_id);
+CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject_id);
+CREATE INDEX IF NOT EXISTS idx_questions_year ON questions(year_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_email ON bookmarks(email);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_email);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_email);
+*/
 </script>
 
 <script>
