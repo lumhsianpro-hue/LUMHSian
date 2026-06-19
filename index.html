@@ -2461,7 +2461,7 @@ async function renderAdminPanel() {
           ['⚙️','Settings','adminTab_settings'],
           ['📈','Analytics','adminTab_analytics']
         ].map(([icon,label,id]) => `
-          <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="flex-shrink:0">
+          <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="flex-shrink:0;width:auto;padding:9px 14px">
             ${icon} ${label}
           </button>`).join('')}
       </div>
