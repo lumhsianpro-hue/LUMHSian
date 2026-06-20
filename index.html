@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>LUMHSian Pro</title>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -654,6 +657,12 @@ emailjs.init({ publicKey: 'jZRg_i9L4fN6jOWOZ' });
 const EMAIL_SERVICE = 'service_id97kzn', EMAIL_TEMPLATE = 'template_lg5s1wj';
 const ADMIN_EMAIL = 'lumhsianpro@gmail.com'; // used as contact email fallback only
 
+// Bump this string on every deploy where you want every logged-in user to be
+// forced back to the login screen once (e.g. after a meaningful update).
+// They do NOT need to sign up again — their account stays, this only clears
+// the saved auto-login session so they re-enter their password once.
+const APP_VERSION = '2026-06-20.1';
+
 // ==================== STATE ====================
 let currentUser = null;
 let selectedYear = null;
@@ -883,6 +892,18 @@ async function doLogin() {
 }
 
 // showForgotPw defined below with dynamic email from settings
+
+// Runs once per app load, BEFORE auto-login. If this build's version differs
+// from what's saved on the device, it clears the saved session (forcing one
+// fresh login) and any leftover caches, then remembers the new version so
+// it won't trigger again until the next deploy bumps APP_VERSION.
+function forceReloginOnUpdate() {
+  const savedVersion = localStorage.getItem('app_version');
+  if (savedVersion === APP_VERSION) return false;
+  localStorage.removeItem('lum_sess');
+  localStorage.setItem('app_version', APP_VERSION);
+  return savedVersion !== null; // true only if this was an actual update, not first-ever visit
+}
 
 async function tryAutoLogin() {
   const sess = localStorage.getItem('lum_sess');
@@ -6130,8 +6151,11 @@ window.onload = async function() {
   await loadFeatureFlags();
   // 2. Sync colleges into signup dropdown
   await syncCollegesWithSignup();
+  // 2.5 Force a fresh login once after a real app update (account stays, no re-signup)
+  const wasUpdated = forceReloginOnUpdate();
   // 3. Try auto login
   await tryAutoLogin();
+  if (wasUpdated && !currentUser) showToast('App updated ✨ Please login again');
   // 4. Start heartbeat & notifications if logged in as student
   if (currentUser && !currentUser.is_admin) {
     startHeartbeat();
