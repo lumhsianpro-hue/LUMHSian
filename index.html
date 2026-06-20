@@ -132,7 +132,7 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 .list-item-sub{font-size:12px;color:var(--ink-4);margin-top:2px}
 
 /* ===== TABS ===== */
-.tab-bar{display:flex;background:var(--surface-3);border-radius:var(--radius-xl);padding:4px;gap:2px;margin-bottom:16px;overflow-x:auto;scrollbar-width:none}
+.tab-bar{display:flex;flex-wrap:wrap;background:var(--surface-3);border-radius:var(--radius-xl);padding:4px;gap:2px;margin-bottom:16px}
 .tab-bar::-webkit-scrollbar{display:none}
 .tab-btn{flex-shrink:0;padding:9px 16px;border-radius:var(--radius-full);font-size:13px;font-weight:600;border:none;background:transparent;color:var(--ink-4);cursor:pointer;transition:all var(--transition);white-space:nowrap}
 .tab-btn.active{background:var(--surface);color:var(--teal-700);box-shadow:var(--shadow-sm)}
@@ -1105,13 +1105,16 @@ async function renderHome() {
     <!-- Quick Actions -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
       <div class="quick-tile" onclick="navGo('search')"><span class="quick-tile-icon">🔍</span><span class="quick-tile-label">Search</span></div>
+      <div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">🤖</span><span class="quick-tile-label">AI Tutor</span></div>
       <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">📖</span><span class="quick-tile-label">Saved</span></div>
       <div class="quick-tile" onclick="navGo('planner')"><span class="quick-tile-icon">📅</span><span class="quick-tile-label">Planner</span></div>
-      <div class="quick-tile" onclick="navGo('ranking')"><span class="quick-tile-icon">🏆</span><span class="quick-tile-label">Ranks</span></div>
     </div>
 
+    <div class="section-label">📚 Modules</div>
+    ${moduleHtml}
+
     <!-- Overall progress -->
-    <div class="card" style="margin-bottom:12px">
+    <div class="card" style="margin:16px 0 12px">
       <div class="flex-between mb-1">
         <span class="text-sm fw-600">Overall Progress</span>
         <span class="text-sm fw-700" style="color:var(--teal-700)">${stats.total_correct || 0} / ${stats.total_questions || 0} correct</span>
@@ -1122,15 +1125,6 @@ async function renderHome() {
         <button class="btn btn-ghost btn-sm" style="padding:4px 10px" onclick="navGo('stats')">Full stats →</button>
       </div>
     </div>
-
-    <!-- Quick actions -->
-    <div class="btn-row" style="margin-bottom:16px">
-      <button class="btn btn-secondary btn-sm" onclick="navGo('bookmarks')">📖 Bookmarks</button>
-      <button class="btn btn-secondary btn-sm" onclick="navGo('planner')">📅 Planner</button>
-    </div>
-
-    <div class="section-label">📚 Modules</div>
-    ${moduleHtml}
 
     <div style="height:16px"></div>`;
 
@@ -1806,10 +1800,15 @@ function reviewJump(i) { window.reviewState.currentIndex = i; renderReview(); }
 
 // ==================== AI TUTOR ====================
 function openAITutor(questionText, explanation) {
-  currentAIContext = { questionText, explanation };
+  currentAIContext = questionText ? { questionText, explanation } : null;
   aiConversation = [];
   document.getElementById('aiChatHistory').innerHTML = '';
   openModal('modalAI');
+  if (!questionText) {
+    // Opened generally (not tied to a specific MCQ) — just greet, let the student type their own question
+    appendAIMsg('assistant', "Hi! I'm your AI tutor. Ask me anything about your MBBS subjects — anatomy, physiology, pharmacology, or any topic you're stuck on. Aap Roman Urdu mein bhi pooch sakte hain.");
+    return;
+  }
   const userMsg = explanation
     ? `Explain this MCQ for a 2nd year MBBS student:\n\nQuestion: ${questionText}\n\nOfficial explanation: ${explanation}\n\nGive a clear, concise explanation in simple language.`
     : `Explain this MCQ for a 2nd year MBBS student:\n\nQuestion: ${questionText}\n\nGive a clear, concise explanation.`;
@@ -2242,8 +2241,9 @@ async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">📅</div><div><div class="list-item-title">Change Year</div><div class="list-item-sub">Currently: ${selectedYear?.name || 'Not set'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
-    <div class="list-item no-hover">
-      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_api_key','') && getSetting('ai_enabled','true')!=='false' ? '✅ Available' : '⚠️ Not set up by admin yet'}</div></div></div>
+    <div class="list-item" onclick="openAITutor()">
+      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_api_key','') && getSetting('ai_enabled','true')!=='false' ? '✅ Tap to ask a question' : '⚠️ Not set up by admin yet'}</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
     </div>
     <div class="list-item no-hover" onclick="toggleDarkMode()">
       <div class="list-item-left"><div class="list-item-icon">🌙</div><div><div class="list-item-title">Dark Mode</div><div class="list-item-sub">${localStorage.getItem('dark_mode')==='true'?'On':'Off'}</div></div></div>
@@ -2576,23 +2576,21 @@ async function renderAdminPanel() {
     <div id="adminLiveBar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px"></div>
 
     <!-- Admin Tab Navigation -->
-    <div style="overflow-x:auto;scrollbar-width:none;margin-bottom:20px">
-      <div style="display:flex;gap:6px;min-width:max-content;padding-bottom:4px">
-        ${[
-          ['📊','Overview','adminTab_overview'],
-          ['👥','Students','adminTab_students'],
-          ['🎓','Courses','adminTab_courses'],
-          ['📚','Content','adminTab_content'],
-          ['📢','Announce','adminTab_announce'],
-          ['🏫','Colleges','adminTab_colleges'],
-          ['💰','Monetize','adminTab_money'],
-          ['⚙️','Settings','adminTab_settings'],
-          ['📈','Analytics','adminTab_analytics']
-        ].map(([icon,label,id]) => `
-          <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="flex-shrink:0">
-            ${icon} ${label}
-          </button>`).join('')}
-      </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:20px">
+      ${[
+        ['📊','Overview','adminTab_overview'],
+        ['👥','Students','adminTab_students'],
+        ['🎓','Courses','adminTab_courses'],
+        ['📚','Content','adminTab_content'],
+        ['📢','Announce','adminTab_announce'],
+        ['🏫','Colleges','adminTab_colleges'],
+        ['💰','Monetize','adminTab_money'],
+        ['⚙️','Settings','adminTab_settings'],
+        ['📈','Analytics','adminTab_analytics']
+      ].map(([icon,label,id]) => `
+        <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:8px 4px">
+          ${icon} ${label}
+        </button>`).join('')}
     </div>
 
     <div id="adminContent"></div>`;
