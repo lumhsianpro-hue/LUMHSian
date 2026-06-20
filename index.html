@@ -2185,6 +2185,14 @@ async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">🏫</div><div><div class="list-item-title">College</div><div class="list-item-sub">${currentUser.college || 'Not set — tap to add'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
+    <div class="list-item no-hover" onclick="editPhone()">
+      <div class="list-item-left"><div class="list-item-icon">📱</div><div><div class="list-item-title">Phone Number</div><div class="list-item-sub">${currentUser.phone || 'Not set — tap to add'}</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>
+    <div class="list-item no-hover" onclick="editEnrollment()">
+      <div class="list-item-left"><div class="list-item-icon">🆔</div><div><div class="list-item-title">Enrollment Number</div><div class="list-item-sub">${currentUser.enrollment_number || 'Not set — tap to add'}</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>
     <div class="list-item no-hover" onclick="openModal('modalPw')">
       <div class="list-item-left"><div class="list-item-icon">🔒</div><div><div class="list-item-title">Change Password</div></div></div>
       <span style="color:var(--ink-4)">›</span>
@@ -2253,6 +2261,52 @@ function editCollege() {
           await db(sb.from('users').update({college:c}).eq('email','${currentUser.email}'),'Update failed');
           currentUser.college=c;
           showToast('College updated ✓');
+          this.closest('[style*=fixed]').remove();
+          renderProfile();
+        })()">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function editPhone() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px">
+      <div class="fw-700 mb-1">📱 Phone Number</div>
+      <div class="text-xs text-muted mb-3">Used by admin for contact regarding your account</div>
+      <input id="_ep_phone" class="input-field" type="tel" placeholder="03XX-XXXXXXX" value="${currentUser.phone||''}">
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="(async()=>{
+          const p=document.getElementById('_ep_phone').value.trim();
+          await db(sb.from('users').update({phone:p}).eq('email','${currentUser.email}'),'Update failed');
+          currentUser.phone=p;
+          showToast('Phone updated ✓');
+          this.closest('[style*=fixed]').remove();
+          renderProfile();
+        })()">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function editEnrollment() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px">
+      <div class="fw-700 mb-1">🆔 Enrollment Number</div>
+      <div class="text-xs text-muted mb-3">Your official college enrollment / roll number</div>
+      <input id="_ee_enroll" class="input-field" placeholder="e.g. 2023-LUMHS-123" value="${currentUser.enrollment_number||''}">
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="(async()=>{
+          const v=document.getElementById('_ee_enroll').value.trim();
+          await db(sb.from('users').update({enrollment_number:v}).eq('email','${currentUser.email}'),'Update failed');
+          currentUser.enrollment_number=v;
+          showToast('Enrollment number updated ✓');
           this.closest('[style*=fixed]').remove();
           renderProfile();
         })()">Save</button>
@@ -2748,6 +2802,7 @@ async function adminStudents() {
         </select>
         <select id="filterStatus" class="input-field" title="Filter by status" aria-label="Filter by status" style="flex:1;margin:0" onchange="filterStudents()">
           <option value="">All Status</option>
+          <option value="online">🟢 Online Now</option>
           <option value="active">Active (7d)</option>
           <option value="inactive">Inactive</option>
           <option value="banned">Banned</option>
@@ -2758,9 +2813,40 @@ async function adminStudents() {
         <button class="btn btn-secondary btn-xs" onclick="exportStudentsCSV()">📥 Export CSV</button>
       </div>
     </div>
+    <div id="studentsLiveStrip" style="margin-bottom:12px"></div>
     <div id="studentsList"></div>`;
 
   await loadStudentsData();
+}
+
+// Quick horizontal strip of who's online right now — tap any avatar to open full profile
+function renderStudentsLiveStrip() {
+  const el = document.getElementById('studentsLiveStrip');
+  if (!el) return;
+  const now = Date.now();
+  const online = allStudentsData.filter(u => isUserOnline(u, now));
+  if (!online.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="card" style="padding:12px">
+      <div class="flex-between mb-2">
+        <div class="fw-700 text-sm">🟢 Online Now (${online.length})</div>
+      </div>
+      <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px">
+        ${online.map(u => `
+          <div onclick="adminViewStudentDetail('${u.email}')" style="cursor:pointer;text-align:center;flex-shrink:0;width:64px">
+            <div style="width:44px;height:44px;border-radius:50%;background:var(--teal-100);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto;position:relative;border:2px solid var(--green)">
+              ${u.gender === 'female' ? '👩‍⚕️' : '👨‍⚕️'}
+              <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;background:var(--green);border:2px solid var(--surface);border-radius:50%"></span>
+            </div>
+            <div class="text-xs" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(u.name||'').split(' ')[0]||u.email.split('@')[0]}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+// Single source of truth for "is this user online right now" — heartbeat within last 2 minutes
+function isUserOnline(u, now = Date.now()) {
+  return !!(u.last_heartbeat && (now - new Date(u.last_heartbeat).getTime()) < 120000);
 }
 
 let allStudentsData = [];
@@ -2796,10 +2882,13 @@ function filterStudents() {
   const status = document.getElementById('filterStatus')?.value || '';
   const now = Date.now();
 
+  renderStudentsLiveStrip();
+
   let filtered = allStudentsData.filter(u => {
     if (search && !u.name?.toLowerCase().includes(search) && !u.email?.toLowerCase().includes(search)) return false;
     if (college && u.college !== college) return false;
     if (gender && u.gender !== gender) return false;
+    if (status === 'online' && !isUserOnline(u, now)) return false;
     if (status === 'active' && (u.last_active < now - 604800000)) return false;
     if (status === 'inactive' && (u.last_active > now - 604800000)) return false;
     if (status === 'banned' && !u.is_banned) return false;
@@ -2815,10 +2904,10 @@ function filterStudents() {
   list.innerHTML = filtered.map(u => {
     const lastActive = u.last_active ? timeAgo(u.last_active) : 'Never';
     const joinedDate = u.joined ? new Date(u.joined).toLocaleDateString() : '?';
-    const isOnline = u.last_active > now - 300000; // 5 min
+    const isOnline = isUserOnline(u, now);
     const isActiveToday = u.last_active > now - 86400000;
     return `
-      <div class="admin-row" id="student_${u.email.replace(/[^a-zA-Z0-9]/g,'_')}">
+      <div class="admin-row" id="student_${u.email.replace(/[^a-zA-Z0-9]/g,'_')}" onclick="adminViewStudentDetail('${u.email}')" style="cursor:pointer">
         <div class="admin-row-left">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
             <div style="width:36px;height:36px;border-radius:50%;background:var(--teal-100);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">${u.gender === 'female' ? '👩‍⚕️' : '👨‍⚕️'}</div>
@@ -2838,8 +2927,8 @@ function filterStudents() {
             <span class="chip" style="font-size:11px">🔥 ${u.stats?.streak || 0} streak</span>
           </div>
         </div>
-        <div class="admin-row-actions">
-          <button class="btn btn-secondary btn-xs" onclick="adminViewStudentDetail('${u.email}')">📊 Stats</button>
+        <div class="admin-row-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-secondary btn-xs" onclick="adminViewStudentDetail('${u.email}')">📊 Full Profile</button>
           <button class="btn btn-secondary btn-xs" onclick="adminResetPassword('${u.email}')">🔑 Reset PW</button>
           <button class="btn ${u.is_banned ? 'btn-secondary' : 'btn-danger'} btn-xs" onclick="adminToggleBan('${u.email}',${u.is_banned})">${u.is_banned ? '✅ Unban' : '🚫 Ban'}</button>
           <button class="btn btn-danger btn-xs" onclick="adminDeleteUser('${u.email}')">🗑 Delete</button>
@@ -2858,25 +2947,51 @@ function timeAgo(ts) {
 }
 
 async function adminViewStudentDetail(email) {
-  const u = allStudentsData.find(s => s.email === email);
-  if (!u) return;
-  const s = u.stats || {};
+  // Robust: works whether called from the cached list, the live strip, or
+  // the Analytics > Realtime tab — fetches fresh if not already in cache.
+  let u = allStudentsData.find(s => s.email === email);
+  let s = u?.stats;
+  if (!u) {
+    showLoading(true, 'Loading profile...');
+    const { data: userRow } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'User fetch failed');
+    const { data: statRow } = await db(sb.from('user_stats').select('*').eq('email', email).maybeSingle(), 'Stats fetch failed');
+    showLoading(false);
+    if (!userRow) return showToast('Student not found');
+    s = statRow || {};
+    const acc = s.total_questions ? Math.round((s.total_correct / s.total_questions) * 100) : 0;
+    u = { ...userRow, stats: s, acc };
+  }
+  s = s || u.stats || {};
   const history = (s.history || []).slice(0, 10);
   const avatar = u.gender === 'female' ? '👩‍⚕️' : '👨‍⚕️';
+  const online = isUserOnline(u);
+
+  // Recent activity (best-effort — table may be empty, that's fine)
+  const { data: activity } = await db(
+    sb.from('activity_logs').select('action,screen,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(8),
+    'Activity fetch failed'
+  );
+
   const overlay = document.createElement('div');
+  overlay.id = 'studentDetailOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:0;width:100%;max-width:440px;max-height:90vh;overflow-y:auto">
       <!-- Header -->
       <div style="background:linear-gradient(135deg,var(--teal-800),var(--teal-600));border-radius:var(--radius-xl) var(--radius-xl) 0 0;padding:24px;text-align:center;color:white;position:relative">
         <button onclick="this.closest('[style*=fixed]').remove()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px">✕</button>
-        <div style="font-size:52px;margin-bottom:8px">${avatar}</div>
-        <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">${u.name}</div>
+        <div style="font-size:52px;margin-bottom:8px;position:relative;display:inline-block">
+          ${u.profile_image ? `<img src="${u.profile_image}" style="width:56px;height:56px;border-radius:50%;object-fit:cover" onerror="this.style.display='none'">` : avatar}
+          <span style="position:absolute;bottom:-2px;right:-6px;width:14px;height:14px;border-radius:50%;border:2px solid var(--teal-700);background:${online ? 'var(--green)' : '#9ca3af'}"></span>
+        </div>
+        <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">${u.name || 'Unknown'}</div>
         <div style="font-size:12px;opacity:.7;margin-top:2px">${u.email}</div>
+        <div style="font-size:11px;margin-top:4px;font-weight:700;color:${online ? '#86efac' : 'rgba(255,255,255,.6)'}">${online ? '🟢 Online now' : '⚪ Offline · last seen ' + (u.last_active ? timeAgo(u.last_active) : 'never')}</div>
         <div style="margin-top:8px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap">
           <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🏫 ${u.college||'Unknown'}</span>
           <span style="background:rgba(255,255,255,.2);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">${u.gender==='female'?'👩‍⚕️ Female':'👨‍⚕️ Male'}</span>
           ${u.is_banned ? '<span style="background:rgba(220,38,38,.4);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🚫 Banned</span>' : '<span style="background:rgba(5,150,105,.3);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">✅ Active</span>'}
+          ${u.is_admin ? '<span style="background:rgba(245,158,11,.4);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">⭐ Admin</span>' : ''}
         </div>
       </div>
       <!-- Body -->
@@ -2890,18 +3005,30 @@ async function adminViewStudentDetail(email) {
           <div class="stat-box"><div class="stat-val">${s?.total_correct||0}</div><div class="stat-key">Correct</div></div>
           <div class="stat-box"><div class="stat-val">${s?.streak||0}🔥</div><div class="stat-key">Streak</div></div>
         </div>
-        <!-- Info -->
+        <!-- Full Profile Info -->
         <div class="card" style="margin-bottom:12px;padding:14px">
+          <div class="flex-between mb-2"><span class="fw-700 text-sm">👤 Profile Details</span>
+            <button class="btn btn-ghost btn-xs" onclick="adminEditStudentInfo('${u.email}')">✏️ Edit</button>
+          </div>
+          <div class="text-xs text-muted mb-1">📧 Email: <strong>${u.email}</strong></div>
+          <div class="text-xs text-muted mb-1">📱 Phone: <strong>${u.phone || '<span style="color:var(--amber)">Not set</span>'}</strong></div>
+          <div class="text-xs text-muted mb-1">🆔 Enrollment No: <strong>${u.enrollment_number || '<span style="color:var(--amber)">Not set</span>'}</strong></div>
+          <div class="text-xs text-muted mb-1">📚 Year of Study: <strong>${u.year_of_study || '<span style="color:var(--amber)">Not set</span>'}</strong></div>
+          <div class="text-xs text-muted mb-1">🏫 College: <strong>${u.college || 'N/A'}</strong></div>
           <div class="text-xs text-muted mb-1">📅 Joined: <strong>${u.joined ? new Date(u.joined).toLocaleDateString() : 'N/A'}</strong></div>
-          <div class="text-xs text-muted mb-1">⏰ Last active: <strong>${timeAgo(u.last_active)}</strong></div>
-          <div class="text-xs text-muted">📺 Last screen: <strong>${u.current_screen || 'N/A'}</strong></div>
+          <div class="text-xs text-muted">📺 Current/Last screen: <strong>${u.current_screen || 'N/A'}</strong></div>
         </div>
+        ${activity?.length ? `<div class="card" style="padding:14px;margin-bottom:12px">
+          <div class="fw-600 mb-2">🕓 Recent Activity</div>
+          ${activity.map(a=>`<div class="flex-between mb-1"><span class="text-xs">${a.action||''}${a.screen?' · '+a.screen:''}</span><span class="text-xs text-muted">${timeAgo(new Date(a.created_at).getTime())}</span></div>`).join('')}
+        </div>` : ''}
         ${history.length ? `<div class="card" style="padding:14px;margin-bottom:12px">
           <div class="fw-600 mb-2">📜 Recent Tests</div>
           ${history.map(h=>`<div class="flex-between mb-1"><span class="text-xs">${h.module||''}</span><span class="text-xs text-muted">${h.date} · <strong>${h.percent}%</strong></span></div>`).join('')}
         </div>` : ''}
         <!-- Actions -->
         <div class="btn-row">
+          <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard?.writeText('${u.email}');showToast('Email copied')">📋 Copy Email</button>
           <button class="btn btn-secondary btn-sm" onclick="adminResetPassword('${u.email}')">🔑 Reset PW</button>
           <button class="btn ${u.is_banned?'btn-secondary':'btn-danger'} btn-sm" onclick="adminToggleBan('${u.email}',${u.is_banned})">${u.is_banned?'✅ Unban':'🚫 Ban'}</button>
           <button class="btn btn-ghost btn-sm" onclick="this.closest('[style*=fixed]').remove()">Close</button>
@@ -2909,6 +3036,62 @@ async function adminViewStudentDetail(email) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+}
+
+// Lets admin fill in/edit fields the student themselves can't set yet from the app UI
+// (phone, enrollment number, year, college, name, gender) — fully controllable from one place.
+async function adminEditStudentInfo(email) {
+  let u = allStudentsData.find(s => s.email === email);
+  if (!u) {
+    const { data } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'User fetch failed');
+    u = data;
+  }
+  if (!u) return showToast('Student not found');
+  const { data: years } = await db(sb.from('years').select('name').order('display_order'), 'Years error');
+  const { data: colleges } = await db(sb.from('colleges').select('name').order('name'), 'Colleges error');
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.85);z-index:10003;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto">
+      <div class="fw-700 mb-1">✏️ Edit Student Info</div>
+      <div class="text-xs text-muted mb-3">${email}</div>
+      <label class="text-xs text-muted">Full Name</label>
+      <input id="_ei_name" class="input-field mt-1" value="${u.name || ''}">
+      <label class="text-xs text-muted mt-2" style="display:block">Phone</label>
+      <input id="_ei_phone" class="input-field mt-1" placeholder="03XX-XXXXXXX" value="${u.phone || ''}">
+      <label class="text-xs text-muted mt-2" style="display:block">Enrollment Number</label>
+      <input id="_ei_enroll" class="input-field mt-1" placeholder="e.g. 2023-LUMHS-123" value="${u.enrollment_number || ''}">
+      <label class="text-xs text-muted mt-2" style="display:block">Year of Study</label>
+      <select id="_ei_year" class="input-field mt-1">
+        <option value="">Not set</option>
+        ${(years||[]).map(y => `<option value="${y.name}" ${u.year_of_study===y.name?'selected':''}>${y.name}</option>`).join('')}
+      </select>
+      <label class="text-xs text-muted mt-2" style="display:block">College</label>
+      <select id="_ei_college" class="input-field mt-1">
+        <option value="">Not set</option>
+        ${(colleges||[]).map(c => `<option value="${c.name}" ${u.college===c.name?'selected':''}>${c.name}</option>`).join('')}
+      </select>
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="adminSaveStudentInfo('${email}')">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function adminSaveStudentInfo(email) {
+  const name = document.getElementById('_ei_name').value.trim();
+  const phone = document.getElementById('_ei_phone').value.trim();
+  const enrollment_number = document.getElementById('_ei_enroll').value.trim();
+  const year_of_study = document.getElementById('_ei_year').value;
+  const college = document.getElementById('_ei_college').value;
+  if (!name) return showToast('Name cannot be empty');
+  await db(sb.from('users').update({ name, phone, enrollment_number, year_of_study, college }).eq('email', email), 'Update failed');
+  showToast('Student info updated ✓');
+  document.querySelector('[style*="z-index:10003"]')?.remove();
+  document.getElementById('studentDetailOverlay')?.remove();
+  await loadStudentsData();
+  adminViewStudentDetail(email);
 }
 
 async function adminResetPassword(email) {
@@ -2953,10 +3136,10 @@ async function adminDeleteUser(email) {
 }
 
 function exportStudentsCSV() {
-  const rows = [['Name', 'Email', 'College', 'Gender', 'Joined', 'Last Active', 'Tests', 'Accuracy%', 'Streak', 'Banned']];
+  const rows = [['Name', 'Email', 'Phone', 'Enrollment No', 'College', 'Year', 'Gender', 'Joined', 'Last Active', 'Tests', 'Accuracy%', 'Streak', 'Banned']];
   for (const u of allStudentsData) {
     rows.push([
-      u.name, u.email, u.college || '', u.gender,
+      u.name, u.email, u.phone || '', u.enrollment_number || '', u.college || '', u.year_of_study || '', u.gender,
       u.joined ? new Date(u.joined).toLocaleDateString() : '',
       u.last_active ? new Date(u.last_active).toLocaleDateString() : '',
       u.stats?.total_tests || 0, u.acc, u.stats?.streak || 0, u.is_banned ? 'Yes' : 'No'
@@ -4545,7 +4728,7 @@ async function analyticsRealtime() {
         <button class="btn btn-ghost btn-xs" onclick="analyticsRealtime()">🔄 Refresh</button>
       </div>
       ${online.length ? online.map(u => `
-        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="adminViewStudentDetail('${u.email}')">
           <div>
             <div class="fw-600 text-sm">${u.name || u.email}</div>
             <div class="text-xs text-muted">${u.college || 'No college'} · ${u.current_screen ? '📍 ' + u.current_screen : 'Active'}</div>
