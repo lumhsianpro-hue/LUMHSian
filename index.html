@@ -7,8 +7,8 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>LUMHSian Pro</title>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
 /* ===== RESET & ROOT ===== */
@@ -241,6 +241,10 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 .splash-tab{flex:1;padding:10px;border-radius:var(--radius-full);font-size:14px;font-weight:600;text-align:center;cursor:pointer;border:none;background:transparent;color:rgba(255,255,255,.6);transition:all var(--transition)}
 .splash-tab.active{background:white;color:var(--teal-800)}
 .splash-input{width:100%;padding:13px 18px;border:1.5px solid rgba(255,255,255,.15);border-radius:var(--radius-full);font-size:15px;font-family:var(--font-body);background:rgba(255,255,255,.08);color:white;outline:none;display:block;margin-bottom:10px;transition:all var(--transition)}
+.splash-field-label{display:block;font-size:12px;font-weight:600;color:rgba(255,255,255,.55);margin:0 4px 6px;letter-spacing:.2px}
+.splash-field-error{display:none;font-size:12px;color:#ff6b6b;font-weight:600;margin:-4px 4px 10px}
+.splash-field-error.show{display:block}
+.splash-input.field-invalid{border-color:#ff6b6b;background:rgba(255,107,107,.08)}
 .splash-input:focus{border-color:var(--teal-300);background:rgba(255,255,255,.12)}
 .splash-input::placeholder{color:rgba(255,255,255,.35)}
 .splash-input option{background:#0a4a4a;color:white}
@@ -393,6 +397,10 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
       <span class="nav-item-icon">🏠</span>
       <span class="nav-item-label">Home</span>
     </button>
+    <button class="nav-item" onclick="navGo('modules')" id="nav-modules">
+      <span class="nav-item-icon">📚</span>
+      <span class="nav-item-label">Modules</span>
+    </button>
     <button class="nav-item" onclick="navGo('search')" id="nav-search">
       <span class="nav-item-icon">🔍</span>
       <span class="nav-item-label">Search</span>
@@ -431,46 +439,44 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
       <span style="background:rgba(255,255,255,.1);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;color:rgba(255,255,255,.7)">🏆 Leaderboard</span>
     </div>
     
-    <div class="splash-auth-tabs">
-      <button class="splash-tab active" id="tab-signup" onclick="switchAuthTab('signup')">Sign Up</button>
-      <button class="splash-tab" id="tab-login" onclick="switchAuthTab('login')">Login</button>
-    </div>
-
-    <!-- SIGNUP FORM -->
-    <div id="authSignup">
-      <input type="text" id="su_name" class="splash-input" placeholder="Full name">
-      <input type="email" id="su_email" class="splash-input" placeholder="Email address">
-      <div class="splash-pw-wrap">
-        <input type="password" id="su_pass" class="splash-input" placeholder="Password (min. 6 chars)">
-        <button type="button" class="splash-pw-toggle" onclick="togglePw('su_pass')">👁</button>
-      </div>
-      <select id="su_gender" class="splash-input" title="Gender" aria-label="Gender">
-        <option value="male">👨‍⚕️ Male</option>
-        <option value="female">👩‍⚕️ Female</option>
-      </select>
-      <select id="su_college" class="splash-input" title="Your college" aria-label="Your college">
-        <option value="">Select your college...</option>
-      </select>
-      <div class="splash-otp-row">
-        <input type="text" id="su_otp" class="splash-input" placeholder="Enter OTP" maxlength="6">
-        <button class="otp-send-btn" id="otpBtn" onclick="sendOTP()">Send OTP</button>
-      </div>
-      <div class="otp-countdown" id="otpCountdown"></div>
-      <button class="splash-btn-primary" onclick="doSignup()">Create Account →</button>
-    </div>
-
-    <!-- LOGIN FORM -->
-    <div id="authLogin" class="hidden">
-      <input type="email" id="li_email" class="splash-input" placeholder="Email address">
-      <div class="splash-pw-wrap">
-        <input type="password" id="li_pass" class="splash-input" placeholder="Password">
-        <button type="button" class="splash-pw-toggle" onclick="togglePw('li_pass')">👁</button>
-      </div>
-      <button class="splash-btn-primary" onclick="doLogin()">Login →</button>
-      <button class="splash-link" onclick="showForgotPw()">Forgot password?</button>
-    </div>
+    <button class="splash-btn-primary" id="googleSignInBtn" onclick="signInWithGoogle()" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#1f1f1f">
+      <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8.1 3l5.7-5.7C34.6 6.5 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.5-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.1 8.1 3l5.7-5.7C34.6 6.5 29.6 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.4 35.1 26.8 36 24 36c-5.3 0-9.7-3.4-11.3-8.1l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.4-2.3 4.4-4.2 5.9l6.3 5.3C40.9 36.3 44 30.8 44 24c0-1.3-.1-2.5-.4-3.5z"/></svg>
+      Continue with Google
+    </button>
+    <div style="text-align:center;font-size:11px;color:rgba(255,255,255,.45);margin-top:10px">No password needed — sign in with your existing Google account</div>
   </div>
 </div>
+
+<!-- CREATE ACCOUNT (profile completion, shown once after first Google sign-in) -->
+<div id="screen-createaccount" class="screen">
+  <div class="splash-card">
+    <div style="font-size:20px;font-weight:800;margin-bottom:4px">Complete your profile</div>
+    <div style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:18px">Just a few details before you start, Dr. 🩺</div>
+
+    <label class="splash-field-label">Full name <span style="color:#ff6b6b">*</span></label>
+    <input type="text" id="ca_name" class="splash-input" placeholder="Full name">
+    <div class="splash-field-error" id="err_ca_name">⚠️ Please enter your name</div>
+
+    <label class="splash-field-label">City <span style="color:rgba(255,255,255,.4)">(optional)</span></label>
+    <input type="text" id="ca_city" class="splash-input" placeholder="e.g. Jamshoro">
+
+    <label class="splash-field-label">Gender</label>
+    <select id="ca_gender" class="splash-input" title="Gender" aria-label="Gender">
+      <option value="male" selected>👨‍⚕️ Male</option>
+      <option value="female">👩‍⚕️ Female</option>
+    </select>
+
+    <label class="splash-field-label">Date of birth</label>
+    <input type="date" id="ca_dob" class="splash-input" value="2005-01-01">
+
+    <label class="splash-field-label">College / University <span style="color:#ff6b6b">*</span></label>
+    <input type="text" id="ca_college" class="splash-input" placeholder="e.g. LUMHS Jamshoro">
+    <div class="splash-field-error" id="err_ca_college">⚠️ Please enter your college/university</div>
+
+    <button class="splash-btn-primary mt-2" onclick="submitCreateAccount()">Create Account →</button>
+  </div>
+</div>
+
 
 <!-- YEAR SELECT -->
 <div id="screen-year" class="screen">
@@ -480,6 +486,11 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 <!-- HOME / DASHBOARD -->
 <div id="screen-home" class="screen">
   <div class="page-wrap" id="homePageWrap"></div>
+</div>
+
+<!-- MODULES LIST (dedicated tab — separated out of Home so it's always one tap away) -->
+<div id="screen-modules" class="screen">
+  <div class="page-wrap" id="modulesPageWrap"></div>
 </div>
 
 <!-- MODULE DETAIL -->
@@ -570,33 +581,6 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 </div>
 
 <!-- Password Modal -->
-<div class="modal-backdrop" id="modalPw">
-  <div class="modal-box">
-    <div class="modal-header">
-      <span class="modal-title">Change Password</span>
-      <button class="modal-close" onclick="closeModal('modalPw')">✕</button>
-    </div>
-    <label class="input-label">Current Password</label>
-    <div class="pw-wrap input-wrap">
-      <input type="password" id="pw_old" class="input-field" placeholder="Current password">
-      <button class="pw-toggle" onclick="togglePw('pw_old')">👁</button>
-    </div>
-    <label class="input-label">New Password</label>
-    <div class="pw-wrap input-wrap">
-      <input type="password" id="pw_new1" class="input-field" placeholder="New password (min. 6)">
-      <button class="pw-toggle" onclick="togglePw('pw_new1')">👁</button>
-    </div>
-    <label class="input-label">Confirm New Password</label>
-    <div class="pw-wrap input-wrap">
-      <input type="password" id="pw_new2" class="input-field" placeholder="Confirm new password">
-      <button class="pw-toggle" onclick="togglePw('pw_new2')">👁</button>
-    </div>
-    <div class="btn-row mt-3">
-      <button class="btn btn-secondary" onclick="closeModal('modalPw')">Cancel</button>
-      <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
-    </div>
-  </div>
-</div>
 
 <!-- Privacy Modal -->
 <div class="modal-backdrop" id="modalPrivacy">
@@ -653,9 +637,10 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 const SUPABASE_URL = 'https://svdgsbydducyvluvankh.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2ZGdzYnlkZHVjeXZsdXZhbmtoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Mjg2NjAsImV4cCI6MjA5NzAwNDY2MH0.HzTgOyYXcUkibvyX0mEIYuaFtMuOGDG8M6I7ocmWemI';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-emailjs.init({ publicKey: 'jZRg_i9L4fN6jOWOZ' });
-const EMAIL_SERVICE = 'service_id97kzn', EMAIL_TEMPLATE = 'template_lg5s1wj';
 const ADMIN_EMAIL = 'lumhsianpro@gmail.com'; // used as contact email fallback only
+// Every column on `users` EXCEPT password_hash — use this instead of select('*') anywhere
+// a browser reads from the users table, now that password_hash is locked down server-side.
+const USERS_SAFE_COLS = 'auth_uid,email,name,gender,college,joined,last_active,last_heartbeat,current_screen,show_on_leaderboard,is_admin,is_banned,profile_image,phone,year_of_study,enrollment_number';
 
 // Bump this string on every deploy where you want every logged-in user to be
 // forced back to the login screen once (e.g. after a meaningful update).
@@ -668,7 +653,6 @@ let currentUser = null;
 let selectedYear = null;
 let activeTest = null;
 let navStack = [];
-let currentOTP = null, otpExpiry = 0, otpSentAt = 0;
 let maintenanceMode = false;
 let announcementText = '';
 let aiConversation = [];
@@ -714,6 +698,16 @@ async function db(promise, errMsg = 'Database error') {
   }
 }
 
+// ==================== ADMIN ACTIONS ====================
+// Privileged actions (ban a user, promote to admin, approve a subscription)
+// run through SQL functions that check the *real, signed-in* admin's identity
+// server-side (via their Google-authenticated session) — not a password typed
+// into the browser. A student calling the same function directly gets
+// rejected because their own account isn't flagged is_admin in the database.
+async function adminRPC(fnName, params) {
+  return sb.rpc(fnName, params);
+}
+
 // ==================== SCREEN ROUTING ====================
 function showScreen(id, pushToStack = true) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -726,29 +720,25 @@ function showScreen(id, pushToStack = true) {
     if (navStack.length > 30) navStack.shift();
   }
   updateBottomNav(id);
-  ['home','search','stats','ranking','profile','bookmarks','planner'].includes(id)
+  ['home','modules','search','stats','ranking','profile','bookmarks','planner'].includes(id)
     ? document.getElementById('bottomNav').classList.add('show')
     : document.getElementById('bottomNav').classList.remove('show');
 }
 
 function updateBottomNav(id) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  const map = { home: 'nav-home', search: 'nav-search', stats: 'nav-stats', ranking: 'nav-ranking', profile: 'nav-profile' };
+  const map = { home: 'nav-home', modules: 'nav-modules', search: 'nav-search', stats: 'nav-stats', ranking: 'nav-ranking', profile: 'nav-profile' };
   if (map[id]) document.getElementById(map[id])?.classList.add('active');
 }
 
-function navGo(id) {
-  const renders = { home: renderHome, search: renderSearch, stats: renderStats, ranking: renderRanking, profile: renderProfile, bookmarks: renderBookmarks, planner: renderPlanner };
-  if (renders[id]) renders[id]();
-  showScreen(id);
-}
+// navGo is defined once, further below, with feature-flag gating for bookmarks/planner/ranking.
 
 function goBack() {
   if (navStack.length > 1) {
     navStack.pop();
     const prev = navStack[navStack.length - 1];
     if (prev === 'test') { requestExitTest(); return; }
-    const renders = { home: renderHome, profile: renderProfile, stats: renderStats, ranking: renderRanking, search: renderSearch, bookmarks: renderBookmarks, planner: renderPlanner };
+    const renders = { home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, ranking: renderRanking, search: renderSearch, bookmarks: renderBookmarks, planner: renderPlanner };
     if (renders[prev]) renders[prev]();
     showScreen(prev, false);
   } else {
@@ -757,72 +747,134 @@ function goBack() {
   }
 }
 
-// ==================== AUTH ====================
-function switchAuthTab(tab) {
-  document.getElementById('authSignup').classList.toggle('hidden', tab !== 'signup');
-  document.getElementById('authLogin').classList.toggle('hidden', tab !== 'login');
-  document.getElementById('tab-signup').classList.toggle('active', tab === 'signup');
-  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
-}
-
-async function sendOTP() {
-  const email = document.getElementById('su_email').value.trim();
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email || !emailPattern.test(email)) return showToast('Enter a valid email address');
-  const now = Date.now();
-  if (otpSentAt && now - otpSentAt < 60000) return showToast(`Wait ${Math.ceil((60000 - (now - otpSentAt)) / 1000)}s before resending`);
-  const { data: exist } = await db(sb.from('users').select('email').eq('email', email).maybeSingle(), 'Email check failed');
-  if (exist) { showToast('Email already registered — please login'); switchAuthTab('login'); document.getElementById('li_email').value = email; return; }
-  const btn = document.getElementById('otpBtn');
-  btn.disabled = true; btn.textContent = '⏳ Sending...';
-  currentOTP = Math.floor(100000 + Math.random() * 900000).toString();
-  otpExpiry = now + 120000; otpSentAt = now;
-  try {
-    // Send both 'to_email' and 'email' so it matches whichever variable name
-    // the EmailJS template's "To Email" field actually uses.
-    await emailjs.send(EMAIL_SERVICE, EMAIL_TEMPLATE, { to_email: email, otp: currentOTP, from_name: 'LUMHSian Pro' });
-    showToast('✅ OTP sent to ' + email + ' — check Spam/Promotions too');
-    startOTPCountdown();
-  } catch (e) {
-    console.error('EmailJS send failed:', e);
-    showToast('Failed to send OTP: ' + (e?.text || e?.message || 'Unknown error'));
-    currentOTP = null;
-    otpSentAt = 0; // allow immediate retry after a failure
+// ==================== AUTH (Google Sign-In via Supabase Auth) ====================
+async function signInWithGoogle() {
+  const btn = document.getElementById('googleSignInBtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '.7'; }
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.href }
+  });
+  if (error) {
+    showToast('Google sign-in failed: ' + error.message);
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
   }
-  btn.disabled = false; btn.textContent = 'Resend';
+  // On success the browser redirects to Google, then back here — handled by
+  // the onAuthStateChange listener near the bottom of this script.
 }
 
-function startOTPCountdown() {
-  const el = document.getElementById('otpCountdown');
-  const iv = setInterval(() => {
-    const rem = Math.ceil((otpExpiry - Date.now()) / 1000);
-    if (rem <= 0) { clearInterval(iv); el.textContent = 'OTP expired'; currentOTP = null; }
-    else el.textContent = `⏱ OTP expires in ${rem}s`;
-  }, 1000);
+// Loads/creates the matching row in our own `users` table for the signed-in
+// Google account, then routes to the right screen. Called after every
+// Google sign-in (fresh or returning) and on every page refresh while
+// already signed in.
+async function handleAuthedSession(session) {
+  showLoading(true, 'Loading your account...');
+  const authUid = session.user.id;
+  const email = session.user.email;
+  const googleName = session.user.user_metadata?.full_name || session.user.user_metadata?.name || '';
+
+  let { data: row } = await db(sb.from('users').select(USERS_SAFE_COLS + ',profile_completed,city,dob').eq('auth_uid', authUid).maybeSingle(), 'Profile load failed');
+
+  if (!row) {
+    // Might be an existing account created before Google sign-in was added
+    // (back when signup used email+password) — link it to this Google identity
+    // instead of creating a duplicate.
+    const { data: linkedRows } = await sb.rpc('link_google_account', { p_email: email });
+    row = Array.isArray(linkedRows) ? linkedRows[0] : linkedRows;
+  }
+
+  if (!row) {
+    // Brand new account — also covers the one-time admin bootstrap for the fixed admin email.
+    const isAdminEmail = email === ADMIN_EMAIL;
+    const { data: created } = await db(sb.from('users').insert({
+      auth_uid: authUid, email, name: googleName || email.split('@')[0],
+      gender: 'male', dob: '2005-01-01', college: '', city: '',
+      joined: Date.now(), show_on_leaderboard: false,
+      is_admin: isAdminEmail, is_banned: false, profile_completed: false
+    }).select(USERS_SAFE_COLS + ',profile_completed,city,dob').single(), 'Account creation failed');
+    if (!created) { showLoading(false); showToast('Could not create your account. Please try again.'); return; }
+    row = created;
+    if (isAdminEmail) {
+      await db(sb.from('user_stats').insert({ email, total_tests: 0, total_questions: 0, total_correct: 0, best_score: 0, streak: 0, history: [], subject_stats: {} }), 'Stats init failed');
+    }
+  }
+
+  if (row.is_banned) { showLoading(false); showToast('Account banned. Contact admin.'); await sb.auth.signOut(); return; }
+
+  currentUser = row;
+  showLoading(false);
+
+  if (currentUser.is_admin) { renderAdminPanel(); showScreen('admin'); return; }
+
+  if (!row.profile_completed) {
+    document.getElementById('ca_name').value = row.name || '';
+    document.getElementById('ca_city').value = row.city || '';
+    document.getElementById('ca_gender').value = row.gender || 'male';
+    document.getElementById('ca_dob').value = row.dob || '2005-01-01';
+    document.getElementById('ca_college').value = row.college || '';
+    showScreen('createaccount');
+    return;
+  }
+
+  if (maintenanceMode) { showToast('App is under maintenance. Please check back later.'); await sb.auth.signOut(); return; }
+  startHeartbeat();
+  requestNotificationPermission();
+  const saved = localStorage.getItem('lum_year');
+  if (saved) { selectedYear = JSON.parse(saved); renderHome(); showScreen('home'); }
+  else loadYearScreen();
+  checkResumableTest();
 }
 
-async function doSignup() {
-  const name = document.getElementById('su_name').value.trim();
-  const email = document.getElementById('su_email').value.trim();
-  const pass = document.getElementById('su_pass').value;
-  const gender = document.getElementById('su_gender').value;
-  const college = document.getElementById('su_college').value;
-  const otp = document.getElementById('su_otp').value.trim();
-  if (!name || !email || pass.length < 6 || !college) return showToast('Fill all fields correctly (including your college)');
-  if (!currentOTP || Date.now() > otpExpiry || otp !== currentOTP) return showToast('Invalid or expired OTP');
+function markFieldError(inputId, errorId, show) {
+  document.getElementById(inputId).classList.toggle('field-invalid', show);
+  document.getElementById(errorId).classList.toggle('show', show);
+}
+
+async function submitCreateAccount() {
+  const name = document.getElementById('ca_name').value.trim();
+  const city = document.getElementById('ca_city').value.trim();
+  const gender = document.getElementById('ca_gender').value;
+  const dob = document.getElementById('ca_dob').value || '2005-01-01';
+  const college = document.getElementById('ca_college').value.trim();
+
+  const nameOk = !!name, collegeOk = !!college;
+  markFieldError('ca_name', 'err_ca_name', !nameOk);
+  markFieldError('ca_college', 'err_ca_college', !collegeOk);
+  if (!nameOk || !collegeOk) return showToast('Please fill the required fields');
+
   showLoading(true, 'Creating your account...');
-  const hash = await sha256(pass);
-  const { error: uErr } = await db(sb.from('users').insert({ email, name, password_hash: hash, gender, college, joined: Date.now(), show_on_leaderboard: false, is_admin: false, is_banned: false }), 'Signup failed');
-  if (uErr) { showLoading(false); return; }
-  await db(sb.from('user_stats').insert({ email, total_tests: 0, total_questions: 0, total_correct: 0, best_score: 0, history: [], streak: 0, last_practice_date: null, subject_stats: {} }), 'Stats init failed');
-  currentUser = { email, name, gender, college, is_admin: false, show_on_leaderboard: false };
-  localStorage.setItem('lum_sess', JSON.stringify({ email }));
+  const { error } = await db(sb.from('users').update({
+    name, city, gender, dob, college, profile_completed: true
+  }).eq('auth_uid', currentUser.auth_uid), 'Account setup failed');
+  if (error) { showLoading(false); return; }
+
+  await db(sb.from('user_stats').upsert({ email: currentUser.email, total_tests: 0, total_questions: 0, total_correct: 0, best_score: 0, history: [], streak: 0, last_practice_date: null, subject_stats: {} }, { onConflict: 'email', ignoreDuplicates: true }), 'Stats init failed');
+
+  currentUser = { ...currentUser, name, city, gender, dob, college, profile_completed: true };
   showLoading(false);
   showToast(`Welcome, Dr. ${name}! 🩺`);
   startHeartbeat();
   requestNotificationPermission();
   loadYearScreen();
 }
+
+function logout() {
+  stopHeartbeat();
+  localStorage.removeItem('lum_year');   // don't carry the previous student's year into the next login
+  localStorage.removeItem(RESUME_KEY);   // don't show "Resume Test" for someone else's unfinished attempt
+  currentUser = null; selectedYear = null; activeTest = null; navStack = [];
+  document.getElementById('bottomNav').classList.remove('show');
+  sb.auth.signOut();
+  showScreen('splash', false);
+}
+
+// Fires on every sign-in (including the redirect back from Google) and on
+// page refresh if a session is still valid. This replaces the old manual
+// localStorage session + password-based tryAutoLogin/doLogin entirely.
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_IN' && session) handleAuthedSession(session);
+  if (event === 'SIGNED_OUT') { currentUser = null; }
+});
 
 
 // ==================== CUSTOM CONFIRM DIALOG ====================
@@ -842,90 +894,7 @@ function showConfirm(message, onConfirm, confirmLabel = 'Confirm', danger = true
   overlay.querySelector('#_confirmBtn').onclick = () => { overlay.remove(); onConfirm(); };
 }
 
-async function doLogin() {
-  const email = document.getElementById('li_email').value.trim();
-  const pass = document.getElementById('li_pass').value;
-  if (!email || !pass) return showToast('Enter email and password');
-  showLoading(true, 'Logging in...');
 
-  // ADMIN AUTO-SETUP: if admin email used, ensure admin account exists
-  if (email === ADMIN_EMAIL) {
-    const { data: existing } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'Check failed');
-    if (!existing) {
-      // Create admin account automatically
-      const hash = await sha256(pass);
-      await db(sb.from('users').insert({
-        email, name: 'Admin', password_hash: hash,
-        gender: 'male', college: 'LUMHS Jamshoro',
-        is_admin: true, show_on_leaderboard: false
-      }), 'Admin create failed');
-      await db(sb.from('user_stats').insert({
-        email, total_tests: 0, total_questions: 0, total_correct: 0,
-        best_score: 0, streak: 0, history: [], subject_stats: {}
-      }), 'Stats init failed');
-    } else if (!existing.is_admin) {
-      // Force admin flag if somehow not set
-      await db(sb.from('users').update({ is_admin: true }).eq('email', email), 'Admin flag failed');
-    }
-  }
-
-  const { data: user } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'Login error');
-  if (!user) { showLoading(false); showToast('No account found with this email'); return; }
-  if (user.is_banned) { showLoading(false); showToast('Account banned. Contact admin.'); return; }
-  const hash = await sha256(pass);
-  if (user.password_hash !== hash) { showLoading(false); showToast('Incorrect password'); return; }
-  await db(sb.from('users').update({ last_active: Date.now() }).eq('email', email), 'Update failed');
-  currentUser = user;
-  currentUser.is_admin = email === ADMIN_EMAIL ? true : user.is_admin;
-  localStorage.setItem('lum_sess', JSON.stringify({ email, is_admin: currentUser.is_admin }));
-  showLoading(false);
-  if (currentUser.is_admin) {
-    renderAdminPanel();
-    showScreen('admin');
-    return;
-  }
-  if (maintenanceMode) { showToast('App is under maintenance. Please check back later.'); logout(); return; }
-  startHeartbeat();
-  requestNotificationPermission();
-  loadYearScreen();
-  checkResumableTest();
-}
-
-// showForgotPw defined below with dynamic email from settings
-
-// Runs once per app load, BEFORE auto-login. If this build's version differs
-// from what's saved on the device, it clears the saved session (forcing one
-// fresh login) and any leftover caches, then remembers the new version so
-// it won't trigger again until the next deploy bumps APP_VERSION.
-function forceReloginOnUpdate() {
-  const savedVersion = localStorage.getItem('app_version');
-  if (savedVersion === APP_VERSION) return false;
-  localStorage.removeItem('lum_sess');
-  localStorage.setItem('app_version', APP_VERSION);
-  return savedVersion !== null; // true only if this was an actual update, not first-ever visit
-}
-
-async function tryAutoLogin() {
-  const sess = localStorage.getItem('lum_sess');
-  if (!sess) return;
-  const { email } = JSON.parse(sess);
-  const { data: user } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'Session restore failed');
-  if (!user || user.is_banned) { localStorage.removeItem('lum_sess'); return; }
-  currentUser = user;
-  if (user.is_admin) {
-    renderAdminPanel(); showScreen('admin'); return;
-  }
-  const saved = localStorage.getItem('lum_year');
-  if (saved) { selectedYear = JSON.parse(saved); renderHome(); showScreen('home'); }
-  else loadYearScreen();
-}
-
-function logout() {
-  localStorage.removeItem('lum_sess');
-  currentUser = null; selectedYear = null; activeTest = null; navStack = [];
-  document.getElementById('bottomNav').classList.remove('show');
-  showScreen('splash', false);
-}
 
 // ==================== YEAR SELECTION ====================
 async function loadYearScreen() {
@@ -994,6 +963,75 @@ async function getRankInfo() {
 }
 
 // ==================== HOME / DASHBOARD ====================
+// Shared module-card HTML builder — used by both the Home teaser and the
+// dedicated Modules tab so they always render identically.
+function buildModuleCardHtml(m, qCount, mAcc) {
+  return `
+    <div class="module-card" onclick="openModule(${m.id},'${m.name.replace(/'/g,"\\'")}','${(m.icon_url||'').replace(/'/g,"\\'")}','${(m.color||'').replace(/'/g,"\\'")}')">
+      <img class="module-thumb" src="${m.icon_url || 'https://placehold.co/52x52/e0f7f5/0f7e82?text=📚'}" onerror="this.src='https://placehold.co/52x52/e0f7f5/0f7e82?text=📚'">
+      <div class="module-info">
+        <div class="module-title">${m.name}</div>
+        <div class="module-sub">${qCount || 0} questions${mAcc !== null ? ` · ${mAcc}% accuracy` : ''}</div>
+        ${mAcc !== null ? `<div class="progress-track" style="margin-top:6px;height:4px"><div class="progress-fill" style="width:${mAcc}%"></div></div>` : ''}
+      </div>
+      <span style="color:var(--ink-4);font-size:18px">›</span>
+    </div>`;
+}
+
+// Fetches this year's modules + per-module question counts + accuracy. Shared
+// by Home (teaser) and the dedicated Modules tab (full list) — single source
+// of truth so both always agree.
+async function loadYearModulesWithStats() {
+  const stats = await getUserStats();
+  const { data: yearModules } = await db(sb.from('year_modules').select('module_id, display_order').eq('year_id', selectedYear.id).order('display_order'), 'Modules error');
+  if (!yearModules?.length) return { orderedModules: [], qCounts: {}, stats };
+  const moduleIds = yearModules.map(ym => ym.module_id);
+  const { data: modules } = await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules fetch error');
+  const orderedModules = yearModules.map(ym => modules?.find(m => m.id === ym.module_id)).filter(Boolean);
+  const countResults = await Promise.all(
+    orderedModules.map(m => sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', m.id))
+  );
+  const qCounts = {};
+  orderedModules.forEach((m, i) => { qCounts[m.id] = countResults[i].count || 0; });
+  return { orderedModules, qCounts, stats };
+}
+
+// ==================== DEDICATED MODULES TAB ====================
+async function renderModulesScreen() {
+  if (!selectedYear && localStorage.getItem('lum_year')) selectedYear = JSON.parse(localStorage.getItem('lum_year'));
+  if (!selectedYear) { loadYearScreen(); return; }
+  const wrap = document.getElementById('modulesPageWrap');
+  wrap.innerHTML = `<div class="spinner" style="margin:40px auto"></div>`;
+  showLoading(true, 'Loading modules...');
+  try {
+    const { orderedModules, qCounts, stats } = await loadYearModulesWithStats();
+    let moduleHtml = '';
+    if (orderedModules.length) {
+      for (const m of orderedModules) {
+        const mStats = stats.subject_stats?.[m.id] || {};
+        const mAcc = mStats.total ? Math.round((mStats.correct / mStats.total) * 100) : null;
+        moduleHtml += buildModuleCardHtml(m, qCounts[m.id], mAcc);
+      }
+    } else {
+      moduleHtml = `<div class="card"><p>No modules for ${selectedYear.name} yet. Check back soon.</p></div>`;
+    }
+    wrap.innerHTML = `
+      <div class="flex-between" style="margin-bottom:4px">
+        <h2 style="margin:0">📚 Modules</h2>
+        <span class="text-xs text-muted" onclick="changeYear()" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${selectedYear.name} ✏️</span>
+      </div>
+      <p class="text-sm text-muted" style="margin-bottom:14px">All subjects & past papers for ${selectedYear.name}</p>
+      <button class="btn btn-secondary mb-3" style="width:100%" onclick="openCustomTestBuilder()">🛠️ Build Your Own Test</button>
+      ${moduleHtml}
+      <div style="height:16px"></div>`;
+  } catch (e) {
+    console.error('renderModulesScreen error:', e);
+    wrap.innerHTML = `<div class="card"><p>Failed to load modules. Please refresh.</p><button class="btn btn-primary mt-3" onclick="renderModulesScreen()">🔄 Retry</button></div>`;
+  } finally {
+    showLoading(false);
+  }
+}
+
 async function renderHome() {
   if (!selectedYear && localStorage.getItem('lum_year')) selectedYear = JSON.parse(localStorage.getItem('lum_year'));
   if (!selectedYear) { loadYearScreen(); return; }
@@ -1002,43 +1040,20 @@ async function renderHome() {
   showLoading(true, 'Loading dashboard...');
   try {
 
-  const [ymRes, statsRes, annoRes] = await Promise.all([
-    db(sb.from('year_modules').select('module_id, display_order').eq('year_id', selectedYear.id).order('display_order'), 'Modules error'),
-    getUserStats(),
+  const [{ orderedModules, qCounts, stats }, annoRes] = await Promise.all([
+    loadYearModulesWithStats(),
     db(sb.from('announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(3), 'Announce error')
   ]);
 
-  const yearModules = ymRes.data || [];
-  const stats = statsRes;
   const announcements = annoRes.data || [];
 
+  // Home only teases the top 3 modules — full list lives in its own tab now
   let moduleHtml = '';
-  if (yearModules.length) {
-    const moduleIds = yearModules.map(ym => ym.module_id);
-    const { data: modules } = await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules fetch error');
-    const orderedModules = yearModules.map(ym => modules?.find(m => m.id === ym.module_id)).filter(Boolean);
-
-    // Batch fetch all question counts in parallel (no N+1)
-    const countResults = await Promise.all(
-      orderedModules.map(m => sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', m.id))
-    );
-    const qCounts = {};
-    orderedModules.forEach((m, i) => { qCounts[m.id] = countResults[i].count || 0; });
-
-    for (const m of orderedModules) {
-      const qCount = qCounts[m.id];
+  if (orderedModules.length) {
+    for (const m of orderedModules.slice(0, 3)) {
       const mStats = stats.subject_stats?.[m.id] || {};
       const mAcc = mStats.total ? Math.round((mStats.correct / mStats.total) * 100) : null;
-      moduleHtml += `
-        <div class="module-card" onclick="openModule(${m.id},'${m.name.replace(/'/g,"\\'")}','${(m.icon_url||'').replace(/'/g,"\\'")}','${(m.color||'').replace(/'/g,"\\'")}')">
-          <img class="module-thumb" src="${m.icon_url || 'https://placehold.co/52x52/e0f7f5/0f7e82?text=📚'}" onerror="this.src='https://placehold.co/52x52/e0f7f5/0f7e82?text=📚'">
-          <div class="module-info">
-            <div class="module-title">${m.name}</div>
-            <div class="module-sub">${qCount || 0} questions${mAcc !== null ? ` · ${mAcc}% accuracy` : ''}</div>
-            ${mAcc !== null ? `<div class="progress-track" style="margin-top:6px;height:4px"><div class="progress-fill" style="width:${mAcc}%"></div></div>` : ''}
-          </div>
-          <span style="color:var(--ink-4);font-size:18px">›</span>
-        </div>`;
+      moduleHtml += buildModuleCardHtml(m, qCounts[m.id], mAcc);
     }
   } else {
     moduleHtml = `<div class="card"><p>No modules for ${selectedYear.name} yet. Check back soon.</p></div>`;
@@ -1069,6 +1084,10 @@ async function renderHome() {
     <!-- Hero Banner -->
     <div style="background:linear-gradient(135deg,var(--teal-900) 0%,var(--teal-700) 100%);border-radius:var(--radius-xl);padding:20px;margin-bottom:12px;color:white;position:relative;overflow:hidden">
       <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:.08;line-height:1">🩺</div>
+      <div onclick="openNotificationBell()" style="position:absolute;top:14px;right:14px;cursor:pointer;font-size:20px">
+        🔔
+        <span id="notifBellBadge" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;align-items:center;justify-content:center;padding:0 3px">0</span>
+      </div>
       <div class="flex-between" style="margin-bottom:12px">
         <div>
           <div style="font-size:12px;opacity:.7;font-weight:500;text-transform:uppercase;letter-spacing:.5px">${greeting}</div>
@@ -1104,13 +1123,22 @@ async function renderHome() {
 
     <!-- Quick Actions -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
-      <div class="quick-tile" onclick="navGo('search')"><span class="quick-tile-icon">🔍</span><span class="quick-tile-label">Search</span></div>
-      <div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">🤖</span><span class="quick-tile-label">AI Tutor</span></div>
+      <div class="quick-tile" onclick="navGo('modules')"><span class="quick-tile-icon">📚</span><span class="quick-tile-label">Modules</span></div>
+      ${getSetting('ai_enabled','true')!=='false' ? `<div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">🤖</span><span class="quick-tile-label">AI Tutor</span></div>` : ''}
       <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">📖</span><span class="quick-tile-label">Saved</span></div>
       <div class="quick-tile" onclick="navGo('planner')"><span class="quick-tile-icon">📅</span><span class="quick-tile-label">Planner</span></div>
     </div>
 
-    <div class="section-label">📚 Modules</div>
+    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:16px">
+      ${localStorage.getItem(RESUME_KEY) ? `<button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="checkResumableTest()">▶ Resume Test</button>` : ''}
+      ${isFeatureEnabled('random_quiz') ? `<button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="startRandomQuiz()">🎲 Random Quiz</button>` : ''}
+      ${isFeatureEnabled('wrong_review') ? `<button class="btn btn-secondary btn-sm" style="flex-shrink:0" onclick="reviewWrongQuestions()">❌ Wrong Q Review</button>` : ''}
+    </div>
+
+    <div class="flex-between" style="margin-bottom:8px">
+      <span class="section-label" style="margin:0">📚 Continue Learning</span>
+      <span class="text-xs fw-600" style="color:var(--teal-600);cursor:pointer" onclick="navGo('modules')">View All →</span>
+    </div>
     ${moduleHtml}
 
     <!-- Overall progress -->
@@ -1127,6 +1155,7 @@ async function renderHome() {
     </div>
 
     <div style="height:16px"></div>`;
+  checkNewNotifications();
 
   } catch(e) {
     console.error('renderHome error:', e);
@@ -1249,6 +1278,149 @@ async function openModule(moduleId, moduleName, iconUrl, color) {
 //   'attempt'  = real timed graded test (Solve a past paper) → saved to history, resumable if interrupted
 //   'practice' = untimed subject / mixed practice, instant right-or-wrong feedback → saved to history
 //   'browse'   = "just view" review of a past paper, instant feedback, NOT timed, NOT saved as an attempt
+// ==================== CUSTOM TEST BUILDER ("Make Your Own Test") ====================
+async function openCustomTestBuilder() {
+  showLoading(true, 'Loading modules...');
+  const { data: yearModules } = await db(sb.from('year_modules').select('module_id').eq('year_id', selectedYear.id), 'Modules error');
+  const moduleIds = (yearModules || []).map(ym => ym.module_id);
+  const { data: modules } = await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules fetch error');
+  const { data: savedTests } = await db(sb.from('custom_tests').select('*').eq('user_email', currentUser.email).order('created_at', { ascending: false }), 'Saved tests error');
+  showLoading(false);
+
+  const overlay = document.createElement('div');
+  overlay.id = 'ctbOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.85);z-index:10006;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto">
+      <div class="flex-between mb-3">
+        <span class="fw-700">🛠️ Build Your Own Test</span>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
+      </div>
+
+      ${savedTests?.length ? `
+      <div class="card" style="margin-bottom:14px">
+        <div class="fw-700 mb-2 text-sm">📁 My Saved Tests</div>
+        ${savedTests.map(t => `
+          <div class="flex-between" style="padding:6px 0">
+            <div class="text-sm">${t.name} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id})">▶ Start</button>
+              <button class="btn btn-ghost btn-xs" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
+
+      <div class="fw-700 mb-2 text-sm">1. Pick Module(s)</div>
+      <div id="ctbModules" style="margin-bottom:14px">
+        ${(modules||[]).map(m => `
+          <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
+            <input type="checkbox" class="ctb-module" value="${m.id}" data-name="${m.name.replace(/"/g,'&quot;')}" onchange="ctbModulesChanged()">
+            <span class="text-sm">${m.name}</span>
+          </label>`).join('')}
+      </div>
+
+      <div class="fw-700 mb-2 text-sm">2. Pick Subject(s) <span class="text-xs text-muted">(optional — leave blank for all)</span></div>
+      <div id="ctbSubjects" style="margin-bottom:14px"><p class="text-xs text-muted">Select a module first</p></div>
+
+      <div class="fw-700 mb-2 text-sm">3. Test Settings</div>
+      <label class="input-label">Number of Questions</label>
+      <input id="ctb_count" type="number" class="input-field" value="20" min="5" max="200">
+      <label class="input-label">Timer (minutes — 0 for no timer)</label>
+      <input id="ctb_timer" type="number" class="input-field" value="30" min="0" max="240">
+      <label class="input-label">Save this test as (optional)</label>
+      <input id="ctb_name" class="input-field" placeholder="e.g. My Anatomy + Physio Mix">
+
+      <div class="btn-row mt-3">
+        <button class="btn btn-secondary" onclick="buildCustomTest(true)">💾 Save Only</button>
+        <button class="btn btn-primary" onclick="buildCustomTest(false)">🚀 Start Test</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function ctbModulesChanged() {
+  const checked = [...document.querySelectorAll('.ctb-module:checked')];
+  const subWrap = document.getElementById('ctbSubjects');
+  if (!checked.length) { subWrap.innerHTML = '<p class="text-xs text-muted">Select a module first</p>'; return; }
+  const moduleIds = checked.map(c => c.value);
+  const { data: subs } = await db(sb.from('subjects').select('id,name,module_id').in('module_id', moduleIds).order('display_order'), 'Subjects error');
+  if (!subs?.length) { subWrap.innerHTML = '<p class="text-xs text-muted">No subjects defined — all questions in the module(s) will be used.</p>'; return; }
+  const moduleNameMap = {};
+  checked.forEach(c => moduleNameMap[c.value] = c.dataset.name);
+  subWrap.innerHTML = subs.map(s => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0">
+      <input type="checkbox" class="ctb-subject" value="${s.id}">
+      <span class="text-sm">${s.name} <span class="text-xs text-muted">(${moduleNameMap[s.module_id]||''})</span></span>
+    </label>`).join('');
+}
+
+async function buildCustomTest(saveOnly) {
+  const moduleIds = [...document.querySelectorAll('.ctb-module:checked')].map(c => parseInt(c.value));
+  const subjectIds = [...document.querySelectorAll('.ctb-subject:checked')].map(c => parseInt(c.value));
+  const count = parseInt(document.getElementById('ctb_count').value) || 20;
+  const timer = parseInt(document.getElementById('ctb_timer').value) || 0;
+  const name = document.getElementById('ctb_name').value.trim() || `Custom Test ${new Date().toLocaleDateString()}`;
+  if (!moduleIds.length) return showToast('Please select at least one module');
+
+  if (saveOnly || document.getElementById('ctb_name').value.trim()) {
+    await db(sb.from('custom_tests').insert({
+      user_email: currentUser.email, name, module_ids: moduleIds, subject_ids: subjectIds,
+      question_count: count, time_limit_minutes: timer
+    }), 'Save failed');
+    showToast('Test saved ✓');
+    if (saveOnly) { document.getElementById('ctbOverlay')?.remove(); return; }
+  }
+  document.getElementById('ctbOverlay')?.remove();
+  startCustomTest(moduleIds, subjectIds, count, timer, name);
+}
+
+async function startSavedCustomTest(id) {
+  const { data: t } = await db(sb.from('custom_tests').select('*').eq('id', id).single(), 'Load failed');
+  if (!t) return;
+  document.getElementById('ctbOverlay')?.remove();
+  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name);
+}
+
+async function deleteSavedCustomTest(id) {
+  await db(sb.from('custom_tests').delete().eq('id', id), 'Delete failed');
+  showToast('Deleted');
+  document.getElementById('ctbOverlay')?.remove();
+  openCustomTestBuilder();
+}
+
+async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name) {
+  showLoading(true, 'Building your test...');
+  let query = sb.from('questions').select('*').in('module_id', moduleIds);
+  if (subjectIds?.length) query = query.in('subject_id', subjectIds);
+  const { data: qs } = await db(query, 'Failed to load questions');
+  if (!qs?.length) { showLoading(false); showToast('No questions found for this selection.'); return; }
+
+  const shuffled = shuffleArray([...qs]).slice(0, count);
+  const mapped = shuffled.map(q => ({
+    id: q.id, text: q.text, options: Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]'),
+    answer: q.correct_answer, explanation: q.explanation,
+    imageUrl: q.image_url, expImageUrl: q.explanation_image_url,
+    subjectId: q.subject_id, moduleId: q.module_id
+  }));
+
+  const mode = timerMinutes > 0 ? 'attempt' : 'practice';
+  if (activeTest?.timerInterval) clearInterval(activeTest.timerInterval);
+  clearPersistedTest();
+  activeTest = {
+    questions: mapped, answers: new Array(mapped.length).fill(null),
+    flagged: new Array(mapped.length).fill(false),
+    explanationShown: new Array(mapped.length).fill(false),
+    bookmarked: new Set(),
+    currentIndex: 0, mode, moduleId: moduleIds[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
+    startTime: Date.now(), timeLimit: mode === 'attempt' ? timerMinutes * 60 : null,
+    timerInterval: null, submitted: false
+  };
+  showLoading(false);
+  if (mode === 'attempt') { startTimer(); persistActiveTest(); }
+  renderTestScreen();
+  showScreen('test');
+}
+
 async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle) {
   showLoading(true, mode === 'browse' ? 'Loading paper for review...' : 'Preparing test...');
   let query = sb.from('questions').select('*').eq('module_id', moduleId);
@@ -1257,8 +1429,9 @@ async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTi
   const { data: qs } = await db(query, 'Failed to load questions');
   if (!qs || qs.length === 0) { showLoading(false); showToast('No questions in this category yet.'); return; }
 
-  // Only shuffle free practice — past papers keep their original exam order/numbering
-  const questions = mode === 'practice' ? shuffleArray([...qs]) : qs;
+  // Shuffle for practice AND timed attempts (a fresh order every time you take a test) —
+  // "browse" mode (just reading through a paper for reference) keeps original numbering.
+  const questions = (mode === 'practice' || mode === 'attempt') ? shuffleArray([...qs]) : qs;
   const mapped = questions.map(q => ({
     id: q.id, text: q.text, options: Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]'),
     answer: q.correct_answer, explanation: q.explanation,
@@ -1427,7 +1600,10 @@ function renderTestScreen() {
         ${shown ? `
           <div style="margin-top:10px;color:var(--ink-2);line-height:1.6">${q.explanation || '<span style="color:var(--ink-4)">No explanation added yet.</span>'}</div>
           ${expImgHtml}
-          <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>
+          <div class="btn-row" style="margin-top:10px">
+            ${getSetting('ai_enabled','true')!=='false' ? `<button class="btn btn-ghost btn-sm" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>` : ''}
+            <button class="btn btn-ghost btn-sm" onclick="openReportModal(${q.id})">🚩 Report</button>
+          </div>
         ` : ''}
       </div>`;
   }
@@ -1522,6 +1698,8 @@ function selectOption(idx) {
   const isInstantFeedback = t.mode === 'practice' || t.mode === 'browse';
   if (isInstantFeedback && t.answers[t.currentIndex] !== null) return; // already revealed — locked
   t.answers[t.currentIndex] = idx;
+  if (isInstantFeedback) playSound(idx === t.questions[t.currentIndex].answer ? 'correct' : 'wrong');
+  else playSound('click');
   if (t.mode === 'attempt') persistActiveTest();
   renderTestScreen();
 }
@@ -1598,6 +1776,7 @@ async function bookmarkQuestion() {
 async function submitTest() {
   if (!activeTest || activeTest.submitted) return;
   activeTest.submitted = true;
+  playSound('submit');
   if (activeTest.timerInterval) clearInterval(activeTest.timerInterval);
   if (activeTest.mode === 'attempt') clearPersistedTest();
 
@@ -1623,18 +1802,21 @@ async function submitTest() {
   stats.total_correct = (stats.total_correct || 0) + correct;
   stats.best_score = Math.max(stats.best_score || 0, percent);
 
-  // Module/subject-level stats
+  // Module/subject-level stats — computed per-question so this works correctly
+  // whether the test was single-subject practice OR a mixed-module test.
   if (!stats.subject_stats) stats.subject_stats = {};
   const moduleKey = (activeTest.moduleId || 'none').toString();
   if (!stats.subject_stats[moduleKey]) stats.subject_stats[moduleKey] = { total: 0, correct: 0 };
   stats.subject_stats[moduleKey].total += total;
   stats.subject_stats[moduleKey].correct += correct;
 
-  if (activeTest.subjectId) {
-    const subKey = `${activeTest.moduleId}_${activeTest.subjectId}`;
+  for (let i = 0; i < activeTest.questions.length; i++) {
+    const q = activeTest.questions[i];
+    if (activeTest.answers[i] === null || !q.subjectId) continue; // skipped or no subject tagged
+    const subKey = `${q.moduleId || activeTest.moduleId}_${q.subjectId}`;
     if (!stats.subject_stats[subKey]) stats.subject_stats[subKey] = { total: 0, correct: 0 };
-    stats.subject_stats[subKey].total += total;
-    stats.subject_stats[subKey].correct += correct;
+    stats.subject_stats[subKey].total += 1;
+    if (activeTest.answers[i] === q.answer) stats.subject_stats[subKey].correct += 1;
   }
 
   // Past-paper-level stats (best score + attempt count per paper)
@@ -1717,15 +1899,22 @@ async function submitTest() {
     </div>
 
     <button class="btn btn-primary mt-3" onclick="startReview()">🔍 Review Your Test</button>
+    ${isFeatureEnabled('wrong_review') && (total - correct) > 0 ? `<button class="btn btn-secondary mt-2" onclick="startReview(true)">❌ Review Wrong Only (${total - correct})</button>` : ''}
     <button class="btn btn-secondary mt-2" onclick="renderHome(); showScreen('home')">🏠 Back to Home</button>
-    <button class="btn btn-ghost mt-1" onclick="openAITutor('Summarize my performance: ${correct} correct out of ${total} (${percent}% score, ${accuracy}% accuracy) in ${(activeTest.paperTitle || activeTest.moduleName).replace(/'/g,"\\'")}','Provide tips to improve my weak areas')">🤖 AI Performance Tip</button>
+    ${getSetting('ai_enabled','true')!=='false' ? `<button class="btn btn-ghost mt-1" onclick="openAITutor('Summarize my performance: ${correct} correct out of ${total} (${percent}% score, ${accuracy}% accuracy) in ${(activeTest.paperTitle || activeTest.moduleName).replace(/'/g,"\\'")}','Provide tips to improve my weak areas')">🤖 AI Performance Tip</button>` : ''}
   `;
   showScreen('results');
 }
 
 // ==================== REVIEW ====================
-function startReview() {
-  window.reviewState = { questions: activeTest.questions, answers: activeTest.answers, currentIndex: 0, label: activeTest.paperTitle || activeTest.moduleName };
+function startReview(wrongOnly = false) {
+  let questions = activeTest.questions, answers = activeTest.answers;
+  if (wrongOnly) {
+    const idxs = questions.map((q, i) => i).filter(i => answers[i] !== questions[i].answer);
+    questions = idxs.map(i => questions[i]);
+    answers = idxs.map(i => answers[i]);
+  }
+  window.reviewState = { questions, answers, currentIndex: 0, label: (activeTest.paperTitle || activeTest.moduleName) + (wrongOnly ? ' · Wrong Only' : '') };
   renderReview();
   showScreen('review');
 }
@@ -1779,7 +1968,14 @@ function renderReview() {
       <div class="exp-label">✅ Correct Answer: ${q.options[q.answer]}</div>
       ${q.explanation ? `<div style="color:var(--ink-2);line-height:1.6">${q.explanation}</div>` : '<div style="color:var(--ink-4)">No explanation yet.</div>'}
       ${expImgHtml}
-      <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>
+      <div class="btn-row" style="margin-top:10px">
+        ${getSetting('ai_enabled','true')!=='false' ? `<button class="btn btn-ghost btn-sm" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="openReportModal(${q.id})">🚩 Report Question</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px" id="commentsWrap_${q.id}">
+      <div class="spinner" style="margin:12px auto"></div>
     </div>
 
     <div class="flex-between" style="margin:16px 0">
@@ -1792,6 +1988,7 @@ function renderReview() {
       <div class="qnav-grid">${navHtml}</div>
     </div>
   `;
+  loadQuestionComments(q.id);
 }
 
 function reviewPrev() { if (window.reviewState.currentIndex > 0) { window.reviewState.currentIndex--; renderReview(); } }
@@ -1799,6 +1996,187 @@ function reviewNext() { if (window.reviewState.currentIndex < window.reviewState
 function reviewJump(i) { window.reviewState.currentIndex = i; renderReview(); }
 
 // ==================== AI TUTOR ====================
+function openDonateModal() {
+  const jazzcash = getSetting('donation_jazzcash','');
+  const easypaisa = getSetting('donation_easypaisa','');
+  const bank = getSetting('donation_bank','');
+  const message = getSetting('donation_message','Help us keep this app free and growing for every LUMHS student. Any contribution helps!');
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  const row = (label, value, icon) => value ? `
+    <div class="card" style="margin-bottom:10px;padding:14px">
+      <div class="text-xs text-muted mb-1">${icon} ${label}</div>
+      <div class="flex-between">
+        <div class="fw-700">${value}</div>
+        <button class="btn btn-secondary btn-xs" onclick="navigator.clipboard?.writeText('${value.replace(/'/g,"\\'")}');showToast('Copied ✓')">📋 Copy</button>
+      </div>
+    </div>` : '';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto">
+      <div style="font-size:40px;text-align:center;margin-bottom:8px">💛</div>
+      <div class="fw-700 text-center mb-2" style="font-size:17px">Support LUMHSian Pro</div>
+      <p class="text-sm text-muted text-center mb-3">${message}</p>
+      ${row('JazzCash', jazzcash, '📱')}
+      ${row('Easypaisa', easypaisa, '📱')}
+      ${row('Bank Account', bank, '🏦')}
+      ${!jazzcash && !easypaisa && !bank ? '<p class="text-sm text-muted text-center">Payment details coming soon.</p>' : ''}
+      <button class="btn btn-ghost mt-2" style="width:100%" onclick="this.closest('[style*=fixed]').remove()">Close</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+// ==================== REPORT A QUESTION / GENERAL FEEDBACK ====================
+function openReportModal(questionId) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px">
+      <div class="fw-700 mb-1">🚩 Report this Question</div>
+      <p class="text-sm text-muted mb-3">Wrong answer? Confusing wording? Bad image? Let us know and the admin will review it.</p>
+      <textarea id="_rpt_msg" class="input-field" rows="4" placeholder="Describe the issue..." style="resize:vertical"></textarea>
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitReport(${questionId})">Send Report</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function openFeedbackModal() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px">
+      <div class="fw-700 mb-1">💬 Send Feedback</div>
+      <p class="text-sm text-muted mb-3">Suggestions, bugs, or anything else you'd like the admin to know.</p>
+      <textarea id="_rpt_msg" class="input-field" rows="4" placeholder="Type your feedback..." style="resize:vertical"></textarea>
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitReport(null)">Send Feedback</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitReport(questionId) {
+  const message = document.getElementById('_rpt_msg').value.trim();
+  if (!message) return showToast('Please describe the issue first');
+  await db(sb.from('reports_feedback').insert({
+    type: questionId ? 'question_report' : 'feedback',
+    question_id: questionId || null,
+    user_email: currentUser.email,
+    user_name: currentUser.name,
+    message
+  }), 'Report failed');
+  document.querySelector('[style*="z-index:10005"]')?.remove();
+  showToast('✅ Sent! The admin will review this and may reply in your Profile → My Reports.');
+}
+
+async function openMyReports() {
+  const overlay = document.createElement('div');
+  overlay.id = 'myReportsOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:440px;max-height:85vh;overflow-y:auto">
+      <div class="flex-between mb-3">
+        <span class="fw-700">📬 My Reports &amp; Feedback</span>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <button class="btn btn-secondary btn-sm mb-3" style="width:100%" onclick="this.closest('[style*=fixed]').remove();openFeedbackModal()">💬 Send New Feedback</button>
+      <div id="myReportsList"><div class="spinner" style="margin:20px auto"></div></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const { data } = await db(sb.from('reports_feedback').select('*,questions(text)').eq('user_email', currentUser.email).order('created_at', { ascending: false }), 'Load failed');
+  const list = document.getElementById('myReportsList');
+  if (!data?.length) { list.innerHTML = '<p class="text-sm text-muted text-center">No reports yet.</p>'; return; }
+  list.innerHTML = data.map(r => `
+    <div class="card" style="margin-bottom:10px">
+      <div class="flex-between mb-1">
+        <span class="badge ${r.type === 'question_report' ? 'badge-amber' : 'badge-teal'}" style="font-size:10px">${r.type === 'question_report' ? '🚩 Question Report' : '💬 Feedback'}</span>
+        <span class="badge ${r.status === 'pending' ? 'badge-amber' : 'badge-green'}" style="font-size:10px">${r.status === 'pending' ? 'Pending' : '✓ Replied'}</span>
+      </div>
+      ${r.questions?.text ? `<div class="text-xs text-muted mb-1">Re: ${r.questions.text.substring(0,70)}...</div>` : ''}
+      <div class="text-sm mb-1">${r.message}</div>
+      <div class="text-xs text-muted">${timeAgo(new Date(r.created_at).getTime())}</div>
+      ${r.admin_reply ? `<div style="background:var(--teal-50);border-radius:10px;padding:8px 10px;margin-top:8px"><div class="text-xs fw-700" style="color:var(--teal-700)">Admin reply:</div><div class="text-sm">${r.admin_reply}</div></div>` : ''}
+    </div>`).join('');
+}
+
+// ==================== QUESTION COMMENTS (discussion, like & reply) ====================
+async function loadQuestionComments(questionId) {
+  const wrap = document.getElementById(`commentsWrap_${questionId}`);
+  if (!wrap) return;
+  const { data: comments } = await db(sb.from('question_comments').select('*').eq('question_id', questionId).order('created_at', { ascending: true }), 'Comments load failed');
+  const { data: likes } = await db(sb.from('comment_likes').select('comment_id,user_email'), 'Likes load failed');
+  wrap.innerHTML = renderCommentsHtml(questionId, comments || [], likes || []);
+}
+
+function renderCommentsHtml(questionId, comments, likes) {
+  const likeMap = {};
+  for (const l of likes) { (likeMap[l.comment_id] ||= []).push(l.user_email); }
+  const top = comments.filter(c => !c.parent_id)
+    .sort((a, b) => (likeMap[b.id]?.length || 0) - (likeMap[a.id]?.length || 0));
+
+  const renderOne = (c, isReply = false) => {
+    const myLikes = likeMap[c.id] || [];
+    const liked = myLikes.includes(currentUser.email);
+    const replies = comments.filter(r => r.parent_id === c.id);
+    return `
+      <div style="${isReply ? 'margin-left:24px;border-left:2px solid var(--border);padding-left:10px;' : ''}margin-bottom:10px">
+        <div class="fw-700 text-sm">${c.user_name || 'Student'}</div>
+        <div class="text-sm" style="margin:2px 0">${c.comment}</div>
+        <div style="display:flex;gap:14px;align-items:center">
+          <span class="text-xs text-muted">${timeAgo(new Date(c.created_at).getTime())}</span>
+          <span class="text-xs" style="cursor:pointer;color:${liked ? 'var(--teal-700)' : 'var(--ink-4)'};font-weight:600" onclick="toggleCommentLike(${c.id},${questionId})">👍 ${myLikes.length || ''} Like</span>
+          ${!isReply ? `<span class="text-xs" style="cursor:pointer;color:var(--ink-4);font-weight:600" onclick="showReplyBox(${c.id})">↩ Reply</span>` : ''}
+        </div>
+        <div id="replyBox_${c.id}" style="display:none;margin-top:6px">
+          <div class="input-group" style="margin:0">
+            <input class="input-field" id="replyInput_${c.id}" placeholder="Write a reply..." style="margin:0">
+            <button class="btn btn-primary" style="width:auto" onclick="postComment(${questionId},${c.id})">Send</button>
+          </div>
+        </div>
+        ${replies.map(r => renderOne(r, true)).join('')}
+      </div>`;
+  };
+
+  return `
+    <div class="fw-700 mb-2">💬 Discussion (${comments.length})</div>
+    <div id="commentsList_${questionId}">${top.length ? top.map(c => renderOne(c)).join('') : '<p class="text-sm text-muted">No comments yet — be the first to discuss this question.</p>'}</div>
+    <div class="input-group mt-2" style="margin:0">
+      <input class="input-field" id="newComment_${questionId}" placeholder="Add a comment..." style="margin:0" onkeydown="if(event.key==='Enter')postComment(${questionId})">
+      <button class="btn btn-primary" style="width:auto" onclick="postComment(${questionId})">Post</button>
+    </div>`;
+}
+
+function showReplyBox(commentId) {
+  const box = document.getElementById(`replyBox_${commentId}`);
+  if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+}
+
+async function postComment(questionId, parentId = null) {
+  const inputId = parentId ? `replyInput_${parentId}` : `newComment_${questionId}`;
+  const input = document.getElementById(inputId);
+  const text = input?.value.trim();
+  if (!text) return;
+  await db(sb.from('question_comments').insert({
+    question_id: questionId, parent_id: parentId,
+    user_email: currentUser.email, user_name: currentUser.name, comment: text
+  }), 'Comment failed');
+  input.value = '';
+  loadQuestionComments(questionId);
+}
+
+async function toggleCommentLike(commentId, questionId) {
+  const { data: existing } = await db(sb.from('comment_likes').select('id').eq('comment_id', commentId).eq('user_email', currentUser.email).maybeSingle(), 'Like check failed');
+  if (existing) {
+    await db(sb.from('comment_likes').delete().eq('id', existing.id), 'Unlike failed');
+  } else {
+    await db(sb.from('comment_likes').insert({ comment_id: commentId, user_email: currentUser.email }), 'Like failed');
+  }
+  loadQuestionComments(questionId);
+}
+
 function openAITutor(questionText, explanation) {
   currentAIContext = questionText ? { questionText, explanation } : null;
   aiConversation = [];
@@ -1836,47 +2214,36 @@ function appendAIMsg(role, text) {
   container.scrollTop = container.scrollHeight;
 }
 
-// Builds a provider-aware request (DeepSeek/OpenAI use the OpenAI chat/completions
-// shape; Gemini uses Google's generateContent shape) from the admin's saved settings.
-function buildAIRequest(messages) {
-  const provider = getSetting('ai_provider', 'deepseek');
-  const baseUrl = (getSetting('ai_api_url', 'https://api.deepseek.com/v1') || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
-  const model = getSetting('ai_model', 'deepseek-chat') || 'deepseek-chat';
-  const key = getSetting('ai_api_key', '');
-  if (provider === 'gemini') {
-    const url = `${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-    const sys = messages.find(m => m.role === 'system');
-    const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-    const body = { contents };
-    if (sys) body.systemInstruction = { parts: [{ text: sys.content }] };
-    return { provider, url, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+// ==================== AI TUTOR (SECURE — routed through Edge Function) ====================
+// SECURITY FIX: The AI API key used to be read directly in this browser file via
+// getSetting('ai_api_key') and sent straight to DeepSeek/OpenAI/Gemini from the
+// student's own browser. That meant ANY student could open DevTools → Network tab
+// and steal your AI API key (or even just type getSetting('ai_api_key') in the
+// console). The key now lives ONLY inside the Supabase Edge Function "ai-proxy",
+// read there with the service_role key — it never reaches a browser again.
+async function callAIProxy(messages) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/ai-proxy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'apikey': SUPABASE_KEY
+      },
+      body: JSON.stringify({ messages })
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, text: data?.text || data?.error || `HTTP ${res.status}` };
+    return data; // { ok, text }
+  } catch (e) {
+    return { ok: false, text: 'Network error reaching AI service.' };
   }
-  // DeepSeek, OpenAI, or any other OpenAI-compatible endpoint
-  return {
-    provider, url: `${baseUrl}/chat/completions`, method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-    body: JSON.stringify({ model, messages, temperature: 0.6, max_tokens: 800 })
-  };
-}
-
-function extractAIText(provider, data) {
-  if (provider === 'gemini') return (data?.candidates?.[0]?.content?.parts || []).map(p => p.text).join('') || '';
-  return data?.choices?.[0]?.message?.content || '';
 }
 
 // Single-shot helper used by "Test Connection" in Admin Settings (and reusable elsewhere)
 async function callAIRaw(prompt) {
-  if (getSetting('ai_enabled', 'true') === 'false') return { ok: false, text: 'AI Tutor is turned off in Settings.' };
-  if (!getSetting('ai_api_key', '')) return { ok: false, text: 'No API key configured yet.' };
   const sysPrompt = getSetting('ai_system_prompt', 'You are a helpful MBBS tutor.');
-  const req = buildAIRequest([{ role: 'system', content: sysPrompt }, { role: 'user', content: prompt }]);
-  try {
-    const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, text: data?.error?.message || JSON.stringify(data?.error) || `HTTP ${res.status}` };
-    const text = extractAIText(req.provider, data);
-    return text ? { ok: true, text } : { ok: false, text: 'No reply returned — check the model name and API key.' };
-  } catch (e) { return { ok: false, text: e.message || 'Network error' }; }
+  return callAIProxy([{ role: 'system', content: sysPrompt }, { role: 'user', content: prompt }]);
 }
 
 async function callAI(userPrompt, showThinking = false) {
@@ -1894,26 +2261,18 @@ async function callAI(userPrompt, showThinking = false) {
     appendAIMsg('ai', '⚠️ AI Tutor is currently turned off by the admin.');
     return;
   }
-  if (!getSetting('ai_api_key', '')) {
-    document.getElementById('aiThinking')?.remove();
-    appendAIMsg('ai', "⚠️ AI Tutor hasn't been set up yet. Please contact the admin.");
-    return;
-  }
 
   aiConversation.push({ role: 'user', content: userPrompt });
   const sysPrompt = getSetting('ai_system_prompt', 'You are an expert MBBS tutor for Pakistani medical students at LUMHS and affiliated colleges. Be concise, accurate, and encouraging.');
-  const req = buildAIRequest([{ role: 'system', content: sysPrompt }, ...aiConversation]);
-  try {
-    const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
-    const data = await res.json();
-    document.getElementById('aiThinking')?.remove();
-    if (!res.ok) { appendAIMsg('ai', `⚠️ AI error: ${data?.error?.message || 'request failed — check Settings → AI Tutor'}`); aiConversation.pop(); return; }
-    const reply = extractAIText(req.provider, data);
-    if (reply) {
-      aiConversation.push({ role: 'assistant', content: reply });
-      appendAIMsg('ai', reply);
-    } else { appendAIMsg('ai', '⚠️ No response. Check the model name / API key in Settings.'); aiConversation.pop(); }
-  } catch (e) { document.getElementById('aiThinking')?.remove(); appendAIMsg('ai', '❌ Network error. Check connection.'); aiConversation.pop(); }
+  const result = await callAIProxy([{ role: 'system', content: sysPrompt }, ...aiConversation]);
+  document.getElementById('aiThinking')?.remove();
+  if (result.ok && result.text) {
+    aiConversation.push({ role: 'assistant', content: result.text });
+    appendAIMsg('ai', result.text);
+  } else {
+    appendAIMsg('ai', `⚠️ ${result.text || 'AI Tutor is not set up yet. Please contact the admin.'}`);
+    aiConversation.pop();
+  }
 }
 
 
@@ -1966,6 +2325,50 @@ async function renderStats() {
       </div>
     </div>`).join('') || '<p class="text-muted">No tests yet.</p>';
 
+  // Weak Topics — subject-level keys look like "moduleId_subjectId"
+  const weakEntries = Object.entries(stats.subject_stats || {})
+    .filter(([k, v]) => k.includes('_') && v.total >= 5)
+    .map(([k, v]) => ({ subjectId: k.split('_')[1], moduleId: k.split('_')[0], acc: Math.round((v.correct / v.total) * 100), total: v.total }))
+    .filter(e => e.acc < 65)
+    .sort((a, b) => a.acc - b.acc)
+    .slice(0, 5);
+
+  let weakHtml = '<p class="text-sm text-muted">Not enough data yet — keep practicing by subject and we\'ll spot your weak areas here.</p>';
+  if (weakEntries.length) {
+    const { data: subs } = await db(sb.from('subjects').select('id,name,module_id,modules(name)').in('id', weakEntries.map(e => e.subjectId)), 'Subjects error');
+    weakHtml = weakEntries.map(e => {
+      const s = subs?.find(s => s.id == e.subjectId);
+      if (!s) return '';
+      return `
+        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div class="fw-600 text-sm">${s.name}</div>
+            <div class="text-xs text-muted">${s.modules?.name || ''} · ${e.total} questions attempted</div>
+          </div>
+          <div style="text-align:right">
+            <div class="fw-700" style="color:var(--red)">${e.acc}%</div>
+            <button class="btn btn-secondary btn-xs mt-1" onclick="startTest('practice',${s.module_id},'${(s.modules?.name||'').replace(/'/g,"\\'")}',${s.id},null,null)">Practice →</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Badges (computed live from existing stats — no extra DB table needed)
+  const badgeDefs = [
+    { id: 'first_test', icon: '🎯', label: 'First Steps', desc: 'Completed your first test', earned: (stats.total_tests||0) >= 1 },
+    { id: 'century', icon: '💯', label: 'Century Club', desc: '100+ questions answered', earned: (stats.total_questions||0) >= 100 },
+    { id: 'perfectionist', icon: '🌟', label: 'Perfectionist', desc: 'Scored 100% in a test', earned: (stats.best_score||0) >= 100 },
+    { id: 'streak7', icon: '🔥', label: '7-Day Streak', desc: '7 days in a row', earned: (stats.streak||0) >= 7 },
+    { id: 'streak30', icon: '🚀', label: '30-Day Streak', desc: '30 days in a row', earned: (stats.streak||0) >= 30 },
+    { id: 'marathon', icon: '🏃', label: 'Marathon', desc: '50+ tests completed', earned: (stats.total_tests||0) >= 50 },
+    { id: 'sharp', icon: '🧠', label: 'Sharp Mind', desc: '80%+ overall accuracy', earned: acc >= 80 && (stats.total_questions||0) >= 50 }
+  ];
+  const badgesHtml = badgeDefs.map(b => `
+    <div style="text-align:center;opacity:${b.earned ? '1' : '.35'}">
+      <div style="font-size:30px">${b.icon}</div>
+      <div class="text-xs fw-600" style="margin-top:2px">${b.label}</div>
+    </div>`).join('');
+
   // Canvas chart
   wrap.innerHTML = `
     <div class="card-teal" style="margin-bottom:16px">
@@ -1998,6 +2401,16 @@ async function renderStats() {
         <div class="stat-val">${(stats.total_questions || 0) - (stats.total_correct || 0)}</div>
         <div class="stat-key">Incorrect</div>
       </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-2">🎯 Weak Topics</div>
+      ${weakHtml}
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-2">🏅 Badges</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">${badgesHtml}</div>
     </div>
 
     ${history.length >= 3 ? `
@@ -2213,10 +2626,6 @@ async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">🆔</div><div><div class="list-item-title">Enrollment Number</div><div class="list-item-sub">${currentUser.enrollment_number || 'Not set — tap to add'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
-    <div class="list-item no-hover" onclick="openModal('modalPw')">
-      <div class="list-item-left"><div class="list-item-icon">🔒</div><div><div class="list-item-title">Change Password</div></div></div>
-      <span style="color:var(--ink-4)">›</span>
-    </div>
     <div class="list-item no-hover" onclick="openModal('modalPrivacy')">
       <div class="list-item-left"><div class="list-item-icon">👁</div><div><div class="list-item-title">Leaderboard Privacy</div><div class="list-item-sub">${currentUser.show_on_leaderboard ? 'Showing name & college' : 'Anonymous mode on'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
@@ -2241,12 +2650,35 @@ async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">📅</div><div><div class="list-item-title">Change Year</div><div class="list-item-sub">Currently: ${selectedYear?.name || 'Not set'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
+    ${getSetting('ai_enabled','true')!=='false' ? `
     <div class="list-item" onclick="openAITutor()">
-      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_api_key','') && getSetting('ai_enabled','true')!=='false' ? '✅ Tap to ask a question' : '⚠️ Not set up by admin yet'}</div></div></div>
+      <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_key_set','') === 'true' ? '✅ Tap to ask a question' : '⚠️ Not set up by admin yet'}</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>` : ''}
+    <div class="list-item" onclick="openMyReports()">
+      <div class="list-item-left"><div class="list-item-icon">📬</div><div><div class="list-item-title">My Reports & Feedback</div><div class="list-item-sub">Report questions, send feedback, see replies</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
+    ${getSetting('payment_enabled','false') === 'true' ? `
+    <div class="list-item" onclick="showSubscriptionPlans()">
+      <div class="list-item-left"><div class="list-item-icon">💎</div><div><div class="list-item-title">View Plans</div><div class="list-item-sub">Upgrade for full access</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>` : ''}
+    ${getSetting('donation_enabled','false') === 'true' ? `
+    <div class="list-item" onclick="openDonateModal()">
+      <div class="list-item-left"><div class="list-item-icon">💛</div><div><div class="list-item-title">Support Us</div><div class="list-item-sub">Help keep this app free</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>` : ''}
     <div class="list-item no-hover" onclick="toggleDarkMode()">
       <div class="list-item-left"><div class="list-item-icon">🌙</div><div><div class="list-item-title">Dark Mode</div><div class="list-item-sub">${localStorage.getItem('dark_mode')==='true'?'On':'Off'}</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>
+    <div class="list-item no-hover" onclick="toggleNotifications(${localStorage.getItem('notif_enabled')==='false'})">
+      <div class="list-item-left"><div class="list-item-icon">🔔</div><div><div class="list-item-title">Notifications</div><div class="list-item-sub">${localStorage.getItem('notif_enabled')==='false'?'Off':'On'}</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>
+    <div class="list-item no-hover" onclick="toggleSoundEffects(${localStorage.getItem('sound_enabled')==='false'})">
+      <div class="list-item-left"><div class="list-item-icon">🔊</div><div><div class="list-item-title">Sound Effects</div><div class="list-item-sub">${localStorage.getItem('sound_enabled')==='false'?'Off':'On'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
 
@@ -2346,21 +2778,6 @@ async function saveName() {
   renderProfile();
 }
 
-async function changePassword() {
-  const oldP = document.getElementById('pw_old').value;
-  const new1 = document.getElementById('pw_new1').value;
-  const new2 = document.getElementById('pw_new2').value;
-  if (new1 !== new2) return showToast('Passwords do not match');
-  if (new1.length < 6) return showToast('Password must be at least 6 characters');
-  const oldHash = await sha256(oldP);
-  if (oldHash !== currentUser.password_hash) return showToast('Current password is incorrect');
-  const newHash = await sha256(new1);
-  await db(sb.from('users').update({ password_hash: newHash }).eq('email', currentUser.email), 'Password update failed');
-  currentUser.password_hash = newHash;
-  closeModal('modalPw');
-  showToast('Password updated ✓');
-}
-
 async function savePrivacy() {
   const val = document.getElementById('privLeaderboard').checked;
   await db(sb.from('users').update({ show_on_leaderboard: val }).eq('email', currentUser.email), 'Privacy save failed');
@@ -2439,8 +2856,13 @@ async function showBookmarkedQ(qid) {
       ${q.explanation ? `<div style="color:var(--ink-2);line-height:1.6;margin-top:6px">${q.explanation}</div>` : '<div style="color:var(--ink-4)">No explanation yet.</div>'}
       ${q.explanation_image_url ? `<img src="${q.explanation_image_url}" style="max-width:100%;border-radius:12px;margin-top:10px" onerror="this.style.display='none'">` : ''}
     </div>
-    <button class="btn btn-ghost mt-3" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>
+    <div class="btn-row mt-3">
+      ${getSetting('ai_enabled','true')!=='false' ? `<button class="btn btn-ghost" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Explain with AI</button>` : ''}
+      <button class="btn btn-ghost" onclick="openReportModal(${q.id})">🚩 Report</button>
+    </div>
+    <div class="card mt-3" id="commentsWrap_${q.id}"><div class="spinner" style="margin:12px auto"></div></div>
   `;
+  loadQuestionComments(q.id);
 }
 
 async function removeBookmarkById(qid) {
@@ -2450,43 +2872,7 @@ async function removeBookmarkById(qid) {
 }
 
 // ==================== SEARCH ====================
-async function renderSearch(term = '') {
-  const wrap = document.getElementById('searchPageWrap');
-  wrap.innerHTML = `
-    <div class="card" style="margin-bottom:16px">
-      <div class="fw-700 mb-2" style="font-family:var(--font-display)">🔍 Search Questions</div>
-      <div class="input-group">
-        <input type="text" id="searchInput" class="input-field" placeholder="Search by keyword..." value="${term}" onkeydown="if(event.key==='Enter')executeSearch()" style="margin:0">
-        <button class="btn btn-primary" style="width:auto;flex-shrink:0" onclick="executeSearch()">Search</button>
-      </div>
-    </div>
-    <div id="searchResults"></div>`;
-
-  if (term) {
-    const resWrap = document.getElementById('searchResults');
-    resWrap.innerHTML = `<div class="spinner" style="margin:20px auto"></div>`;
-    const { data: results } = await db(
-      sb.from('questions').select('id,text,explanation,module_id,modules(name)').ilike('text', `%${term}%`).limit(30),
-      'Search failed'
-    );
-    if (!results?.length) { resWrap.innerHTML = `<div class="card text-center"><p>No questions found for "<strong>${term}</strong>"</p></div>`; return; }
-    resWrap.innerHTML = `<div class="text-xs text-muted mb-2" style="padding-left:4px">${results.length} results for "${term}"</div>` +
-      results.map(q => `<div class="card" style="margin-bottom:8px">
-        <div class="text-xs text-muted mb-1">${q.modules?.name || 'Unknown module'}</div>
-        <div style="font-size:14px;font-weight:500;line-height:1.5;margin-bottom:8px">${q.text.substring(0, 140)}${q.text.length > 140 ? '...' : ''}</div>
-        <div class="btn-row">
-          <button class="btn btn-secondary btn-xs" onclick="quickViewQuestion(${q.id})">👁 View</button>
-          <button class="btn btn-ghost btn-xs" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 AI</button>
-        </div>
-      </div>`).join('');;
-  }
-}
-
-function executeSearch() {
-  const term = document.getElementById('searchInput')?.value.trim();
-  if (!term) return;
-  renderSearch(term);
-}
+// renderSearch and executeSearch are defined once, further below, with module/difficulty filters.
 
 // ==================== PLANNER ====================
 async function renderPlanner() {
@@ -2582,11 +2968,13 @@ async function renderAdminPanel() {
         ['👥','Students','adminTab_students'],
         ['🎓','Courses','adminTab_courses'],
         ['📚','Content','adminTab_content'],
+        ['🚩','Reports','adminTab_reports'],
         ['📢','Announce','adminTab_announce'],
         ['🏫','Colleges','adminTab_colleges'],
         ['💰','Monetize','adminTab_money'],
         ['⚙️','Settings','adminTab_settings'],
-        ['📈','Analytics','adminTab_analytics']
+        ['📈','Analytics','adminTab_analytics'],
+        ['🖼️','Media','adminTab_media']
       ].map(([icon,label,id]) => `
         <button id="${id}" class="btn btn-secondary btn-sm" onclick="adminShowTab('${id.replace('adminTab_','')}')" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:8px 4px">
           ${icon} ${label}
@@ -2639,11 +3027,13 @@ function adminShowTab(tab) {
     students: adminStudents,
     courses: adminCourses,
     content: adminContent,
+    reports: adminReports,
     announce: adminAnnouncements,
     colleges: adminColleges,
     money: adminMonetization,
     settings: adminAppSettings,
-    analytics: adminAnalytics
+    analytics: adminAnalytics,
+    media: adminMediaLibrary
   };
   if (tabs[tab]) tabs[tab]();
 }
@@ -2871,7 +3261,7 @@ function isUserOnline(u, now = Date.now()) {
 let allStudentsData = [];
 async function loadStudentsData() {
   showLoading(true, 'Loading students...');
-  const { data: users } = await db(sb.from('users').select('*').order('joined', { ascending: false }), 'Users error');
+  const { data: users } = await db(sb.from('users').select(USERS_SAFE_COLS).order('joined', { ascending: false }), 'Users error');
   const { data: stats } = await db(sb.from('user_stats').select('*'), 'Stats error');
   const { data: colleges } = await db(sb.from('colleges').select('name').order('name'), 'Colleges error');
 
@@ -2948,7 +3338,6 @@ function filterStudents() {
         </div>
         <div class="admin-row-actions" onclick="event.stopPropagation()">
           <button class="btn btn-secondary btn-xs" onclick="adminViewStudentDetail('${u.email}')">📊 Full Profile</button>
-          <button class="btn btn-secondary btn-xs" onclick="adminResetPassword('${u.email}')">🔑 Reset PW</button>
           <button class="btn ${u.is_banned ? 'btn-secondary' : 'btn-danger'} btn-xs" onclick="adminToggleBan('${u.email}',${u.is_banned})">${u.is_banned ? '✅ Unban' : '🚫 Ban'}</button>
           <button class="btn btn-danger btn-xs" onclick="adminDeleteUser('${u.email}')">🗑 Delete</button>
         </div>
@@ -2972,7 +3361,7 @@ async function adminViewStudentDetail(email) {
   let s = u?.stats;
   if (!u) {
     showLoading(true, 'Loading profile...');
-    const { data: userRow } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'User fetch failed');
+    const { data: userRow } = await db(sb.from('users').select(USERS_SAFE_COLS).eq('email', email).maybeSingle(), 'User fetch failed');
     const { data: statRow } = await db(sb.from('user_stats').select('*').eq('email', email).maybeSingle(), 'Stats fetch failed');
     showLoading(false);
     if (!userRow) return showToast('Student not found');
@@ -3048,7 +3437,6 @@ async function adminViewStudentDetail(email) {
         <!-- Actions -->
         <div class="btn-row">
           <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard?.writeText('${u.email}');showToast('Email copied')">📋 Copy Email</button>
-          <button class="btn btn-secondary btn-sm" onclick="adminResetPassword('${u.email}')">🔑 Reset PW</button>
           <button class="btn ${u.is_banned?'btn-secondary':'btn-danger'} btn-sm" onclick="adminToggleBan('${u.email}',${u.is_banned})">${u.is_banned?'✅ Unban':'🚫 Ban'}</button>
           <button class="btn btn-ghost btn-sm" onclick="this.closest('[style*=fixed]').remove()">Close</button>
         </div>
@@ -3062,7 +3450,7 @@ async function adminViewStudentDetail(email) {
 async function adminEditStudentInfo(email) {
   let u = allStudentsData.find(s => s.email === email);
   if (!u) {
-    const { data } = await db(sb.from('users').select('*').eq('email', email).maybeSingle(), 'User fetch failed');
+    const { data } = await db(sb.from('users').select(USERS_SAFE_COLS).eq('email', email).maybeSingle(), 'User fetch failed');
     u = data;
   }
   if (!u) return showToast('Student not found');
@@ -3113,32 +3501,10 @@ async function adminSaveStudentInfo(email) {
   adminViewStudentDetail(email);
 }
 
-async function adminResetPassword(email) {
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px">
-      <div class="fw-700 mb-1">🔑 Reset Password</div>
-      <div class="text-xs text-muted mb-3">${email}</div>
-      <input id="_rp_pass" class="input-field" type="password" placeholder="New password (min 6 chars)">
-      <div class="btn-row mt-3">
-        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="(async()=>{
-          const p=document.getElementById('_rp_pass').value;
-          if(!p||p.length<6)return showToast('Min 6 characters');
-          const h=await sha256(p);
-          await db(sb.from('users').update({password_hash:h}).eq('email','${email}'),'Reset failed');
-          showToast('Password reset ✓');
-          this.closest('[style*=fixed]').remove();
-        })()">Reset</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
 async function adminToggleBan(email, isBanned) {
   showConfirm(isBanned ? `Unban ${email}?` : `Ban ${email}?<br><small>They won't be able to login.</small>`, async () => {
-    await db(sb.from('users').update({ is_banned: !isBanned }).eq('email', email), 'Ban toggle failed');
+    const { error } = await adminRPC('admin_set_flag', { p_target_email: email, p_field: 'is_banned', p_value: !isBanned });
+    if (error) return showToast('Ban toggle failed: ' + error.message);
     showToast(isBanned ? 'User unbanned' : 'User banned');
     await loadStudentsData();
   }, isBanned ? 'Unban' : 'Ban', !isBanned);
@@ -3346,21 +3712,121 @@ async function adminModules() {
     ${list || '<div class="card"><p class="text-muted">No modules yet.</p></div>'}`;
 }
 
+// ==================== IMAGE CROPPER (WhatsApp-style pan & zoom) ====================
+// Opens a fixed-frame crop modal for `file`. Drag to pan, slider to zoom.
+// Calls onDone(blob) with the final cropped JPEG, or nothing if cancelled.
+function openImageCropper(file, aspect, onDone) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => buildCropperUI(img, aspect, onDone);
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function buildCropperUI(img, aspect, onDone) {
+  const frameW = Math.min(320, window.innerWidth - 64);
+  const frameH = frameW / aspect;
+  const baseScale = Math.max(frameW / img.naturalWidth, frameH / img.naturalHeight);
+  let zoom = 1; // multiplier on top of baseScale, 1x to 3x
+  let offX = 0, offY = 0; // top-left of image relative to frame top-left, in CSS px
+  let dragging = false, startX = 0, startY = 0, startOffX = 0, startOffY = 0;
+
+  function scale() { return baseScale * zoom; }
+  function dispW() { return img.naturalWidth * scale(); }
+  function dispH() { return img.naturalHeight * scale(); }
+  function clamp() {
+    const w = dispW(), h = dispH();
+    const minX = frameW - w, minY = frameH - h; // both <= 0
+    offX = Math.min(0, Math.max(minX, offX));
+    offY = Math.min(0, Math.max(minY, offY));
+  }
+  function center() { offX = (frameW - dispW()) / 2; offY = (frameH - dispH()) / 2; clamp(); }
+  function render() {
+    imgEl.style.width = dispW() + 'px';
+    imgEl.style.height = dispH() + 'px';
+    imgEl.style.left = offX + 'px';
+    imgEl.style.top = offY + 'px';
+  }
+
+  center();
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:10010;display:flex;align-items:center;justify-content:center;padding:16px;flex-direction:column';
+  overlay.innerHTML = `
+    <div style="color:white;font-weight:700;margin-bottom:14px;text-align:center">📷 Move &amp; zoom to frame your photo</div>
+    <div id="_cropFrame" style="position:relative;width:${frameW}px;height:${frameH}px;overflow:hidden;border-radius:14px;border:2px solid white;touch-action:none;background:#111;cursor:grab"></div>
+    <input id="_cropZoom" type="range" min="1" max="3" step="0.01" value="1" style="width:${frameW}px;margin-top:18px">
+    <div class="btn-row" style="margin-top:18px;width:${frameW}px">
+      <button class="btn btn-ghost" style="flex:1;color:white;border-color:rgba(255,255,255,.3)" id="_cropCancel">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" id="_cropDone">✓ Use Photo</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const cropFrame = overlay.querySelector('#_cropFrame');
+  const imgEl = document.createElement('img');
+  imgEl.src = img.src;
+  imgEl.style.position = 'absolute';
+  imgEl.style.userSelect = 'none';
+  imgEl.draggable = false;
+  cropFrame.appendChild(imgEl);
+  render();
+
+  const zoomSlider = overlay.querySelector('#_cropZoom');
+  zoomSlider.addEventListener('input', () => {
+    const cx = offX - frameW / 2, cy = offY - frameH / 2; // anchor roughly to current center
+    const oldScale = scale();
+    zoom = parseFloat(zoomSlider.value);
+    const ratio = scale() / oldScale;
+    offX = offX * ratio + (frameW / 2) * (1 - ratio);
+    offY = offY * ratio + (frameH / 2) * (1 - ratio);
+    clamp(); render();
+  });
+
+  function pointerDown(x, y) { dragging = true; startX = x; startY = y; startOffX = offX; startOffY = offY; cropFrame.style.cursor = 'grabbing'; }
+  function pointerMove(x, y) { if (!dragging) return; offX = startOffX + (x - startX); offY = startOffY + (y - startY); clamp(); render(); }
+  function pointerUp() { dragging = false; cropFrame.style.cursor = 'grab'; }
+
+  cropFrame.addEventListener('pointerdown', (e) => { cropFrame.setPointerCapture(e.pointerId); pointerDown(e.clientX, e.clientY); });
+  cropFrame.addEventListener('pointermove', (e) => pointerMove(e.clientX, e.clientY));
+  cropFrame.addEventListener('pointerup', pointerUp);
+  cropFrame.addEventListener('pointercancel', pointerUp);
+
+  function cleanup() { overlay.remove(); }
+
+  overlay.querySelector('#_cropCancel').onclick = cleanup;
+  overlay.querySelector('#_cropDone').onclick = () => {
+    const outW = aspect >= 1 ? 800 : Math.round(800 * aspect);
+    const outH = aspect >= 1 ? Math.round(800 / aspect) : 800;
+    const canvas = document.createElement('canvas');
+    canvas.width = outW; canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    const sx = -offX / scale(), sy = -offY / scale();
+    const sw = frameW / scale(), sh = frameH / scale();
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+    canvas.toBlob((blob) => { cleanup(); if (blob) onDone(blob); }, 'image/jpeg', 0.9);
+  };
+}
+
 async function previewAndUpload(fileInputId, urlFieldId, previewId) {
   const file = document.getElementById(fileInputId)?.files[0];
   if (!file) return;
-  const preview = document.getElementById(previewId);
-  if (preview) { preview.src = URL.createObjectURL(file); preview.style.display = 'block'; }
-  showLoading(true, 'Uploading image...');
-  const ext = file.name.split('.').pop();
-  const path = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-  const bucket = fileInputId.includes('q_') ? 'question-images' : 'module-images';
-  const { error } = await sb.storage.from(bucket).upload(path, file, { upsert: true });
-  if (error) { showLoading(false); showToast('Upload failed: ' + error.message); return; }
-  const { data: urlData } = sb.storage.from(bucket).getPublicUrl(path);
-  const urlField = document.getElementById(urlFieldId);
-  if (urlField) urlField.value = urlData.publicUrl;
-  showLoading(false); showToast('Image uploaded ✓');
+  // Square frame for icons/logos, wide frame for content/explanation images
+  const aspect = ['q_img_file','q_exp_img_file','an_img_file','_eq_img_file','_eq_exp_img_file'].includes(fileInputId) ? 1.6 : 1;
+  openImageCropper(file, aspect, async (blob) => {
+    const preview = document.getElementById(previewId);
+    if (preview) { preview.src = URL.createObjectURL(blob); preview.style.display = 'block'; }
+    showLoading(true, 'Uploading image...');
+    const path = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+    const bucket = fileInputId.includes('q_') ? 'question-images' : 'module-images';
+    const { error } = await sb.storage.from(bucket).upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+    if (error) { showLoading(false); showToast('Upload failed: ' + error.message); return; }
+    const { data: urlData } = sb.storage.from(bucket).getPublicUrl(path);
+    const urlField = document.getElementById(urlFieldId);
+    if (urlField) urlField.value = urlData.publicUrl;
+    showLoading(false); showToast('Image uploaded ✓');
+  });
 }
 
 async function adminAddModule() {
@@ -3770,8 +4236,32 @@ function qSubTab(tab, btn) {
     browseQuestions();
   } else if (tab === 'bulk') {
     document.getElementById('qTabBody').innerHTML = `
+      <div class="card" style="margin-bottom:12px">
+        <div class="fw-700 mb-2">📊 Bulk Upload via Excel / CSV</div>
+        <p class="text-sm mb-3">Pick the Module &amp; Subject first — every question in the file will be added there. Best for uploading one subject/paper's worth of MCQs at once.</p>
+        <label class="input-label">Module</label>
+        <select id="qx_module" class="input-field" title="Select module" aria-label="Select module" onchange="loadSubjectsForQX()">
+          <option value="">— Select module —</option>${mOpts}
+        </select>
+        <label class="input-label">Subject (optional)</label>
+        <select id="qx_subject" class="input-field" title="Select subject" aria-label="Select subject">
+          <option value="">— Any / Mixed —</option>
+        </select>
+        <div class="upload-area mt-2" onclick="document.getElementById('bulkExcelFile').click()">
+          <div style="font-size:32px">📊</div>
+          <div class="text-sm mt-1">Click to select Excel (.xlsx) or CSV file</div>
+        </div>
+        <input type="file" id="bulkExcelFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="previewBulkExcel()">
+        <div id="bulkExcelPreview" style="margin-top:12px"></div>
+        <button class="btn btn-primary mt-3" id="bulkExcelUploadBtn" style="display:none" onclick="executeBulkExcelUpload()">Upload All Questions</button>
+        <hr class="divider">
+        <div class="fw-700 mb-2">📥 Download Template</div>
+        <p class="text-xs text-muted mb-2">Fill this in Excel, save, then upload above. Columns: Question, OptionA-D (OptionE/F optional), CorrectAnswer (A/B/C/D), Explanation, Difficulty (easy/medium/hard), Tags (comma-separated).</p>
+        <button class="btn btn-secondary" onclick="downloadExcelTemplate()">Download CSV Template</button>
+      </div>
+
       <div class="card">
-        <div class="fw-700 mb-2">📂 Bulk Upload via JSON</div>
+        <div class="fw-700 mb-2">📂 Bulk Upload via JSON (advanced)</div>
         <p class="text-sm mb-3">Upload a JSON file with an array of questions. Each must have: <code>module_id, text, options (array), correct_answer (0-3), explanation</code></p>
         <div class="upload-area" onclick="document.getElementById('bulkFile').click()">
           <div style="font-size:32px">📄</div>
@@ -3785,6 +4275,109 @@ function qSubTab(tab, btn) {
         <button class="btn btn-secondary" onclick="downloadJSONTemplate()">Download JSON Template</button>
       </div>`;
   }
+}
+
+let bulkXData = [];
+async function loadSubjectsForQX() {
+  const moduleId = document.getElementById('qx_module')?.value;
+  const subSel = document.getElementById('qx_subject');
+  if (!subSel) return;
+  subSel.innerHTML = '<option value="">— Any / Mixed —</option>';
+  if (!moduleId) return;
+  const { data: subs } = await db(sb.from('subjects').select('id,name').eq('module_id', moduleId).order('display_order'), 'Subs error');
+  for (const s of subs || []) {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = s.name;
+    subSel.appendChild(opt);
+  }
+}
+
+function previewBulkExcel() {
+  const file = document.getElementById('bulkExcelFile')?.files[0];
+  if (!file) return;
+  if (!document.getElementById('qx_module').value) {
+    showToast('Please select a Module first');
+    document.getElementById('bulkExcelFile').value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      const letterToIdx = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5 };
+      // Normalize header names (case/space-insensitive) so "Option A" or "optiona" both work
+      const norm = (row, ...keys) => {
+        for (const k of keys) {
+          for (const rk of Object.keys(row)) {
+            if (rk.replace(/[\s_]/g, '').toLowerCase() === k.replace(/[\s_]/g, '').toLowerCase()) return row[rk];
+          }
+        }
+        return '';
+      };
+      bulkXData = rows.map(row => {
+        const options = ['A','B','C','D','E','F']
+          .map(L => String(norm(row, `Option${L}`)).trim())
+          .filter(v => v !== '');
+        const correctLetter = String(norm(row, 'CorrectAnswer', 'Answer')).trim().toUpperCase().charAt(0);
+        return {
+          text: String(norm(row, 'Question')).trim(),
+          options,
+          correct_answer: letterToIdx[correctLetter] ?? 0,
+          explanation: String(norm(row, 'Explanation')).trim(),
+          difficulty: (String(norm(row, 'Difficulty')).trim().toLowerCase() || 'medium'),
+          tags: String(norm(row, 'Tags')).split(',').map(t => t.trim()).filter(Boolean)
+        };
+      }).filter(q => q.text && q.options.length >= 2);
+
+      if (!bulkXData.length) throw new Error('No valid rows found — check your column headers match the template');
+
+      document.getElementById('bulkExcelPreview').innerHTML = `
+        <div class="badge badge-green" style="margin-bottom:8px">${bulkXData.length} questions found</div>
+        ${bulkXData.slice(0, 3).map((q, i) => `<div class="card" style="margin-bottom:6px;font-size:13px"><strong>Q${i+1}:</strong> ${q.text.substring(0, 80)}${q.text.length > 80 ? '...' : ''}</div>`).join('')}
+        ${bulkXData.length > 3 ? `<div class="text-xs text-muted">...and ${bulkXData.length - 3} more</div>` : ''}`;
+      document.getElementById('bulkExcelUploadBtn').style.display = 'block';
+    } catch (err) {
+      document.getElementById('bulkExcelPreview').innerHTML = `<div class="badge badge-red">❌ ${err.message}</div>`;
+      bulkXData = [];
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function executeBulkExcelUpload() {
+  if (!bulkXData.length) return;
+  const moduleId = document.getElementById('qx_module').value;
+  const subjectId = document.getElementById('qx_subject').value || null;
+  if (!moduleId) return showToast('Please select a Module first');
+  showLoading(true, `Uploading ${bulkXData.length} questions...`);
+  let success = 0, failed = 0;
+  for (const q of bulkXData) {
+    const { error } = await sb.from('questions').insert({
+      module_id: moduleId, subject_id: subjectId,
+      text: q.text, options: q.options, correct_answer: q.correct_answer,
+      explanation: q.explanation || '', difficulty: q.difficulty || 'medium', tags: q.tags || []
+    });
+    if (error) failed++; else success++;
+  }
+  showLoading(false);
+  showToast(`✅ ${success} added${failed ? `, ❌ ${failed} failed` : ''}`);
+  logAdminAction(`Bulk uploaded ${success} questions via Excel/CSV`);
+  bulkXData = [];
+  document.getElementById('bulkExcelUploadBtn').style.display = 'none';
+  document.getElementById('bulkExcelPreview').innerHTML = '';
+}
+
+function downloadExcelTemplate() {
+  const headers = ['Question','OptionA','OptionB','OptionC','OptionD','OptionE','CorrectAnswer','Explanation','Difficulty','Tags'];
+  const example = ['Which nerve innervates the deltoid muscle?','Radial nerve','Axillary nerve','Musculocutaneous nerve','Ulnar nerve','','B','The axillary nerve (C5,C6) innervates the deltoid and teres minor.','easy','anatomy, upper limb'];
+  const csv = [headers, example].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'lumhsian_questions_template.csv';
+  a.click();
 }
 
 let bulkQData = [];
@@ -3981,7 +4574,19 @@ async function adminEditQuestion(id) {
       </select>
       <label class="input-label">Explanation</label>
       <textarea id="_eq_exp" class="input-field" rows="3" placeholder="Explanation (optional)" style="resize:vertical">${(q.explanation||'').replace(/`/g,"'").replace(/"/g,'&quot;')}</textarea>
-      <label class="input-label">Correct Answer</label>
+      <label class="input-label">Question Image (optional)</label>
+      <div class="upload-area" onclick="document.getElementById('_eq_img_file').click()">📸 ${q.image_url ? 'Replace image' : 'Upload question image'}</div>
+      <input type="file" id="_eq_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('_eq_img_file','_eq_img_url','_eq_img_preview')">
+      <img id="_eq_img_preview" src="${q.image_url||''}" style="display:${q.image_url?'block':'none'};max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
+      <input id="_eq_img_url" class="input-field" value="${q.image_url||''}" placeholder="Question image URL" readonly>
+      ${q.image_url ? `<button class="btn btn-ghost btn-xs" onclick="document.getElementById('_eq_img_url').value='';document.getElementById('_eq_img_preview').style.display='none'">🗑 Remove image</button>` : ''}
+      <label class="input-label mt-2">Explanation Image (optional)</label>
+      <div class="upload-area" onclick="document.getElementById('_eq_exp_img_file').click()">📸 ${q.explanation_image_url ? 'Replace image' : 'Upload explanation image'}</div>
+      <input type="file" id="_eq_exp_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('_eq_exp_img_file','_eq_exp_img_url','_eq_exp_img_preview')">
+      <img id="_eq_exp_img_preview" src="${q.explanation_image_url||''}" style="display:${q.explanation_image_url?'block':'none'};max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
+      <input id="_eq_exp_img_url" class="input-field" value="${q.explanation_image_url||''}" placeholder="Explanation image URL" readonly>
+      ${q.explanation_image_url ? `<button class="btn btn-ghost btn-xs" onclick="document.getElementById('_eq_exp_img_url').value='';document.getElementById('_eq_exp_img_preview').style.display='none'">🗑 Remove image</button>` : ''}
+      <label class="input-label mt-2">Correct Answer</label>
       <select id="_eq_correct" class="input-field" title="Correct answer" aria-label="Correct answer">
         ${['A','B','C','D','E','F'].slice(0,(q.options||[]).length).map((l,i)=>`<option value="${i}" ${i===q.correct_answer?'selected':''}>${l}: ${(q.options||[])[i]||''}</option>`).join('')}
       </select>
@@ -3993,8 +4598,10 @@ async function adminEditQuestion(id) {
           const c=parseInt(document.getElementById('_eq_correct').value);
           const subj=document.getElementById('_eq_subject').value||null;
           const pap=document.getElementById('_eq_paper').value||null;
+          const img=document.getElementById('_eq_img_url').value.trim()||null;
+          const expImg=document.getElementById('_eq_exp_img_url').value.trim()||null;
           if(!t)return showToast('Question text required');
-          await db(sb.from('questions').update({text:t,explanation:e||null,correct_answer:c,subject_id:subj,paper_id:pap}).eq('id',${id}),'Edit failed');
+          await db(sb.from('questions').update({text:t,explanation:e||null,correct_answer:c,subject_id:subj,paper_id:pap,image_url:img,explanation_image_url:expImg}).eq('id',${id}),'Edit failed');
           showToast('Question updated ✓');
           this.closest('[style*=fixed]').remove();
           browseQuestions();
@@ -4012,6 +4619,54 @@ async function adminDeleteQuestion(id) {
 }
 
 // ==================== ANNOUNCEMENTS TAB ====================
+// ==================== ADMIN: REPORTS & FEEDBACK ====================
+async function adminReports(filter = 'all') {
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `<div class="spinner" style="margin:40px auto"></div>`;
+  let query = sb.from('reports_feedback').select('*,questions(text,id)').order('created_at', { ascending: false }).limit(100);
+  if (filter === 'pending') query = query.eq('status', 'pending');
+  if (filter === 'question_report') query = query.eq('type', 'question_report');
+  if (filter === 'feedback') query = query.eq('type', 'feedback');
+  const { data } = await db(query, 'Reports load failed');
+  const { count: pendingCount } = await sb.from('reports_feedback').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+
+  content.innerHTML = `
+    <div class="flex-between mb-3">
+      <div class="fw-700">🚩 Reports & Feedback</div>
+      ${pendingCount ? `<span class="badge badge-amber">${pendingCount} pending</span>` : '<span class="badge badge-green">All caught up ✓</span>'}
+    </div>
+    <div class="btn-row mb-3">
+      <button class="btn ${filter==='all'?'btn-primary':'btn-secondary'} btn-xs" onclick="adminReports('all')">All</button>
+      <button class="btn ${filter==='pending'?'btn-primary':'btn-secondary'} btn-xs" onclick="adminReports('pending')">Pending</button>
+      <button class="btn ${filter==='question_report'?'btn-primary':'btn-secondary'} btn-xs" onclick="adminReports('question_report')">🚩 Question Reports</button>
+      <button class="btn ${filter==='feedback'?'btn-primary':'btn-secondary'} btn-xs" onclick="adminReports('feedback')">💬 Feedback</button>
+    </div>
+    ${!data?.length ? '<div class="card text-center"><p>No reports here.</p></div>' : data.map(r => `
+      <div class="card" style="margin-bottom:10px">
+        <div class="flex-between mb-1">
+          <span class="badge ${r.type === 'question_report' ? 'badge-amber' : 'badge-teal'}" style="font-size:10px">${r.type === 'question_report' ? '🚩 Question Report' : '💬 Feedback'}</span>
+          <span class="badge ${r.status === 'pending' ? 'badge-amber' : 'badge-green'}" style="font-size:10px">${r.status === 'pending' ? 'Pending' : '✓ Replied'}</span>
+        </div>
+        <div class="text-xs text-muted mb-1">${r.user_name || 'Unknown'} (${r.user_email}) · ${timeAgo(new Date(r.created_at).getTime())}</div>
+        ${r.questions?.text ? `<div class="text-xs" style="background:var(--surface-2);border-radius:8px;padding:6px 8px;margin-bottom:6px"><strong>Question #${r.questions.id}:</strong> ${r.questions.text.substring(0,100)}${r.questions.text.length>100?'...':''} <button class="btn btn-ghost btn-xs" style="padding:2px 6px" onclick="adminEditQuestion(${r.questions.id})">✏️ Fix</button></div>` : ''}
+        <div class="text-sm mb-2">${r.message}</div>
+        ${r.admin_reply ? `<div style="background:var(--teal-50);border-radius:10px;padding:8px 10px;margin-bottom:6px"><div class="text-xs fw-700" style="color:var(--teal-700)">Your reply:</div><div class="text-sm">${r.admin_reply}</div></div>` : `
+        <div class="input-group" style="margin:0">
+          <input class="input-field" id="_reply_${r.id}" placeholder="Write a reply..." style="margin:0">
+          <button class="btn btn-primary" style="width:auto" onclick="adminReplyToReport(${r.id},'${filter}')">Send</button>
+        </div>`}
+      </div>`).join('')}`;
+}
+
+async function adminReplyToReport(id, filter) {
+  const reply = document.getElementById(`_reply_${id}`)?.value.trim();
+  if (!reply) return showToast('Please type a reply');
+  await db(sb.from('reports_feedback').update({ admin_reply: reply, status: 'replied', replied_at: new Date().toISOString() }).eq('id', id), 'Reply failed');
+  showToast('Reply sent ✓');
+  logAdminAction('Replied to a report/feedback', `Report #${id}`);
+  adminReports(filter);
+}
+
 async function adminAnnouncements() {
   const { data: announcements } = await db(sb.from('announcements').select('*').order('created_at', { ascending: false }), 'Announce error');
 
@@ -4043,6 +4698,21 @@ async function adminAnnouncements() {
 
   document.getElementById('adminContent').innerHTML = `
     <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-2">🔔 Send Notification</div>
+      <p class="text-xs text-muted mb-2">Goes to every student's notification bell (🔔 icon on Home). Different from the banner below — this is for things students should be specifically alerted to, like exam dates or new features.</p>
+      <label class="input-label">Title</label>
+      <input id="ntf_title" class="input-field" placeholder="e.g. 📅 2nd Year Module Exam — June 30">
+      <label class="input-label">Message (optional)</label>
+      <textarea id="ntf_body" class="input-field" rows="2" placeholder="Extra details..."></textarea>
+      <label class="input-label">Target Audience</label>
+      <select id="ntf_college" class="input-field" title="Target college" aria-label="Target college">
+        <option value="">👥 All Students</option>
+        ${collegeOpts}
+      </select>
+      <button class="btn btn-primary mt-2" onclick="adminSendNotification()">🔔 Send to Notification Bell</button>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
       <div class="fw-700 mb-3">📢 Create Announcement</div>
       <label class="input-label">Emoji Icon</label>
       <input id="an_emoji" class="input-field" value="📢" placeholder="Emoji">
@@ -4072,6 +4742,18 @@ async function adminAnnouncements() {
     </div>
     <div class="fw-700 mb-2">📋 All Announcements</div>
     ${list || '<div class="card"><p class="text-muted">No announcements yet.</p></div>'}`;
+}
+
+async function adminSendNotification() {
+  const title = document.getElementById('ntf_title').value.trim();
+  const body = document.getElementById('ntf_body').value.trim();
+  const college = document.getElementById('ntf_college').value || null;
+  if (!title) return showToast('Please enter a title');
+  await db(sb.from('app_notifications').insert({ title, body, target_college: college }), 'Send failed');
+  showToast('🔔 Notification sent ✓');
+  logAdminAction('Sent a notification', title);
+  document.getElementById('ntf_title').value = '';
+  document.getElementById('ntf_body').value = '';
 }
 
 async function adminAddAnnouncement() {
@@ -4413,7 +5095,8 @@ async function approveSubscription(id) {
   const { data: sub } = await db(sb.from('subscriptions').select('*,subscription_plans(duration_days)').eq('id', id).single(), 'Load failed');
   if (!sub) return;
   const expiry = new Date(Date.now() + (sub.subscription_plans?.duration_days || 30) * 86400000).toISOString();
-  await db(sb.from('subscriptions').update({ status: 'active', approved_at: new Date().toISOString(), expires_at: expiry }).eq('id', id), 'Approve failed');
+  const { error } = await adminRPC('admin_approve_subscription', { p_sub_id: id, p_expires_at: expiry });
+  if (error) return showToast('Approve failed: ' + error.message);
   showToast('Subscription approved ✓'); adminMonetization();
 }
 
@@ -4446,6 +5129,40 @@ async function adminAppSettings() {
       <label class="input-label">Accent Color</label>
       <input type="color" id="set_accent" class="input-field" style="height:44px;padding:4px 12px" value="${S('accent_color') || '#19b2a6'}">
       <button class="btn btn-primary mt-2" onclick="saveBranding()">💾 Save Branding</button>
+    </div>
+
+    <!-- App Wallpaper -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-3">🖼️ App Background Wallpaper</div>
+      <p class="text-xs text-muted mb-2">Optional subtle background for the whole app. Leave empty for the default clean look.</p>
+      <div class="upload-area" onclick="document.getElementById('wallpaper_file').click()">
+        ${S('app_wallpaper_url') ? `<img src="${S('app_wallpaper_url')}" style="height:60px;border-radius:8px">` : '📸 Upload Wallpaper'}
+      </div>
+      <input type="file" id="wallpaper_file" accept="image/*" style="display:none" onchange="uploadWallpaper()">
+      <div class="btn-row mt-2">
+        <input type="range" id="set_wallpaper_opacity" min="2" max="30" value="${S('app_wallpaper_opacity') || '8'}" style="flex:1">
+        <span class="text-xs text-muted">Opacity</span>
+      </div>
+      <button class="btn btn-secondary btn-sm mt-2" onclick="saveSetting('app_wallpaper_opacity',document.getElementById('set_wallpaper_opacity').value);applyWallpaper();showToast('Saved ✓')">Save Opacity</button>
+      ${S('app_wallpaper_url') ? `<button class="btn btn-ghost btn-sm mt-1" onclick="saveSetting('app_wallpaper_url','');applyWallpaper();adminAppSettings()">🗑 Remove Wallpaper</button>` : ''}
+    </div>
+
+    <!-- What's New -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-3">🆕 "What's New" Popup</div>
+      <p class="text-xs text-muted mb-2">Shows once to every student after you publish an update. Bump the version to show it again.</p>
+      <label class="input-label">Version Tag</label>
+      <input id="set_wn_version" class="input-field" value="${S('whats_new_version') || '1.0'}" placeholder="e.g. 1.1">
+      <label class="input-label">What's New Text</label>
+      <textarea id="set_wn_text" class="input-field" rows="3" placeholder="e.g. ✨ New: Custom Test Builder, Weak Topics review, and more!">${S('whats_new_text')}</textarea>
+      <button class="btn btn-primary mt-2" onclick="saveSetting('whats_new_version',document.getElementById('set_wn_version').value);saveSetting('whats_new_text',document.getElementById('set_wn_text').value);showToast('Published ✓ Students will see it next time they open the app.')">📣 Publish Update Note</button>
+    </div>
+
+    <!-- Backup -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-3">📦 Database Backup</div>
+      <p class="text-xs text-muted mb-2">Downloads a full JSON snapshot of your data (questions, users, settings, etc.) for safekeeping.</p>
+      <button class="btn btn-secondary" onclick="exportFullBackup()">📥 Download Full Backup</button>
     </div>
 
     <!-- Privacy & Legal Text -->
@@ -4546,8 +5263,8 @@ async function adminAppSettings() {
       <label class="input-label">AI Model Name</label>
       <input id="set_ai_model" class="input-field" value="${S('ai_model') || 'deepseek-chat'}" placeholder="e.g. deepseek-chat, gpt-4o-mini, gemini-1.5-flash">
       <label class="input-label">Global AI API Key (shared for all students)</label>
-      <input id="set_ai_key" class="input-field" type="password" value="${S('ai_api_key')}" placeholder="Enter your API key...">
-      <div class="text-xs text-muted mb-2">Students never see or need their own key — this one key powers AI Tutor for everyone.</div>
+      <input id="set_ai_key" class="input-field" type="password" value="" placeholder="${S('ai_key_set') === 'true' ? '🔒 Key already saved — leave blank to keep it' : 'Enter your API key...'}">
+      <div class="text-xs text-muted mb-2">Students never see or need their own key — this one key powers AI Tutor for everyone. For security, a saved key is never shown back here — leave this field blank when saving other settings to keep it unchanged.</div>
       <label class="input-label">AI Tutor Personality / Instructions</label>
       <textarea id="set_ai_prompt" class="input-field" rows="3" style="resize:vertical">${S('ai_system_prompt') || 'You are an expert MBBS tutor for Pakistani medical students at LUMHS and affiliated colleges. Explain concepts clearly in simple English. Be concise, accurate, and encouraging.'}</textarea>
       <div class="flex-between mb-2">
@@ -4564,6 +5281,30 @@ async function adminAppSettings() {
       <div id="aiTestResult" style="margin-top:10px"></div>
     </div>
 
+    <!-- Donations Settings -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="fw-700 mb-3">💛 Donations Settings</div>
+      <p class="text-xs text-muted mb-2">Shows a "Support Us" option to students in their Profile, with whatever payment details you enter below. Toggle off any time to hide it completely.</p>
+      <div class="flex-between mb-2">
+        <div><div class="fw-600 text-sm">Donations Feature</div><div class="text-xs text-muted">Show "Support Us" to students</div></div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="set_don_enabled" ${S('donation_enabled') === 'true' ? 'checked' : ''}>
+          <span class="toggle-knob"></span>
+        </label>
+      </div>
+      <label class="input-label">JazzCash Number</label>
+      <input id="set_don_jazzcash" class="input-field" value="${S('donation_jazzcash')}" placeholder="e.g. 0300-1234567 (Name)">
+      <label class="input-label">Easypaisa Number</label>
+      <input id="set_don_easypaisa" class="input-field" value="${S('donation_easypaisa')}" placeholder="e.g. 0345-1234567 (Name)">
+      <label class="input-label">Bank Account Details</label>
+      <textarea id="set_don_bank" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Meezan Bank — Account Title — Account No.">${S('donation_bank')}</textarea>
+      <label class="input-label">Message to Students</label>
+      <textarea id="set_don_message" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian Pro free for everyone!">${S('donation_message') || 'Help us keep this app free and growing for every LUMHS student. Any contribution helps!'}</textarea>
+      <div class="btn-row mt-2">
+        <button class="btn btn-secondary" onclick="saveDonationSettings()">💾 Save Donation Settings</button>
+      </div>
+    </div>
+
     <!-- Audit Log -->
     <div class="card">
       <div class="fw-700 mb-2">📋 Recent Admin Actions</div>
@@ -4573,6 +5314,24 @@ async function adminAppSettings() {
   loadAuditLog();
 }
 
+async function saveDonationSettings() {
+  const enabled = document.getElementById('set_don_enabled').checked;
+  const jazzcash = document.getElementById('set_don_jazzcash').value.trim();
+  const easypaisa = document.getElementById('set_don_easypaisa').value.trim();
+  const bank = document.getElementById('set_don_bank').value.trim();
+  const message = document.getElementById('set_don_message').value.trim();
+  await Promise.all([
+    saveSetting('donation_enabled', enabled),
+    saveSetting('donation_jazzcash', jazzcash),
+    saveSetting('donation_easypaisa', easypaisa),
+    saveSetting('donation_bank', bank),
+    saveSetting('donation_message', message)
+  ]);
+  await loadAppSettings();
+  showToast('Donation settings saved ✓');
+  logAdminAction('Updated Donation settings');
+}
+
 async function saveAISettings() {
   const provider = document.getElementById('ai_provider').value;
   const url = document.getElementById('set_ai_url').value.trim();
@@ -4580,14 +5339,20 @@ async function saveAISettings() {
   const key = document.getElementById('set_ai_key').value.trim();
   const prompt = document.getElementById('set_ai_prompt').value.trim();
   const enabled = document.getElementById('set_ai_enabled').checked;
-  await Promise.all([
+  const saves = [
     saveSetting('ai_provider', provider),
     saveSetting('ai_api_url', url),
     saveSetting('ai_model', model),
-    saveSetting('ai_api_key', key),
     saveSetting('ai_system_prompt', prompt),
     saveSetting('ai_enabled', enabled)
-  ]);
+  ];
+  // Only touch the key if admin actually typed a new one — an empty field means "keep existing key".
+  if (key) {
+    saves.push(saveSetting('ai_api_key', key));
+    saves.push(saveSetting('ai_key_set', 'true'));
+  }
+  await Promise.all(saves);
+  document.getElementById('set_ai_key').value = '';
   await loadAppSettings(); // refresh the in-memory cache so it's used immediately
   showToast('AI settings saved ✓');
   logAdminAction('Updated AI Tutor settings');
@@ -4676,17 +5441,73 @@ async function createDefaultFlags() {
   adminAppSettings();
 }
 
+async function uploadWallpaper() {
+  const file = document.getElementById('wallpaper_file')?.files[0];
+  if (!file) return;
+  openImageCropper(file, 0.6, async (blob) => {
+    showLoading(true, 'Uploading wallpaper...');
+    const path = `branding/wallpaper_${Date.now()}.jpg`;
+    const { error } = await sb.storage.from('module-images').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+    if (error) { showLoading(false); showToast('Upload failed'); return; }
+    const { data: urlData } = sb.storage.from('module-images').getPublicUrl(path);
+    await saveSetting('app_wallpaper_url', urlData.publicUrl);
+    await loadAppSettings();
+    applyWallpaper();
+    showLoading(false); showToast('Wallpaper uploaded ✓');
+    adminAppSettings();
+  });
+}
+
+function applyWallpaper() {
+  const url = getSetting('app_wallpaper_url', '');
+  const opacity = (parseInt(getSetting('app_wallpaper_opacity', '8')) || 8) / 100;
+  let el = document.getElementById('_appWallpaper');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = '_appWallpaper';
+    el.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;background-size:cover;background-position:center';
+    document.body.prepend(el);
+  }
+  if (url) {
+    el.style.backgroundImage = `linear-gradient(rgba(255,255,255,${1-opacity}),rgba(255,255,255,${1-opacity})), url('${url}')`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+async function exportFullBackup() {
+  showLoading(true, 'Preparing backup...');
+  const tables = ['users','user_stats','colleges','years','modules','year_modules','subjects','past_papers',
+    'questions','bookmarks','announcements','system_settings','feature_flags','reports_feedback',
+    'question_comments','custom_tests','subscription_plans','subscriptions'];
+  const backup = { exported_at: new Date().toISOString(), app: 'LUMHSian Pro' };
+  for (const t of tables) {
+    const { data } = await sb.from(t).select('*');
+    backup[t] = data || [];
+  }
+  showLoading(false);
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `lumhsian_backup_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  showToast('Backup downloaded ✓');
+  logAdminAction('Downloaded full database backup');
+}
+
 async function uploadLogo() {
   const file = document.getElementById('logo_file')?.files[0];
   if (!file) return;
-  showLoading(true, 'Uploading logo...');
-  const ext = file.name.split('.').pop();
-  const path = `branding/logo_${Date.now()}.${ext}`;
-  const { error } = await sb.storage.from('module-images').upload(path, file, { upsert: true });
-  if (error) { showLoading(false); showToast('Upload failed'); return; }
-  const { data: urlData } = sb.storage.from('module-images').getPublicUrl(path);
-  document.getElementById('set_logo').value = urlData.publicUrl;
-  showLoading(false); showToast('Logo uploaded ✓');
+  openImageCropper(file, 1, async (blob) => {
+    showLoading(true, 'Uploading logo...');
+    const path = `branding/logo_${Date.now()}.jpg`;
+    const { error } = await sb.storage.from('module-images').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+    if (error) { showLoading(false); showToast('Upload failed'); return; }
+    const { data: urlData } = sb.storage.from('module-images').getPublicUrl(path);
+    document.getElementById('set_logo').value = urlData.publicUrl;
+    showLoading(false); showToast('Logo uploaded ✓');
+  });
 }
 
 async function applyBranding() {
@@ -4990,10 +5811,8 @@ async function saveSetting(key, value) {
   );
 }
 
-async function getSetting(key, defaultVal = '') {
-  const { data } = await db(sb.from('system_settings').select('value').eq('key', key).maybeSingle(), 'Get setting failed');
-  return data?.value ?? defaultVal;
-}
+// getSetting is defined once, further below, as a synchronous cache lookup
+// (used everywhere inline in templates, e.g. getSetting('ai_enabled','true')).
 
 async function logAdminAction(action, details = '') {
   await db(sb.from('audit_logs').insert({ action, details, admin_email: currentUser?.email, created_at: new Date().toISOString() }), 'Log failed');
@@ -5074,13 +5893,76 @@ if ('caches' in window) {
 // ==================== NOTIFICATIONS ====================
 async function requestNotificationPermission() {
   if (!('Notification' in window)) return;
+  if (localStorage.getItem('notif_enabled') === 'false') return; // student opted out
   if (Notification.permission === 'default') await Notification.requestPermission();
 }
 
 function showLocalNotification(title, body) {
-  if (Notification.permission === 'granted') {
-    new Notification(title, { body, icon: '/icon-192.png' });
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem('notif_enabled') !== 'false') {
+    new Notification(title, { body });
   }
+}
+
+function toggleNotifications(enabled) {
+  localStorage.setItem('notif_enabled', enabled ? 'true' : 'false');
+  if (enabled) requestNotificationPermission();
+  showToast(enabled ? 'Notifications turned on' : 'Notifications turned off');
+  renderProfile();
+}
+
+// ==================== IN-APP NOTIFICATION BELL ====================
+function checkWhatsNew() {
+  const version = getSetting('whats_new_version', '');
+  const text = getSetting('whats_new_text', '');
+  if (!version || !text) return;
+  if (localStorage.getItem('seen_whats_new') === version) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.85);z-index:10006;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px;text-align:center">
+      <div style="font-size:44px;margin-bottom:8px">✨</div>
+      <div class="fw-700 mb-2" style="font-size:18px">What's New</div>
+      <p class="text-sm" style="white-space:pre-wrap;line-height:1.6">${text}</p>
+      <button class="btn btn-primary mt-3" style="width:100%" onclick="localStorage.setItem('seen_whats_new','${version}');this.closest('[style*=fixed]').remove()">Got it 👍</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function checkNewNotifications() {
+  if (!currentUser || localStorage.getItem('notif_enabled') === 'false') return;
+  const { data } = await db(sb.from('app_notifications').select('*').order('created_at', { ascending: false }).limit(20), 'Notif load failed');
+  const relevant = (data || []).filter(n => !n.target_college || n.target_college === currentUser.college);
+  window._appNotifs = relevant;
+  const lastSeen = parseInt(localStorage.getItem('last_seen_notif_id') || '0');
+  const unread = relevant.filter(n => n.id > lastSeen).length;
+  const badge = document.getElementById('notifBellBadge');
+  if (badge) badge.style.display = unread > 0 ? 'flex' : 'none';
+  if (badge) badge.textContent = unread > 9 ? '9+' : unread;
+  // Fire a native OS notification for the newest one if we have permission (nice-to-have, doesn't work if app/browser is fully closed)
+  if (unread > 0 && relevant[0]) showLocalNotification(relevant[0].title, relevant[0].body || '');
+}
+
+function openNotificationBell() {
+  const notifs = window._appNotifs || [];
+  const maxId = notifs.length ? Math.max(...notifs.map(n => n.id)) : 0;
+  localStorage.setItem('last_seen_notif_id', maxId);
+  document.getElementById('notifBellBadge')?.style && (document.getElementById('notifBellBadge').style.display = 'none');
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:420px;max-height:80vh;overflow-y:auto">
+      <div class="flex-between mb-3">
+        <span class="fw-700">🔔 Notifications</span>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
+      </div>
+      ${notifs.length ? notifs.map(n => `
+        <div class="card" style="margin-bottom:8px">
+          <div class="fw-700 text-sm">${n.title}</div>
+          ${n.body ? `<div class="text-sm" style="margin-top:2px">${n.body}</div>` : ''}
+          <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}</div>
+        </div>`).join('') : '<p class="text-sm text-muted text-center">No notifications yet.</p>'}
+    </div>`;
+  document.body.appendChild(overlay);
 }
 
 // ==================== DARK MODE ====================
@@ -5110,6 +5992,45 @@ function applyDarkMode(enabled) {
 
 // Check dark mode on load
 if (localStorage.getItem('dark_mode') === 'true') applyDarkMode(true);
+
+// ==================== SOUND EFFECTS (tiny, generated — no audio files needed) ====================
+function toggleSoundEffects(enabled) {
+  localStorage.setItem('sound_enabled', enabled ? 'true' : 'false');
+  showToast(enabled ? 'Sound effects on' : 'Sound effects off');
+  renderProfile();
+}
+
+let _audioCtx = null;
+function playSound(type) {
+  if (localStorage.getItem('sound_enabled') === 'false') return;
+  try {
+    _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _audioCtx;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    const presets = {
+      click:   { freq: 600,  dur: 0.05, vol: 0.04, type: 'sine' },
+      correct: { freq: 880,  dur: 0.15, vol: 0.06, type: 'sine' },
+      wrong:   { freq: 220,  dur: 0.18, vol: 0.06, type: 'sine' },
+      submit:  { freq: 660,  dur: 0.25, vol: 0.05, type: 'triangle' }
+    };
+    const p = presets[type] || presets.click;
+    o.type = p.type; o.frequency.value = p.freq;
+    g.gain.value = p.vol;
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + p.dur);
+    o.stop(ctx.currentTime + p.dur + 0.02);
+    if (type === 'correct') {
+      const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+      o2.connect(g2); g2.connect(ctx.destination);
+      o2.type = 'sine'; o2.frequency.value = 1180;
+      g2.gain.value = 0.05;
+      o2.start(ctx.currentTime + 0.08);
+      g2.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+      o2.stop(ctx.currentTime + 0.24);
+    }
+  } catch (e) { /* audio not available — fail silently */ }
+}
 
 function toggleDarkMode() {
   const isDark = localStorage.getItem('dark_mode') === 'true';
@@ -5195,7 +6116,6 @@ document.addEventListener('keydown', e => {
 });
 
 // ==================== STARTUP OVERRIDE ====================
-// tryAutoLogin is called from window.onload - no override needed
 // heartbeat and notifications started after login below
 
 // Auto-refresh admin live bar every 2 minutes
@@ -5287,31 +6207,6 @@ async function editPlan(id) {
 }
 
 // College sync with signup dropdown — called on splash load
-async function syncCollegesWithSignup() {
-  const { data: colleges } = await db(
-    sb.from('colleges').select('name').eq('is_active', true).order('name'),
-    'Colleges sync failed'
-  );
-  const sel = document.getElementById('su_college');
-  if (!sel) return;
-  const fallback = [
-    'LUMHS Jamshoro',
-    'LUMHS Thatta',
-    'Bilawal Medical College Jamshoro',
-    'Indus Medical College',
-    'Mirpurkhas Medical College',
-    'PUMHS Nawabshah'
-  ];
-  const list = (colleges?.length ? colleges.map(c => c.name) : fallback);
-  sel.innerHTML = list.map(n => `<option value="${n}">${n}</option>`).join('');
-}
-
-// Show forgot password with dynamic contact email
-async function showForgotPw() {
-  const email = await getSetting('contact_email', ADMIN_EMAIL);
-  showToast(`Contact admin: ${email}`);
-}
-
 // ==================== STUDENT SUBSCRIPTION CHECK ====================
 async function checkStudentAccess(moduleId) {
   const payEnabled = await getSetting('payment_enabled', 'false');
@@ -5364,9 +6259,8 @@ function isFeatureEnabled(featureName) {
   return true; // default: enabled
 }
 
-// Wrap screen navigations with feature flag checks
-const _originalNavGo = window.navGo;
-window.navGo = function(id) {
+// navGo: routes between main tabs, gating a few behind their feature flags
+function navGo(id) {
   const flagMap = {
     bookmarks: 'bookmarks',
     planner: 'planner',
@@ -5378,135 +6272,16 @@ window.navGo = function(id) {
     if (!enabled) { showToast('This feature is currently disabled.'); return; }
   }
   const renders = {
-    home: renderHome, search: renderSearch, stats: renderStats,
+    home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
     ranking: renderRanking, profile: renderProfile,
     bookmarks: renderBookmarks, planner: renderPlanner
   };
   if (renders[id]) renders[id]();
   showScreen(id);
-};
-
-// ==================== DARK MODE TOGGLE IN STUDENT UI ====================
-function renderDarkModeToggle() {
-  const isDark = localStorage.getItem('dark_mode') === 'true';
-  return `
-    <div class="flex-between" style="padding:12px 0;border-bottom:1px solid var(--border)">
-      <div class="list-item-left" style="gap:12px">
-        <div class="list-item-icon">🌙</div>
-        <div>
-          <div class="list-item-title">Dark Mode</div>
-          <div class="list-item-sub">Easier on eyes at night</div>
-        </div>
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" ${isDark ? 'checked' : ''} onchange="applyDarkMode(this.checked);renderProfile()">
-        <span class="toggle-knob"></span>
-      </label>
-    </div>`;
 }
 
-// Override renderProfile to include dark mode + subscription + privacy message
-const _origRenderProfile = window.renderProfile;
-window.renderProfile = async function() {
-  await _origRenderProfile();
-  const wrap = document.getElementById('profilePageWrap');
-  if (!wrap) return;
-
-  // Find logout button and insert extras before it
-  const content = wrap.innerHTML;
-  const privacyMsg = window._privacyMsg || 'Your data is safe with us and is never shared with third parties.';
-
-  // Append dark mode section
-  const sectionDiv = document.createElement('div');
-  sectionDiv.innerHTML = `
-    <div class="section-label">Appearance</div>
-    <div class="card" style="padding:0 16px">
-      ${renderDarkModeToggle()}
-    </div>
-
-    <div class="section-label">Subscription</div>
-    <div class="list-item" onclick="showSubscriptionPlans();renderProfile();showScreen('profile')">
-      <div class="list-item-left">
-        <div class="list-item-icon">💎</div>
-        <div>
-          <div class="list-item-title">View Plans</div>
-          <div class="list-item-sub">Upgrade for full access</div>
-        </div>
-      </div>
-      <span style="color:var(--ink-4)">›</span>
-    </div>
-
-    <div style="text-align:center;margin:20px 0 8px;padding:0 16px">
-      <div style="font-size:11px;color:var(--ink-4);line-height:1.6">🔒 ${privacyMsg}</div>
-    </div>
-    <div style="height:16px"></div>`;
-  wrap.appendChild(sectionDiv);
-};
-
-// ==================== STUDENT NOTIFICATION INBOX ====================
-async function renderNotifications() {
-  const { data: notifs } = await db(
-    sb.from('announcements')
-      .select('*')
-      .eq('is_active', true)
-      .or(`target_college.is.null,target_college.eq.${currentUser.college || ''}`)
-      .order('created_at', { ascending: false })
-      .limit(20),
-    'Notifications error'
-  );
-
-  const wrap = document.getElementById('homePageWrap');
-  if (!wrap) return;
-
-  const html = `
-    <button class="back-btn" onclick="renderHome()">← Back</button>
-    <div class="card-teal" style="margin-bottom:16px">
-      <h2>🔔 Notifications</h2>
-      <p>${(notifs||[]).length} announcements</p>
-    </div>
-    ${(notifs||[]).map(n => `
-      <div class="card" style="margin-bottom:10px">
-        <div style="display:flex;gap:10px;align-items:flex-start">
-          <span style="font-size:28px;flex-shrink:0">${n.emoji || '📢'}</span>
-          <div style="flex:1">
-            <div class="fw-700">${n.title || ''}</div>
-            <div class="text-sm" style="margin-top:4px;line-height:1.5">${n.body || ''}</div>
-            ${n.image_url ? `<img src="${n.image_url}" style="max-width:100%;border-radius:var(--radius-lg);margin-top:10px" onerror="this.style.display='none'">` : ''}
-            <div class="text-xs text-muted mt-2">${new Date(n.created_at).toLocaleDateString()}</div>
-          </div>
-        </div>
-      </div>`).join('') || '<div class="card text-center"><p>No announcements yet.</p></div>'}`;
-
-  wrap.innerHTML = html;
-  showScreen('home', false);
-}
-
-// Add notification bell to home
-const _origRenderHome = window.renderHome;
-window.renderHome = async function() {
-  await _origRenderHome();
-  const wrap = document.getElementById('homePageWrap');
-  if (!wrap) return;
-
-  // Count unread
-  const { count } = await sb.from('announcements').select('*', { count: 'exact', head: true }).eq('is_active', true);
-
-  // Add bell to first flex-between in home
-  const firstFlex = wrap.querySelector('.flex-between');
-  if (firstFlex) {
-    const bell = document.createElement('button');
-    bell.className = 'btn btn-icon';
-    bell.style.cssText = 'position:relative;flex-shrink:0';
-    bell.innerHTML = `🔔${count ? `<span style="position:absolute;top:-4px;right:-4px;background:var(--red);color:white;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700">${count}</span>` : ''}`;
-    bell.onclick = renderNotifications;
-    firstFlex.appendChild(bell);
-  }
-};
-
-// ==================== SEARCH IMPROVEMENT ====================
-// Better search with module + subject filter
-const _origRenderSearch = window.renderSearch;
-window.renderSearch = async function(term = '') {
+// ==================== SEARCH (with module + difficulty filters) ====================
+async function renderSearch(term = '') {
   const wrap = document.getElementById('searchPageWrap');
   const { data: modules } = await db(sb.from('modules').select('id,name'), 'Modules error');
 
@@ -5531,39 +6306,6 @@ window.renderSearch = async function(term = '') {
     <div id="searchResults"></div>`;
 
   if (term) executeSearch();
-};
-
-async function quickViewQuestion(qid) {
-  const { data: q } = await db(sb.from('questions').select('*').eq('id', qid).single(), 'Load failed');
-  if (!q) return showToast('Question not found');
-  const letters = ['A','B','C','D','E','F'];
-  const opts = Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]');
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,46,46,.85);z-index:10002;display:flex;align-items:flex-end;justify-content:center;padding:0;backdrop-filter:blur(8px)';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl) var(--radius-xl) 0 0;width:100%;max-width:640px;max-height:88vh;overflow-y:auto;padding:24px">
-      <div class="flex-between mb-3">
-        <div class="fw-700">📋 Question View</div>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="background:var(--surface-3);border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px">✕</button>
-      </div>
-      <div style="font-size:15px;font-weight:600;line-height:1.6;margin-bottom:14px">${q.text}</div>
-      ${q.image_url ? `<img src="${q.image_url}" style="max-width:100%;border-radius:var(--radius-lg);margin-bottom:12px" onerror="this.style.display='none'">` : ''}
-      ${opts.map((o,i) => `
-        <div style="padding:12px 14px;border-radius:12px;margin-bottom:8px;font-size:14px;border:1.5px solid ${i === q.correct_answer ? 'var(--green)' : 'var(--border)'};background:${i === q.correct_answer ? 'rgba(16,185,129,.08)' : 'var(--surface)'}">
-          <span style="font-weight:700;color:${i === q.correct_answer ? 'var(--green)' : 'var(--ink-4)'};margin-right:8px">${letters[i]}.</span>${o}
-        </div>`).join('')}
-      ${q.explanation ? `
-        <div style="background:linear-gradient(135deg,var(--teal-50),white);border:1px solid var(--teal-200);border-radius:var(--radius-lg);padding:14px;margin-top:8px">
-          <div style="font-weight:700;font-size:13px;color:var(--teal-700);margin-bottom:6px">✅ Explanation</div>
-          <div style="font-size:14px;line-height:1.6;color:var(--ink-2)">${q.explanation}</div>
-        </div>` : ''}
-      <div class="btn-row mt-3">
-        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Close</button>
-        <button class="btn btn-secondary" onclick="bookmarkQuestion(${q.id},null);this.textContent='Saved ✓'">📖 Save</button>
-        <button class="btn btn-primary" onclick="openAITutor('${q.text.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 AI Explain</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
 }
 
 async function executeSearch() {
@@ -5592,7 +6334,7 @@ async function executeSearch() {
         </div>
         <div style="font-size:14px;font-weight:500;line-height:1.5;margin-bottom:10px">${q.text?.substring(0,150)}${q.text?.length>150?'...':''}</div>
         <div class="btn-row">
-          <button class="btn btn-secondary btn-xs" onclick="openAITutor('${q.text?.replace(/'/g,"\\'").replace(/\n/g,' ')||''}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 AI Explain</button>
+          ${getSetting('ai_enabled','true')!=='false' ? `<button class="btn btn-secondary btn-xs" onclick="openAITutor('${q.text?.replace(/'/g,"\\'").replace(/\n/g,' ')||''}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 AI Explain</button>` : ''}
           <button class="btn btn-ghost btn-xs" onclick="quickViewQuestion(${q.id})">👁 Quick View</button>
         </div>
       </div>`).join('');
@@ -5617,7 +6359,11 @@ async function quickViewQuestion(id) {
       ${q.image_url ? `<img src="${q.image_url}" style="max-width:100%;border-radius:var(--radius-lg);margin-bottom:12px">` : ''}
       ${opts}
       ${q.explanation ? `<div class="explanation-box show mt-3"><div class="exp-label">📖 Explanation</div>${q.explanation}</div>` : ''}
-      <button class="btn btn-ghost btn-sm mt-3 w-full" onclick="openAITutor('${q.text?.replace(/'/g,"\\'").replace(/\n/g,' ')||''}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Ask AI</button>
+      <div class="btn-row mt-3">
+        <button class="btn btn-secondary btn-sm" onclick="bookmarkQuestion(${q.id},null);this.textContent='Saved ✓'">📖 Save</button>
+        ${getSetting('ai_enabled','true')!=='false' ? `<button class="btn btn-ghost btn-sm" onclick="openAITutor('${q.text?.replace(/'/g,"\\'").replace(/\n/g,' ')||''}','${(q.explanation||'').replace(/'/g,"\\'").replace(/\n/g,' ')}')">🤖 Ask AI</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="openReportModal(${q.id})">🚩 Report</button>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
@@ -5721,27 +6467,6 @@ async function startRandomQuiz() {
   renderTestScreen();
 }
 
-// Add quick actions to home
-const _origRenderHome2 = window.renderHome;
-window.renderHome = async function() {
-  await _origRenderHome2();
-  const wrap = document.getElementById('homePageWrap');
-  if (!wrap) return;
-
-  const sectionLabel = wrap.querySelector('.section-label');
-  if (sectionLabel) {
-    const quickDiv = document.createElement('div');
-    quickDiv.innerHTML = `
-      <div class="section-label">⚡ Quick Practice</div>
-      <div class="btn-row" style="margin-bottom:16px">
-        <button class="btn btn-secondary btn-sm" onclick="startRandomQuiz()">🎲 Random Quiz</button>
-        <button class="btn btn-secondary btn-sm" onclick="reviewWrongQuestions()">❌ Wrong Q Review</button>
-        ${localStorage.getItem(RESUME_KEY) ? `<button class="btn btn-secondary btn-sm" onclick="checkResumableTest()">▶ Resume Test</button>` : ''}
-      </div>`;
-    sectionLabel.before(quickDiv);
-  }
-};
-
 // ==================== ADMIN MEDIA LIBRARY ====================
 async function adminMediaLibrary() {
   showToast('Loading media library...');
@@ -5806,21 +6531,6 @@ async function deleteMedia(id) {
   }, 'Delete');
 }
 
-// Add media library tab to admin
-const _origRenderAdmin = window.renderAdminPanel;
-window.renderAdminPanel = async function() {
-  await _origRenderAdmin();
-  // Add media tab
-  const tabBar = document.querySelector('.admin-tab-bar') || document.querySelector('[id^="adminTab_overview"]')?.parentElement;
-  if (tabBar) {
-    const mediaBtn = document.createElement('button');
-    mediaBtn.className = 'btn btn-secondary btn-sm';
-    mediaBtn.textContent = '🖼 Media';
-    mediaBtn.onclick = () => adminMediaLibrary();
-    tabBar.appendChild(mediaBtn);
-  }
-};
-
 // ==================== ACTIVITY LOGGING ====================
 async function logActivity(action, data = {}) {
   if (!currentUser) return;
@@ -5847,10 +6557,14 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users (
   email TEXT PRIMARY KEY,
+  auth_uid UUID UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
+  password_hash TEXT, -- legacy only; unused now that login is via Google
   gender TEXT DEFAULT 'male',
   college TEXT,
+  city TEXT,
+  dob DATE DEFAULT '2005-01-01',
+  profile_completed BOOLEAN DEFAULT FALSE,
   joined BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
   last_active BIGINT,
   last_heartbeat TIMESTAMPTZ,
@@ -6119,11 +6833,33 @@ ALTER TABLE colleges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE institutes ENABLE ROW LEVEL SECURITY;
 
 -- Allow all anon access (we handle auth in app layer)
+-- NOTE: This app uses a custom email+password table (not Supabase Auth), so every
+-- request — student or admin — uses the same shared anon key. Postgres/RLS has no
+-- way to tell a real admin apart from any other visitor calling the API directly.
+-- "is_admin" checks in the JS are a UI convenience only, NOT a real security boundary.
+-- Fixing that properly needs either (a) migrating to Supabase Auth so RLS can use
+-- auth.uid(), or (b) routing all admin-only writes through an Edge Function that
+-- checks identity server-side. Until then, treat the admin panel as "hidden", not "secured".
 DO $$ DECLARE t TEXT;
 BEGIN FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
   EXECUTE format('DROP POLICY IF EXISTS "allow_all_%s" ON %I', t, t);
   EXECUTE format('CREATE POLICY "allow_all_%s" ON %I FOR ALL USING (true) WITH CHECK (true)', t, t);
 END LOOP; END $$;
+
+-- ============ SECURITY PATCH: hide secret keys from system_settings ============
+-- Without this, ANY visitor (no login needed) could call the Supabase REST API
+-- directly and read your ai_api_key / stripe_sk / razorpay_secret straight out of
+-- the database — the "allow_all" policy above has no concept of which rows are secret.
+-- This narrows SELECT only (writes/admin saving still work exactly as before).
+DROP POLICY IF EXISTS "allow_all_system_settings" ON system_settings;
+CREATE POLICY "system_settings_select_public" ON system_settings
+  FOR SELECT USING (key NOT IN ('ai_api_key', 'stripe_sk', 'razorpay_secret'));
+CREATE POLICY "system_settings_write" ON system_settings
+  FOR INSERT WITH CHECK (true);
+CREATE POLICY "system_settings_update" ON system_settings
+  FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "system_settings_delete" ON system_settings
+  FOR DELETE USING (true);
 
 -- ============ STORAGE BUCKETS ============
 -- Run these in Supabase Storage UI or SQL:
@@ -6147,19 +6883,20 @@ window.onload = async function() {
   // 1. Load settings + feature flags (single boot)
   await loadAppSettings();
   await loadFeatureFlags();
-  // 2. Sync colleges into signup dropdown
-  await syncCollegesWithSignup();
-  // 2.5 Force a fresh login once after a real app update (account stays, no re-signup)
-  const wasUpdated = forceReloginOnUpdate();
-  // 3. Try auto login
-  await tryAutoLogin();
-  if (wasUpdated && !currentUser) showToast('App updated ✨ Please login again');
-  // 4. Start heartbeat & notifications if logged in as student
-  if (currentUser && !currentUser.is_admin) {
-    startHeartbeat();
-    requestNotificationPermission();
-    checkResumableTest();
+  // 2. Restore an existing Google sign-in session, if any (persisted by Supabase Auth itself)
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    await handleAuthedSession(session);
+  } else {
+    showScreen('splash', false);
   }
+  // 3. Start notification polling if logged in as a (non-admin) student with a completed profile
+  if (currentUser && !currentUser.is_admin && currentUser.profile_completed) {
+    checkNewNotifications();
+    checkWhatsNew();
+    setInterval(checkNewNotifications, 120000);
+  }
+  applyWallpaper();
   } catch(e) {
     console.error('Startup error:', e);
     showLoading(false);
