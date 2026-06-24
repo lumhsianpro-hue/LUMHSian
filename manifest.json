@@ -1,0 +1,25 @@
+{
+  "name": "LUMHSian",
+  "short_name": "LUMHSian",
+  "description": "AI-powered MBBS Question Bank",
+  "start_url": "/LUMHSian/",
+  "scope": "/LUMHSian/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#d97706",
+  "background_color": "#1a1200",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
