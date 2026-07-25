@@ -1,1 +1,111 @@
+/* ===== RESET & ROOT ===== */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 
+:root{
+  color-scheme: light;
+  /* Brand accent — unchanged, now used ONLY for actions/emphasis, never for neutral surfaces */
+  --gold-900:#1a1200;--gold-800:#2e2000;--gold-700:#7a5c00;--gold-600:#8a6600;
+  --gold-500:#c9980a;--gold-400:#e8a820;--gold-300:#f0c040;--gold-200:#fae08a;
+  --gold-100:#fdf3c0;--gold-50:#fffce8;
+  /* Neutral scale — dark ink on a clean white surface system. --surface,
+     --surface-2 (page background) and --surface-3 (icon chips/thumbnails)
+     are all true white now; cards/chips still separate visually via
+     --border rather than a background tint. */
+  --ink:#18150e;--ink-2:#18150e;--ink-3:#18150e;--ink-4:#6b6558;
+  --surface:#ffffff;--surface-2:#ffffff;--surface-3:#f7f6f2;
+  --border:#e6e0d1;--border-2:#d6cdb8;
+  --overlay-bg:rgba(255,255,255,.95);
+  --red:#c81e1e;--red-light:#fef2f2;--red-border:#fecaca;
+  --amber:#a35604;--amber-light:#fffbeb;
+  --green:#047857;--green-light:#ecfdf5;
+  /* Soft-rounded system — cards/sheets get restrained radii; --radius-btn is dedicated to buttons/inputs */
+  --radius-sm:8px;--radius-md:10px;--radius-lg:12px;--radius-xl:16px;--radius-full:9999px;--radius-btn:10px;
+  /* Neutral, low-opacity "depth" shadows instead of heavy warm-tinted ones */
+  --shadow-sm:0 1px 2px rgba(23,23,23,.05),0 1px 1px rgba(23,23,23,.03);
+  --shadow-md:0 3px 10px -2px rgba(23,23,23,.08),0 1px 4px -1px rgba(23,23,23,.04);
+  --shadow-lg:0 8px 22px -6px rgba(23,23,23,.10),0 3px 8px -2px rgba(23,23,23,.05);
+  --shadow-xl:0 16px 36px -10px rgba(23,23,23,.14),0 6px 14px -4px rgba(23,23,23,.06);
+  --font-body:'Inter',sans-serif;--font-display:'Space Grotesk',sans-serif;
+  --transition:0.2s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* Dark mode is intentionally NOT wired to the phone's system setting — see
+   applyDarkMode() further down. It only turns on when a student flips the
+   Dark Mode switch in Profile, so it can't silently show up (or fail to
+   show up) based on a device setting nobody's looking at. That function
+   overrides every variable below via inline styles when active. */
+
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+
+body{font-family:var(--font-body);background:var(--surface-2);color:var(--ink);min-height:100vh;overflow-x:hidden;line-height:1.6}
+
+/* ===== SCREENS ===== */
+
+.screen{display:none;min-height:100vh;opacity:0;transform:translateY(6px);transition:opacity .18s ease,transform .18s ease;background:var(--surface)}
+.screen.active{display:block;opacity:1;transform:none}
+#screen-splash.active{display:flex}
+#screen-reconnecting.active{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+.page-wrap{max-width:680px;margin:0 auto;padding:16px 16px 80px}
+
+/* Safety net: even if a future rule accidentally forces display on an inactive screen,
+   it must never be able to intercept clicks again. */
+
+.screen:not(.active){pointer-events:none}
+
+/* ===== TYPOGRAPHY ===== */
+
+.display{font-family:var(--font-display);font-weight:700}
+h1{font-family:var(--font-display);font-size:clamp(24px,6vw,32px);font-weight:700;line-height:1.15;letter-spacing:-0.01em}
+h2{font-family:var(--font-display);font-size:20px;font-weight:600;line-height:1.25;letter-spacing:-0.01em}
+h3{font-size:16px;font-weight:600;line-height:1.3}
+p{font-size:14px;color:var(--ink-3);line-height:1.65}
+
+/* ===== LAYOUT UTILS ===== */
+
+.flex{display:flex;align-items:center}
+.flex-between{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.flex-col{display:flex;flex-direction:column;gap:8px}
+.gap-2{gap:8px}.gap-3{gap:12px}.gap-4{gap:16px}
+.mt-1{margin-top:4px}.mt-2{margin-top:8px}.mt-3{margin-top:12px}.mt-4{margin-top:16px}.mt-6{margin-top:24px}
+.mb-1{margin-bottom:4px}.mb-2{margin-bottom:8px}.mb-3{margin-bottom:12px}
+.text-center{text-align:center}
+.text-sm{font-size:13px}.text-xs{font-size:12px}
+.text-muted{color:var(--ink-4)}.text-danger{color:var(--red)}.text-success{color:var(--green)}
+.fw-600{font-weight:600}.fw-700{font-weight:700}
+.w-full{width:100%}
+.hidden{display:none!important}
+
+/* ===== SECTION HEADER ===== */
+
+.section-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink);margin:20px 0 8px;padding-left:4px}
+
+/* ===== BACK BUTTON ===== */
+
+.back-btn{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:var(--ink-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-btn);padding:8px 16px;cursor:pointer;margin-bottom:16px;transition:all var(--transition)}
+.back-btn:hover{border-color:var(--gold-400);color:var(--gold-700)}
+
+/* ===== DIVIDER ===== */
+
+.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
+
+/* ===== NAV BAR (Bottom) ===== */
+
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--overlay-bg);backdrop-filter:blur(12px);border-top:1px solid var(--border);display:none;z-index:200;padding:8px 0 max(8px,env(safe-area-inset-bottom))}
+.bottom-nav.show{display:flex}
+.nav-items{display:flex;width:100%;max-width:500px;margin:0 auto}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;cursor:pointer;border:none;background:transparent;color:var(--ink-4);transition:all var(--transition)}
+.nav-item.active{color:var(--gold-600)}
+.nav-item-icon{font-size:20px;transition:transform var(--transition)}
+.nav-item.active .nav-item-icon{transform:translateY(-1px)}
+.nav-item-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+
+/* ===== SCROLLBAR ===== */
+
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--gold-200);border-radius:var(--radius-full)}
+
+/* ===== ANIMATIONS ===== */
+
+@keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.animate-in{animation:fadeInUp .3s ease forwards}
