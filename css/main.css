@@ -109,3 +109,24 @@ p{font-size:14px;color:var(--ink-3);line-height:1.65}
 
 @keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 .animate-in{animation:fadeInUp .3s ease forwards}
+
+/* ===== COMPLETE YOUR PROFILE SCREEN — DARK OVERRIDE =====
+   Scoped to #screen-createaccount only (the post-signup "Complete your
+   profile" step, shown via showScreen('createaccount') in auth.js).
+   Reuses the same dark palette as the existing Dark Mode toggle in
+   Profile, so this screen matches it visually. Nothing outside this
+   screen is affected. */
+
+#screen-createaccount{--surface:#000;--surface-2:#000;--surface-3:#000;--ink:#fff;--ink-2:#fff;--ink-3:#fff;--ink-4:#a6a6a6;--border:#2b2b2b;--border-2:#3d3d3d;--red:#f0645f;background:#000!important}
+
+#screen-createaccount h1,#screen-createaccount h2,#screen-createaccount h3,#screen-createaccount p,#screen-createaccount label,#screen-createaccount .input-label,#screen-createaccount .section-label{color:#fff!important}
+
+#screen-createaccount .text-muted{color:#a6a6a6!important}
+
+#screen-createaccount .input-field{background:#1a1a1a!important;color:#fff!important;border-color:#3d3d3d!important}
+
+#screen-createaccount .input-field::placeholder{color:#888!important}
+
+#screen-createaccount select.input-field{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23ffffff' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")!important}
+
+#screen-createaccount [onclick*="cancelCreateAccount"]{color:#ccc!important}
