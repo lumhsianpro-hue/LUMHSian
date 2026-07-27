@@ -171,7 +171,7 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 
 /* Quick action tiles */
 
-.quick-tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 10px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.quick-tile{background:var(--surface);border:1px solid var(--gold-400);border-radius:var(--radius-lg);padding:16px 10px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
 .quick-tile:hover{border-color:var(--gold-400);background:var(--surface-3);transform:translateY(-2px);box-shadow:var(--shadow-md)}
 .quick-tile:active{transform:scale(.96)}
 .quick-tile-icon{font-size:26px;margin-bottom:6px;display:block}
