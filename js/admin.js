@@ -1694,35 +1694,166 @@ function downloadPaperTemplate() {
 window.downloadPaperTemplate = downloadPaperTemplate;
 
 
-// Exports every question already in a given past paper to an .xlsx file, in
-// the exact same column layout as the questions Bulk Upload template
-// (Question/OptionA-F/CorrectAnswer/Explanation/ImageURL/
-// ExplanationImageURL/Tags) — lets admin review a paper's full MCQ set
-// outside the app, and the file is re-uploadable as-is if ever needed.
+// Exports every question already in a given past paper to a readable PDF —
+// numbered questions, options lettered with the correct one marked, the
+// explanation underneath, and any question/explanation images embedded right
+// where they belong — so it reads like the actual paper, not a data table.
+// Loads jsPDF from a CDN the first time it's needed (no index.html changes
+// required); if that fails (e.g. no internet), it says so instead of
+// silently doing nothing. A single broken image link doesn't stop the rest
+// of the download — it's noted inline and skipped.
 async function downloadPaperQuestions(paperId, paperTitle) {
   showLoading(true, 'Preparing download...');
   const { data: questions } = await db(sb.from('questions').select('*').eq('paper_id', paperId).order('id'), 'Load failed');
+  if (!questions || !questions.length) { showLoading(false); return showToast('No questions to download yet'); }
+
+  if (!window.jspdf) {
+    showLoading(true, 'Loading PDF tools...');
+    try {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('script load failed'));
+        document.head.appendChild(s);
+      });
+    } catch {
+      showLoading(false);
+      showToast('Could not load the PDF tool — check your internet connection and try again', 8000);
+      return;
+    }
+  }
+  if (!window.jspdf) { showLoading(false); showToast('PDF tool did not load — try again'); return; }
+
+  // Phase 1: fetch every distinct image ONCE and convert it to a data URL +
+  // its natural pixel size, so the render pass below never has to await
+  // anything mid-page — that's what keeps the page-break math reliable. A
+  // failed fetch (broken link, offline, CORS, etc.) just leaves that URL out
+  // of the cache; placeImage() below notices and prints a note instead.
+  const urls = new Set();
+  for (const q of questions) {
+    if (q.image_url) urls.add(q.image_url);
+    if (q.explanation_image_url) urls.add(q.explanation_image_url);
+  }
+  const imgCache = {};
+  if (urls.size) {
+    showLoading(true, `Downloading ${urls.size} image${urls.size === 1 ? '' : 's'}...`);
+    await Promise.all([...urls].map(async (url) => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        const dims = await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => resolve(null);
+          img.src = dataUrl;
+        });
+        if (dims && dims.width) imgCache[url] = { dataUrl, ...dims };
+      } catch { /* left out of imgCache on purpose — treated as failed below */ }
+    }));
+  }
+
+  showLoading(true, 'Building PDF...');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const marginX = 15, maxWidth = 180, pageBottom = 280;
+  const maxImgW = 90, maxImgH = 90;
+  let y = 20;
+  const ensureSpace = (needed) => { if (y + needed > pageBottom) { doc.addPage(); y = 20; } };
+
+  const placeImage = (url, label) => {
+    const cached = imgCache[url];
+    doc.setFont('helvetica', 'normal');
+    if (!cached) {
+      ensureSpace(5);
+      doc.setFontSize(8);
+      doc.setTextColor(180, 60, 60);
+      doc.text(`(${label} image could not be downloaded — check it in the app)`, marginX + 4, y);
+      doc.setTextColor(0);
+      y += 6;
+      return;
+    }
+    let w = maxImgW, h = (cached.height / cached.width) * w;
+    if (h > maxImgH) { h = maxImgH; w = (cached.width / cached.height) * h; }
+    ensureSpace(h + 4);
+    const fmtMatch = cached.dataUrl.match(/^data:image\/(\w+);/i);
+    const fmt = (fmtMatch ? fmtMatch[1] : 'jpeg').toUpperCase().replace('JPG', 'JPEG');
+    try {
+      doc.addImage(cached.dataUrl, fmt, marginX + 4, y, w, h);
+      y += h + 4;
+    } catch (err) {
+      console.error('addImage failed:', err);
+      doc.setFontSize(8);
+      doc.setTextColor(180, 60, 60);
+      doc.text(`(${label} image could not be embedded — check it in the app)`, marginX + 4, y);
+      doc.setTextColor(0);
+      y += 6;
+    }
+  };
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  const titleLines = doc.splitTextToSize(paperTitle || 'Past Paper', maxWidth);
+  doc.text(titleLines, marginX, y);
+  y += titleLines.length * 7 + 3;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(120);
+  doc.text(`${questions.length} question${questions.length === 1 ? '' : 's'}`, marginX, y);
+  doc.setTextColor(0);
+  y += 10;
+
+  const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
+  questions.forEach((q, i) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    const qLines = doc.splitTextToSize(`Q${i + 1}. ${q.text || ''}`, maxWidth);
+    ensureSpace(qLines.length * 5.5 + 4);
+    doc.text(qLines, marginX, y);
+    y += qLines.length * 5.5 + 2;
+
+    if (q.image_url) placeImage(q.image_url, 'Question');
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    (q.options || []).forEach((opt, oi) => {
+      const isCorrect = oi === q.correct_answer;
+      const optLines = doc.splitTextToSize(`${letters[oi] || oi + 1}) ${opt}${isCorrect ? '   ✓ Correct' : ''}`, maxWidth - 6);
+      ensureSpace(optLines.length * 5 + 1);
+      doc.setTextColor(isCorrect ? 0 : 30, isCorrect ? 130 : 30, isCorrect ? 60 : 30);
+      doc.text(optLines, marginX + 4, y);
+      y += optLines.length * 5 + 1;
+    });
+    doc.setTextColor(0);
+
+    if (q.explanation) {
+      y += 1;
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(9);
+      doc.setTextColor(90);
+      const expLines = doc.splitTextToSize(`Explanation: ${q.explanation}`, maxWidth - 6);
+      ensureSpace(expLines.length * 4.5 + 2);
+      doc.text(expLines, marginX + 4, y);
+      y += expLines.length * 4.5;
+      doc.setTextColor(0);
+    }
+
+    if (q.explanation_image_url) placeImage(q.explanation_image_url, 'Explanation');
+
+    y += 5;
+    ensureSpace(0.1); // moves to a fresh page cleanly if the next question has no room at all
+  });
+
   showLoading(false);
-  if (!questions || !questions.length) return showToast('No questions to download yet');
-  const rows = questions.map(q => ({
-    Question: q.text || '',
-    OptionA: q.options?.[0] || '',
-    OptionB: q.options?.[1] || '',
-    OptionC: q.options?.[2] || '',
-    OptionD: q.options?.[3] || '',
-    OptionE: q.options?.[4] || '',
-    OptionF: q.options?.[5] || '',
-    CorrectAnswer: 'ABCDEF'[q.correct_answer] || '',
-    Explanation: q.explanation || '',
-    ImageURL: q.image_url || '',
-    ExplanationImageURL: q.explanation_image_url || '',
-    Tags: (q.tags || []).join(', ')
-  }));
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.book_append_sheet(wb, ws, 'Questions');
   const safeName = (paperTitle || 'paper').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'paper';
-  XLSX.writeFile(wb, `${safeName}_questions.xlsx`);
+  doc.save(`${safeName}_questions.pdf`);
 }
 window.downloadPaperQuestions = downloadPaperQuestions;
 
