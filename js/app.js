@@ -379,6 +379,30 @@ window.renderModulesScreen = renderModulesScreen;
 
 
 
+// Counts each home-header stat up from 0 to its real value on render — a
+// small, deliberate motion moment (not decoration) since these numbers ARE
+// the point of the header. Skips straight to the final value when the OS/
+// browser has "reduce motion" on.
+function _animateHeaderStats() {
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.querySelectorAll('.lumhsian-stat-num[data-count]').forEach(el => {
+    const target = parseInt(el.dataset.count) || 0;
+    const suffix = el.dataset.suffix || '';
+    if (reduced) { el.textContent = target + suffix; return; }
+    const duration = 700, start = performance.now();
+    function tick(now) {
+      const p = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(target * eased) + suffix;
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  });
+}
+window._animateHeaderStats = _animateHeaderStats;
+
+
+
 export async function renderHome() {
   const wrap = document.getElementById('homePageWrap');
   wrap.innerHTML = `
@@ -450,41 +474,57 @@ export async function renderHome() {
   const greeting = (() => { const h=new Date().getHours(); if(h<12) return '🌅 Good morning'; if(h<17) return '☀️ Good afternoon'; return '🌙 Good evening'; })();
   const avatarEmoji = window.currentUser.gender==='female' ? '👩‍⚕️' : '👨‍⚕️';
   const rankData = await getRankInfo();
-  const announceHtml = announcements.map(a=>`<div class="announce-bar"><span style="font-size:16px">${esc(a.emoji)||'📢'}</span><span><strong>${esc(a.title)||''}</strong>${a.title&&a.body?' · ':''}${esc(a.body)||''}</span></div>`).join('');
+  const announceHtml = announcements.map(a=>`<div class="announce-bar">${a.image_url ? `<img src="${esc(a.image_url)}" style="width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:16px">${esc(a.emoji)||'📢'}</span>`}<span><strong>${esc(a.title)||''}</strong>${a.title&&a.body?' · ':''}${esc(a.body)||''}</span></div>`).join('');
 
   wrap.innerHTML = `
-    <div style="background:linear-gradient(135deg,#7a5c00 0%,#c9980a 100%);border-radius:var(--radius-xl);padding:20px;margin-bottom:12px;color:white;position:relative;overflow:hidden">
-      <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:.08;line-height:1">${ICON_STETHOSCOPE}</div>
-      <div onclick="openNotificationBell()" style="position:absolute;top:14px;right:14px;cursor:pointer;font-size:20px">
-        ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-6px;right:-8px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;align-items:center;justify-content:center;padding:0 3px">0</span>
+    <style>
+      @keyframes lumhsianPulseSweep { 0% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: -300; } }
+      .lumhsian-pulse-line { animation: lumhsianPulseSweep 3.5s linear infinite; }
+      @keyframes lumhsianStatPop { 0% { transform: scale(.85); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+      .lumhsian-stat-num { display: inline-block; animation: lumhsianStatPop .45s cubic-bezier(.34,1.56,.64,1) backwards; }
+      @media (prefers-reduced-motion: reduce) {
+        .lumhsian-pulse-line, .lumhsian-stat-num { animation: none !important; }
+      }
+    </style>
+    <div style="background:linear-gradient(150deg,#5e4600 0%,#c9980a 55%,#e0ac1e 100%);border-radius:var(--radius-xl);padding:22px 20px 18px;margin-bottom:12px;color:white;position:relative;overflow:hidden;box-shadow:0 10px 28px -10px rgba(122,92,0,.55)">
+      <div style="position:absolute;top:-24px;right:-16px;font-size:88px;opacity:.07;line-height:1;transform:rotate(-8deg)">${ICON_STETHOSCOPE}</div>
+      <div onclick="openNotificationBell()" style="position:absolute;top:16px;right:16px;cursor:pointer;font-size:19px;width:34px;height:34px;background:rgba(255,255,255,.14);border-radius:50%;display:flex;align-items:center;justify-content:center">
+        ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;align-items:center;justify-content:center;padding:0 3px;border:2px solid #7a5c00">0</span>
       </div>
-      <div class="flex-between" style="margin-bottom:12px">
+      <div class="flex-between" style="margin-bottom:14px;position:relative">
         <div>
-          <div style="font-size:12px;opacity:.7;font-weight:500;text-transform:uppercase;letter-spacing:.5px">${greeting}</div>
-          <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-top:2px">Dr. ${window.currentUser.name}</div>
-          <div style="font-size:12px;opacity:.7;margin-top:2px">${window.currentUser.college||'Student'}</div>
+          <div style="font-size:11px;opacity:.75;font-weight:600;text-transform:uppercase;letter-spacing:.8px">${greeting}</div>
+          <div style="font-family:var(--font-display);font-size:21px;font-weight:800;margin-top:3px;letter-spacing:-.2px">Dr. ${esc(window.currentUser.name)}</div>
+          <div style="font-size:12px;opacity:.75;margin-top:2px">${esc(window.currentUser.college||'Student')}</div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:36px">${avatarEmoji}</div>
-          <div onclick="changeYear()" style="font-size:11px;opacity:.85;margin-top:2px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${myYearName||'Set Year'} ${ICON_EDIT}</div>
+          <div style="font-size:32px;width:52px;height:52px;background:rgba(255,255,255,.14);border-radius:16px;display:flex;align-items:center;justify-content:center;margin-left:auto">${avatarEmoji}</div>
+          <div onclick="changeYear()" style="font-size:11px;opacity:.9;margin-top:6px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${esc(myYearName||'Set Year')} ${ICON_EDIT}</div>
         </div>
       </div>
+      <svg class="lumhsian-pulse-line" width="100%" height="16" viewBox="0 0 300 16" preserveAspectRatio="none" style="display:block;opacity:.32;margin-bottom:10px" stroke-dasharray="300">
+        <path d="M0,8 L36,8 L42,1 L49,15 L55,8 L106,8 L112,1 L119,15 L125,8 L176,8 L182,1 L189,15 L195,8 L246,8 L252,1 L259,15 L265,8 L300,8" stroke="white" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-        <div style="background:rgba(255,255,255,.12);border-radius:12px;padding:10px 6px;text-align:center">
-          <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">${acc}%</div>
-          <div style="font-size:10px;opacity:.7;margin-top:2px">Accuracy</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
+          <div style="font-size:13px;opacity:.85;margin-bottom:2px">🎯</div>
+          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display)" data-count="${acc}" data-suffix="%">0%</div>
+          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Accuracy</div>
         </div>
-        <div style="background:rgba(255,255,255,.12);border-radius:12px;padding:10px 6px;text-align:center">
-          <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">${stats.total_tests||0}</div>
-          <div style="font-size:10px;opacity:.7;margin-top:2px">Tests</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
+          <div style="font-size:13px;opacity:.85;margin-bottom:2px">📝</div>
+          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display);animation-delay:.05s" data-count="${stats.total_tests||0}" data-suffix="">0</div>
+          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Tests</div>
         </div>
-        <div style="background:rgba(255,255,255,.12);border-radius:12px;padding:10px 6px;text-align:center">
-          <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">${stats.streak||0} ${ICON_FIRE}</div>
-          <div style="font-size:10px;opacity:.7;margin-top:2px">Streak</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
+          <div style="font-size:13px;opacity:.85;margin-bottom:2px">${ICON_FIRE}</div>
+          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display);animation-delay:.1s" data-count="${stats.streak||0}" data-suffix="">0</div>
+          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Streak</div>
         </div>
-        <div style="background:rgba(255,255,255,.12);border-radius:12px;padding:10px 6px;text-align:center">
-          <div style="font-size:18px;font-weight:800;font-family:var(--font-display)">#${rankData.rank||'—'}</div>
-          <div style="font-size:10px;opacity:.7;margin-top:2px">Rank</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
+          <div style="font-size:13px;opacity:.85;margin-bottom:2px">🏆</div>
+          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display);animation-delay:.15s">${rankData.rank?'#'+rankData.rank:'—'}</div>
+          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Rank</div>
         </div>
       </div>
     </div>
@@ -522,6 +562,7 @@ export async function renderHome() {
     ${allYearsHtml || '<div class="card"><p>No other years configured yet.</p></div>'}
     <div style="height:16px"></div>`;
 
+  _animateHeaderStats();
   checkNewNotifications();
   } catch(e) {
     console.error('renderHome error:', e);
@@ -1325,10 +1366,36 @@ function checkWhatsNew() {
 
 
 
+// Students can delete a notification from their own bell without it
+// disappearing for anyone else — app_notifications is one shared broadcast
+// row per message, so "delete" here just means "never show me this id
+// again," tracked locally the same lightweight way last_seen_notif_id
+// already is, rather than needing a new per-user table.
+function _getDismissedNotifIds() {
+  try { return new Set(JSON.parse(localStorage.getItem('dismissed_notif_ids') || '[]')); }
+  catch { return new Set(); }
+}
+function dismissNotification(id) {
+  const ids = _getDismissedNotifIds();
+  ids.add(id);
+  // Cap at the most recent 200 so this can never grow unbounded.
+  localStorage.setItem('dismissed_notif_ids', JSON.stringify([...ids].slice(-200)));
+  window._appNotifs = (window._appNotifs || []).filter(n => n.id !== id);
+  openNotificationBell(true);
+}
+window.dismissNotification = dismissNotification;
+
+
+
 async function checkNewNotifications() {
   if (!window.currentUser || localStorage.getItem('notif_enabled') === 'false') return;
-  const { data } = await db(sb.from('app_notifications').select('*').order('created_at', { ascending: false }).limit(20), 'Notif load failed');
-  const relevant = (data || []).filter(n => !n.target_college || n.target_college === window.currentUser.college);
+  // Notifications auto-expire after 48h — filtering at query time means
+  // every reader of window._appNotifs (badge count, bell modal) respects the
+  // window automatically, with no separate cleanup step required client-side.
+  const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+  const { data } = await db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Notif load failed');
+  const dismissed = _getDismissedNotifIds();
+  const relevant = (data || []).filter(n => (!n.target_college || n.target_college === window.currentUser.college) && !dismissed.has(n.id));
   window._appNotifs = relevant;
   const lastSeen = parseInt(localStorage.getItem('last_seen_notif_id') || '0');
   const unread = relevant.filter(n => n.id > lastSeen).length;
@@ -1341,12 +1408,17 @@ async function checkNewNotifications() {
 
 
 
-function openNotificationBell() {
+function openNotificationBell(isRerender) {
   const notifs = window._appNotifs || [];
-  const maxId = notifs.length ? Math.max(...notifs.map(n => n.id)) : 0;
-  localStorage.setItem('last_seen_notif_id', maxId);
-  document.getElementById('notifBellBadge')?.style && (document.getElementById('notifBellBadge').style.display = 'none');
+  if (!isRerender) {
+    const maxId = notifs.length ? Math.max(...notifs.map(n => n.id)) : 0;
+    localStorage.setItem('last_seen_notif_id', maxId);
+    document.getElementById('notifBellBadge')?.style && (document.getElementById('notifBellBadge').style.display = 'none');
+  } else {
+    document.getElementById('notifBellOverlay')?.remove();
+  }
   const overlay = document.createElement('div');
+  overlay.id = 'notifBellOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:420px;max-height:80vh;overflow-y:auto">
@@ -1356,8 +1428,14 @@ function openNotificationBell() {
       </div>
       ${notifs.length ? notifs.map(n => `
         <div class="card" style="margin-bottom:8px">
-          <div class="fw-700 text-sm">${n.title}</div>
-          ${n.body ? `<div class="text-sm" style="margin-top:2px">${n.body}</div>` : ''}
+          <div class="flex-between" style="align-items:flex-start">
+            <div style="min-width:0;flex:1">
+              <div class="fw-700 text-sm">${esc(n.title)}</div>
+              ${n.body ? `<div class="text-sm" style="margin-top:2px">${esc(n.body)}</div>` : ''}
+            </div>
+            <button onclick="dismissNotification(${n.id})" title="Remove" style="background:none;border:none;font-size:15px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:2px 0 0 8px">🗑</button>
+          </div>
+          ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
           <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}</div>
         </div>`).join('') : '<p class="text-sm text-muted text-center">No notifications yet.</p>'}
     </div>`;
