@@ -1143,7 +1143,7 @@ async function previewAndUpload(fileInputId, urlFieldId, previewId) {
   const file = document.getElementById(fileInputId)?.files[0];
   if (!file) return;
   // Square frame for icons/logos, wide frame for content/explanation images
-  const aspect = ['q_img_file','q_exp_img_file','an_img_file','_eq_img_file','_eq_exp_img_file'].includes(fileInputId) ? 1.6 : 1;
+  const aspect = ['q_img_file','q_exp_img_file','an_img_file','ntf_img_file','_eq_img_file','_eq_exp_img_file'].includes(fileInputId) ? 1.6 : 1;
   openImageCropper(file, aspect, async (blob) => {
     const preview = document.getElementById(previewId);
     if (preview) { preview.src = URL.createObjectURL(blob); preview.style.display = 'block'; }
@@ -4078,9 +4078,36 @@ window.adminDeleteSelectedErrorLogs = adminDeleteSelectedErrorLogs;
 
 
 async function adminAnnouncements(token = window._adminRenderToken) {
+  // Best-effort cleanup — notifications auto-expire after 48h from the
+  // student's point of view regardless (checkNewNotifications filters them
+  // out at query time), but this keeps the table from growing forever. Not
+  // awaited: if it fails or is slow, it shouldn't hold up loading the screen.
+  db(sb.from('app_notifications').delete().lt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()), 'Cleanup failed');
+
   const { data: announcements } = await db(sb.from('announcements').select('*').order('created_at', { ascending: false }), 'Announce error');
 
   if (_renderStale(token)) return;
+  const { data: sentNotifs } = await db(sb.from('app_notifications').select('*').order('created_at', { ascending: false }), 'Notif load failed');
+  const notifList = (sentNotifs || []).map(n => {
+    const hoursLeft = Math.max(0, Math.round(48 - (Date.now() - new Date(n.created_at).getTime()) / 3600000));
+    return `
+    <div class="admin-row">
+      <div class="admin-row-left">
+        <div class="fw-700">${esc(n.title) || '(No title)'}</div>
+        ${n.body ? `<div class="text-xs text-muted">${esc(n.body)}</div>` : ''}
+        ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:160px;border-radius:var(--radius-md);margin-top:6px">` : ''}
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+          <span class="chip" style="font-size:10px">${new Date(n.created_at).toLocaleDateString()}</span>
+          <span class="chip" style="font-size:10px">⏳ expires in ${hoursLeft}h</span>
+          ${n.target_college === 'Others' ? '<span class="chip" style="font-size:10px">🌐 Others</span>' : (n.target_college ? `<span class="chip" style="font-size:10px">🏫 ${esc(n.target_college)}</span>` : '<span class="chip" style="font-size:10px">👥 All Students</span>')}
+        </div>
+      </div>
+      <div class="admin-row-actions">
+        <button class="btn btn-danger btn-xs" onclick="deleteSentNotification(${n.id})">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+
   const list = (announcements || []).map(a => `
     <div class="admin-row">
       <div class="admin-row-left">
@@ -4110,11 +4137,16 @@ async function adminAnnouncements(token = window._adminRenderToken) {
   document.getElementById('adminContent').innerHTML = `
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-2">🔔 Send Notification</div>
-      <p class="text-xs text-muted mb-2">Goes to every student's notification bell (🔔 icon on Home). Different from the banner below: this is for things students should be specifically alerted to, like exam dates or new features.</p>
+      <p class="text-xs text-muted mb-2">Goes to every student's notification bell (🔔 icon on Home) and auto-removes itself after 48 hours — no cleanup needed. Different from the banner below: this is for things students should be specifically alerted to, like exam dates or new features.</p>
       <label class="input-label">Title</label>
       <input id="ntf_title" class="input-field" placeholder="e.g. 📅 2nd Year Module Exam, June 30">
       <label class="input-label">Message (optional)</label>
       <textarea id="ntf_body" class="input-field" rows="2" placeholder="Extra details..."></textarea>
+      <label class="input-label">Image (optional)</label>
+      <div class="upload-area" onclick="document.getElementById('ntf_img_file').click()">📸 Upload image</div>
+      <input type="file" id="ntf_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('ntf_img_file','ntf_img_url','ntf_img_preview')">
+      <img id="ntf_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
+      <input id="ntf_img_url" class="input-field" placeholder="Image URL" readonly>
       <label class="input-label">Target Audience</label>
       <select id="ntf_college" class="input-field" title="Target college" aria-label="Target college">
         <option value="">👥 All Students</option>
@@ -4123,6 +4155,9 @@ async function adminAnnouncements(token = window._adminRenderToken) {
       </select>
       <button class="btn btn-primary mt-2" onclick="adminSendNotification()">🔔 Send to Notification Bell</button>
     </div>
+    <div class="fw-700 mb-2">📋 Sent Notifications <span class="text-xs text-muted" style="font-weight:500">(auto-expire after 48h)</span></div>
+    ${notifList || '<div class="card"><p class="text-muted">No notifications sent yet.</p></div>'}
+    <div style="height:20px"></div>
 
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">📢 Create Announcement</div>
@@ -4162,15 +4197,31 @@ async function adminAnnouncements(token = window._adminRenderToken) {
 async function adminSendNotification() {
   const title = document.getElementById('ntf_title').value.trim();
   const body = document.getElementById('ntf_body').value.trim();
+  const image_url = document.getElementById('ntf_img_url').value.trim() || null;
   const college = document.getElementById('ntf_college').value || null;
   if (!title) return showToast('Please enter a title');
-  await db(sb.from('app_notifications').insert({ title, body, target_college: college }), 'Send failed');
+  await db(sb.from('app_notifications').insert({ title, body, image_url, target_college: college }), 'Send failed');
   showToast('🔔 Notification sent ✓');
   logAdminAction('Sent a notification', title);
   document.getElementById('ntf_title').value = '';
   document.getElementById('ntf_body').value = '';
+  document.getElementById('ntf_img_url').value = '';
+  const preview = document.getElementById('ntf_img_preview');
+  if (preview) { preview.style.display = 'none'; preview.src = ''; }
+  adminAnnouncements();
 }
 window.adminSendNotification = adminSendNotification;
+
+
+
+async function deleteSentNotification(id) {
+  showConfirm('Delete this notification? Students will stop seeing it immediately.', async () => {
+    await db(sb.from('app_notifications').delete().eq('id', id), 'Delete failed');
+    showToast('Deleted');
+    adminAnnouncements();
+  }, 'Delete');
+}
+window.deleteSentNotification = deleteSentNotification;
 
 
 
