@@ -297,8 +297,22 @@ function _fetchYearsCached() {
 function _fetchAnnouncementsCached() {
   const cached = cacheGet('announcements', 180000);
   if (cached) return Promise.resolve({ data: cached });
-  return db(sb.from('announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(20), 'Announce error').then(r => {
+  const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+  return db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce error').then(r => {
     if (r.data) cacheSet('announcements', r.data);
+    return r;
+  });
+}
+
+
+// Unlike announcements/notifications, a donation campaign has no auto-expiry
+// filter here — it's meant to stay visible until admin explicitly pauses or
+// deletes it (is_active does the filtering, nothing time-based).
+function _fetchDonationCached() {
+  const cached = cacheGet('donation', 180000);
+  if (cached) return Promise.resolve({ data: cached });
+  return db(sb.from('donation_campaigns').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1), 'Donation error').then(r => {
+    if (r.data) cacheSet('donation', r.data);
     return r;
   });
 }
@@ -416,16 +430,18 @@ export async function renderHome() {
   try {
 
   const myYearName = window.currentUser?.year_of_study || null;
-  const [{ data: years }, stats, annoRes] = await Promise.all([
+  const [{ data: years }, stats, annoRes, donoRes] = await Promise.all([
     _fetchYearsCached(),
     getUserStats(),
-    _fetchAnnouncementsCached()
+    _fetchAnnouncementsCached(),
+    _fetchDonationCached()
   ]);
   // Bug fix: target_college was saved when an announcement was created but
   // never actually checked here, so every "targeted" announcement was shown
   // to all students regardless of college. Filter it the same way the
   // notification bell already does, then keep the latest 3.
   const announcements = (annoRes.data || []).filter(a => !a.target_college || a.target_college === window.currentUser.college).slice(0, 3);
+  const donation = (donoRes.data || [])[0] || null;
 
   // My year modules teaser (top 3) — parallel fetch
   const myYear = (years || []).find(y => y.name === myYearName);
@@ -486,10 +502,12 @@ export async function renderHome() {
         .lumhsian-pulse-line, .lumhsian-stat-num { animation: none !important; }
       }
     </style>
-    <div style="background:linear-gradient(150deg,#5e4600 0%,#c9980a 55%,#e0ac1e 100%);border-radius:var(--radius-xl);padding:22px 20px 18px;margin-bottom:12px;color:white;position:relative;overflow:hidden;box-shadow:0 10px 28px -10px rgba(122,92,0,.55)">
+    <div style="background:linear-gradient(150deg,#5e4600 0%,#c9980a 55%,#e0ac1e 100%);border-radius:var(--radius-xl);padding:16px 20px 18px;margin-bottom:12px;color:white;position:relative;overflow:hidden;box-shadow:0 10px 28px -10px rgba(122,92,0,.55)">
       <div style="position:absolute;top:-24px;right:-16px;font-size:88px;opacity:.07;line-height:1;transform:rotate(-8deg)">${ICON_STETHOSCOPE}</div>
-      <div onclick="openNotificationBell()" style="position:absolute;top:16px;right:16px;cursor:pointer;font-size:19px;width:34px;height:34px;background:rgba(255,255,255,.14);border-radius:50%;display:flex;align-items:center;justify-content:center">
-        ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;align-items:center;justify-content:center;padding:0 3px;border:2px solid #7a5c00">0</span>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;position:relative">
+        <div onclick="openNotificationBell()" style="cursor:pointer;font-size:21px;width:40px;height:40px;background:rgba(255,255,255,.16);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative">
+          ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:18px;height:18px;align-items:center;justify-content:center;padding:0 4px;border:2px solid #7a5c00">0</span>
+        </div>
       </div>
       <div class="flex-between" style="margin-bottom:14px;position:relative">
         <div>
@@ -556,6 +574,16 @@ export async function renderHome() {
       <div class="progress-track"><div class="progress-fill" style="width:${acc}%"></div></div>
       <div class="flex-between mt-2"><span class="text-xs text-muted">Best score: ${stats.best_score||0}%</span><button class="btn btn-ghost btn-sm" style="padding:4px 10px" onclick="navGo('stats')">Full stats →</button></div>
     </div>
+
+    ${donation ? `
+    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px;padding:12px 14px">
+      ${donation.image_url ? `<img src="${esc(donation.image_url)}" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:26px;flex-shrink:0">💛</span>`}
+      <div style="min-width:0;flex:1">
+        <div class="text-sm fw-700">${esc(donation.title)}</div>
+        ${donation.description ? `<div class="text-xs text-muted" style="margin-top:1px">${esc(donation.description)}</div>` : ''}
+      </div>
+      ${donation.donation_link ? `<a href="${esc(donation.donation_link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="flex-shrink:0;white-space:nowrap;padding:7px 14px">Support Us</a>` : ''}
+    </div>` : ''}
 
     <div class="section-label">Browse Other Years</div>
     <div style="font-size:11px;color:var(--ink-4);margin:-4px 0 10px">You can explore any year's content. To attempt or review, your profile year must match.</div>
@@ -1366,21 +1394,23 @@ function checkWhatsNew() {
 
 
 
-// Students can delete a notification from their own bell without it
-// disappearing for anyone else — app_notifications is one shared broadcast
-// row per message, so "delete" here just means "never show me this id
-// again," tracked locally the same lightweight way last_seen_notif_id
-// already is, rather than needing a new per-user table.
+// Students can delete a notification/announcement from their own bell
+// without it disappearing for anyone else — both are shared broadcast rows,
+// so "delete" here just means "never show me this one again," tracked
+// locally the same lightweight way last-seen already is, rather than
+// needing a new per-user table. Keyed by source+id since app_notifications
+// and announcements each have their own independent id sequence.
 function _getDismissedNotifIds() {
   try { return new Set(JSON.parse(localStorage.getItem('dismissed_notif_ids') || '[]')); }
   catch { return new Set(); }
 }
-function dismissNotification(id) {
+function dismissNotification(source, id) {
   const ids = _getDismissedNotifIds();
-  ids.add(id);
+  const key = `${source}:${id}`;
+  ids.add(key);
   // Cap at the most recent 200 so this can never grow unbounded.
   localStorage.setItem('dismissed_notif_ids', JSON.stringify([...ids].slice(-200)));
-  window._appNotifs = (window._appNotifs || []).filter(n => n.id !== id);
+  window._appNotifs = (window._appNotifs || []).filter(n => `${n._source}:${n.id}` !== key);
   openNotificationBell(true);
 }
 window.dismissNotification = dismissNotification;
@@ -1389,30 +1419,40 @@ window.dismissNotification = dismissNotification;
 
 async function checkNewNotifications() {
   if (!window.currentUser || localStorage.getItem('notif_enabled') === 'false') return;
-  // Notifications auto-expire after 48h — filtering at query time means
-  // every reader of window._appNotifs (badge count, bell modal) respects the
-  // window automatically, with no separate cleanup step required client-side.
+  // Both auto-expire after 48h — filtering at query time means every reader
+  // of window._appNotifs (badge count, bell modal) respects the window
+  // automatically, with no separate cleanup step required client-side.
   const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  const { data } = await db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Notif load failed');
+  const [{ data: notifs }, { data: announces }] = await Promise.all([
+    db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Notif load failed'),
+    db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce load failed')
+  ]);
   const dismissed = _getDismissedNotifIds();
-  const relevant = (data || []).filter(n => (!n.target_college || n.target_college === window.currentUser.college) && !dismissed.has(n.id));
-  window._appNotifs = relevant;
-  const lastSeen = parseInt(localStorage.getItem('last_seen_notif_id') || '0');
-  const unread = relevant.filter(n => n.id > lastSeen).length;
+  const merged = [
+    ...(notifs || []).map(n => ({ ...n, _source: 'notif' })),
+    ...(announces || []).map(a => ({ ...a, _source: 'announce' }))
+  ]
+    .filter(n => (!n.target_college || n.target_college === window.currentUser.college) && !dismissed.has(`${n._source}:${n.id}`))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  window._appNotifs = merged;
+
+  const lastSeen = parseInt(localStorage.getItem('last_seen_notif_time') || '0');
+  const unread = merged.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
   const badge = document.getElementById('notifBellBadge');
   if (badge) badge.style.display = unread > 0 ? 'flex' : 'none';
   if (badge) badge.textContent = unread > 9 ? '9+' : unread;
   // Fire a native OS notification for the newest one if we have permission (nice-to-have, doesn't work if app/browser is fully closed)
-  if (unread > 0 && relevant[0]) showLocalNotification(relevant[0].title, relevant[0].body || '');
+  if (unread > 0 && merged[0]) showLocalNotification(merged[0].title, merged[0].body || '');
 }
 
 
 
 function openNotificationBell(isRerender) {
   const notifs = window._appNotifs || [];
+  const lastSeen = parseInt(localStorage.getItem('last_seen_notif_time') || '0');
   if (!isRerender) {
-    const maxId = notifs.length ? Math.max(...notifs.map(n => n.id)) : 0;
-    localStorage.setItem('last_seen_notif_id', maxId);
+    const newest = notifs.length ? Math.max(...notifs.map(n => new Date(n.created_at).getTime())) : Date.now();
+    localStorage.setItem('last_seen_notif_time', newest);
     document.getElementById('notifBellBadge')?.style && (document.getElementById('notifBellBadge').style.display = 'none');
   } else {
     document.getElementById('notifBellOverlay')?.remove();
@@ -1426,18 +1466,23 @@ function openNotificationBell(isRerender) {
         <span class="fw-700">🔔 Notifications</span>
         <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
       </div>
-      ${notifs.length ? notifs.map(n => `
-        <div class="card" style="margin-bottom:8px">
+      ${notifs.length ? notifs.map(n => {
+        const isUnread = new Date(n.created_at).getTime() > lastSeen;
+        const icon = n._source === 'announce' ? (n.emoji || '📢') : '🔔';
+        return `
+        <div class="card" style="margin-bottom:8px;position:relative;${isUnread ? 'border-color:var(--gold-500)' : ''}">
+          ${isUnread ? '<span style="position:absolute;top:10px;left:-4px;width:8px;height:8px;background:var(--gold-500);border-radius:50%"></span>' : ''}
           <div class="flex-between" style="align-items:flex-start">
             <div style="min-width:0;flex:1">
-              <div class="fw-700 text-sm">${esc(n.title)}</div>
+              <div class="fw-700 text-sm">${icon} ${esc(n.title)}</div>
               ${n.body ? `<div class="text-sm" style="margin-top:2px">${esc(n.body)}</div>` : ''}
             </div>
-            <button onclick="dismissNotification(${n.id})" title="Remove" style="background:none;border:none;font-size:15px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:2px 0 0 8px">🗑</button>
+            <button onclick="dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:15px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:2px 0 0 8px">🗑</button>
           </div>
           ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
           <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}</div>
-        </div>`).join('') : '<p class="text-sm text-muted text-center">No notifications yet.</p>'}
+        </div>`;
+      }).join('') : '<p class="text-sm text-muted text-center">No notifications yet.</p>'}
     </div>`;
   document.body.appendChild(overlay);
 }
