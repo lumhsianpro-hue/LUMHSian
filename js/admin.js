@@ -1143,7 +1143,7 @@ async function previewAndUpload(fileInputId, urlFieldId, previewId) {
   const file = document.getElementById(fileInputId)?.files[0];
   if (!file) return;
   // Square frame for icons/logos, wide frame for content/explanation images
-  const aspect = ['q_img_file','q_exp_img_file','an_img_file','ntf_img_file','_eq_img_file','_eq_exp_img_file'].includes(fileInputId) ? 1.6 : 1;
+  const aspect = ['q_img_file','q_exp_img_file','an_img_file','ntf_img_file','dn_img_file','_eq_img_file','_eq_exp_img_file'].includes(fileInputId) ? 1.6 : 1;
   openImageCropper(file, aspect, async (blob) => {
     const preview = document.getElementById(previewId);
     if (preview) { preview.src = URL.createObjectURL(blob); preview.style.display = 'block'; }
@@ -4083,6 +4083,7 @@ async function adminAnnouncements(token = window._adminRenderToken) {
   // out at query time), but this keeps the table from growing forever. Not
   // awaited: if it fails or is slow, it shouldn't hold up loading the screen.
   db(sb.from('app_notifications').delete().lt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()), 'Cleanup failed');
+  db(sb.from('announcements').delete().lt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()), 'Cleanup failed');
 
   const { data: announcements } = await db(sb.from('announcements').select('*').order('created_at', { ascending: false }), 'Announce error');
 
@@ -4412,9 +4413,10 @@ async function adminMonetization(token = window._adminRenderToken) {
   // a users(...) join, which is what the "Recent Subscriptions" list below
   // actually needs. Splitting these keeps both queries lightweight while
   // making the stats accurate regardless of how many subscriptions exist.
-  const [{ data: allActiveSubs }, { data: recentSubs }] = await Promise.all([
+  const [{ data: allActiveSubs }, { data: recentSubs }, { data: donations }] = await Promise.all([
     db(sb.from('subscriptions').select('plan_id').eq('status', 'active'), 'Subs error'),
-    db(sb.from('subscriptions').select('*, users(name,email,college)').order('created_at', { ascending: false }).limit(10), 'Subs error')
+    db(sb.from('subscriptions').select('*, users(name,email,college)').order('created_at', { ascending: false }).limit(10), 'Subs error'),
+    db(sb.from('donation_campaigns').select('*').order('created_at', { ascending: false }), 'Donations error')
   ]);
   const { data: settings } = await db(
     sb.from('system_settings').select('*').in('key', ['payment_enabled','free_trial_days','currency','payment_gateway','razorpay_key','stripe_key']),
@@ -4517,6 +4519,43 @@ async function adminMonetization(token = window._adminRenderToken) {
       <button class="btn btn-primary mt-3" onclick="createPlan()">Create Plan</button>
     </div>
 
+    <!-- Donation Campaigns -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="fw-700 mb-2">💛 Donation Campaigns</div>
+      <p class="text-xs text-muted mb-3">Shows as a compact card on the student dashboard, below stats — stays visible until you pause or delete it (no auto-expiry, unlike announcements).</p>
+      ${(donations || []).map(d => `
+        <div class="admin-row">
+          <div class="admin-row-left">
+            <div class="fw-700">${esc(d.title) || '(No title)'} <span class="badge ${d.is_active ? 'badge-green' : 'badge-amber'}">${d.is_active ? '🟢 Live' : '⏸ Paused'}</span></div>
+            <div class="text-sm text-muted">${esc(d.description) || ''}</div>
+            ${d.purpose ? `<div class="text-xs text-muted mt-1">🎯 ${esc(d.purpose)}</div>` : ''}
+            ${d.image_url ? `<img src="${esc(d.image_url)}" style="max-width:160px;border-radius:var(--radius-md);margin-top:6px">` : ''}
+            ${d.donation_link ? `<div class="text-xs mt-1"><a href="${esc(d.donation_link)}" target="_blank" style="color:var(--gold-600)">${esc(d.donation_link)}</a></div>` : ''}
+          </div>
+          <div class="admin-row-actions">
+            <button class="btn btn-secondary btn-xs" onclick="adminEditDonation(${d.id})">✏️</button>
+            <button class="btn btn-secondary btn-xs" onclick="toggleDonation(${d.id},${d.is_active})">${d.is_active ? '⏸ Pause' : '▶ Activate'}</button>
+            <button class="btn btn-danger btn-xs" onclick="deleteDonation(${d.id})">🗑</button>
+          </div>
+        </div>`).join('') || '<p class="text-muted mb-3">No donation campaigns yet.</p>'}
+      <hr class="divider">
+      <div class="fw-700 mb-2">➕ Create Campaign</div>
+      <label class="input-label">Title</label>
+      <input id="dn_title" class="input-field" placeholder="e.g., Help Keep LUMHSian Pro Free">
+      <label class="input-label">Description</label>
+      <textarea id="dn_desc" class="input-field" rows="2" placeholder="Short, honest explanation of why you're asking"></textarea>
+      <label class="input-label">Purpose (optional)</label>
+      <input id="dn_purpose" class="input-field" placeholder="e.g., Server & AI costs">
+      <label class="input-label">Image (optional)</label>
+      <div class="upload-area" onclick="document.getElementById('dn_img_file').click()">📸 Upload image</div>
+      <input type="file" id="dn_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('dn_img_file','dn_img_url','dn_img_preview')">
+      <img id="dn_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
+      <input id="dn_img_url" class="input-field" placeholder="Image URL" readonly>
+      <label class="input-label">Donation Link / Payment Details</label>
+      <input id="dn_link" class="input-field" placeholder="Payment link, or EasyPaisa/JazzCash number">
+      <button class="btn btn-primary mt-2" onclick="adminAddDonation()">Create Campaign</button>
+    </div>
+
     <!-- Active Subscriptions -->
     <div class="card">
       <div class="fw-700 mb-2">👥 Recent Subscriptions</div>
@@ -4538,6 +4577,93 @@ async function adminMonetization(token = window._adminRenderToken) {
   showGatewayFields(getSetting('payment_gateway', 'manual'));
 }
 window.adminMonetization = adminMonetization;
+
+
+
+async function adminAddDonation() {
+  const title = document.getElementById('dn_title').value.trim();
+  const description = document.getElementById('dn_desc').value.trim();
+  const purpose = document.getElementById('dn_purpose').value.trim() || null;
+  const image_url = document.getElementById('dn_img_url').value.trim() || null;
+  const donation_link = document.getElementById('dn_link').value.trim() || null;
+  if (!title) return showToast('Title required');
+  await db(sb.from('donation_campaigns').insert({ title, description, purpose, image_url, donation_link, is_active: true }), 'Add failed');
+  showToast('Donation campaign created ✓');
+  logAdminAction('Created donation campaign', title);
+  adminMonetization();
+}
+window.adminAddDonation = adminAddDonation;
+
+
+async function toggleDonation(id, isActive) {
+  await db(sb.from('donation_campaigns').update({ is_active: !isActive }).eq('id', id), 'Update failed');
+  showToast(isActive ? 'Paused' : 'Activated');
+  adminMonetization();
+}
+window.toggleDonation = toggleDonation;
+
+
+async function deleteDonation(id) {
+  showConfirm('Delete this donation campaign? This can\'t be undone.', async () => {
+    await db(sb.from('donation_campaigns').delete().eq('id', id), 'Delete failed');
+    showToast('Deleted');
+    adminMonetization();
+  }, 'Delete', true);
+}
+window.deleteDonation = deleteDonation;
+
+
+async function adminEditDonation(id) {
+  const { data: d } = await db(sb.from('donation_campaigns').select('*').eq('id', id).single(), 'Load failed');
+  if (!d) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto">
+      <div class="fw-700 mb-3">✏️ Edit Donation Campaign</div>
+      <label class="input-label">Title</label>
+      <input id="_ed_title" class="input-field" value="${esc(d.title||'')}">
+      <label class="input-label">Description</label>
+      <textarea id="_ed_desc" class="input-field" rows="2">${esc(d.description||'')}</textarea>
+      <label class="input-label">Purpose</label>
+      <input id="_ed_purpose" class="input-field" value="${esc(d.purpose||'')}">
+      <label class="input-label">Image (optional)</label>
+      <div class="upload-area" onclick="document.getElementById('_ed_img_file').click()">📸 Change image</div>
+      <input type="file" id="_ed_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('_ed_img_file','_ed_img_url','_ed_img_preview')">
+      <img id="_ed_img_preview" src="${esc(d.image_url||'')}" style="display:${d.image_url?'block':'none'};max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
+      <input id="_ed_img_url" class="input-field" value="${esc(d.image_url||'')}" placeholder="Image URL" readonly>
+      <label class="input-label">Donation Link / Payment Details</label>
+      <input id="_ed_link" class="input-field" value="${esc(d.donation_link||'')}">
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditedDonation(${d.id}, this)">Save Changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+window.adminEditDonation = adminEditDonation;
+
+
+// See saveEditedYear (near adminEditYear) for why this can't be an inline onclick IIFE.
+async function saveEditedDonation(id, btnEl) {
+  try {
+    const title = document.getElementById('_ed_title').value.trim();
+    const description = document.getElementById('_ed_desc').value.trim();
+    const purpose = document.getElementById('_ed_purpose').value.trim() || null;
+    const image_url = document.getElementById('_ed_img_url').value.trim() || null;
+    const donation_link = document.getElementById('_ed_link').value.trim() || null;
+    if (!title) { showToast('Title required'); return; }
+    const { error } = await db(sb.from('donation_campaigns').update({ title, description, purpose, image_url, donation_link }).eq('id', id), 'Edit failed');
+    if (error) return;
+    showToast('Campaign updated ✓');
+    btnEl.closest('[style*=fixed]').remove();
+    adminMonetization();
+  } catch (err) {
+    console.error('Edit donation failed:', err);
+    showToast('Unexpected error: ' + err.message, 9000);
+  }
+}
+window.saveEditedDonation = saveEditedDonation;
 
 
 
