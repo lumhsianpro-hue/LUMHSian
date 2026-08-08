@@ -440,7 +440,11 @@ export async function renderHome() {
   // never actually checked here, so every "targeted" announcement was shown
   // to all students regardless of college. Filter it the same way the
   // notification bell already does, then keep the latest 3.
-  const announcements = (annoRes.data || []).filter(a => !a.target_college || a.target_college === window.currentUser.college).slice(0, 3);
+  const myYearForFilter = await _getMyYear();
+  const announcements = (annoRes.data || []).filter(a =>
+    (!a.target_college || a.target_college === window.currentUser.college) &&
+    (!a.target_year_id || a.target_year_id === myYearForFilter?.id)
+  ).slice(0, 3);
   const donation = (donoRes.data || [])[0] || null;
 
   // My year modules teaser (top 3) — parallel fetch
@@ -1428,11 +1432,16 @@ async function checkNewNotifications() {
     db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce load failed')
   ]);
   const dismissed = _getDismissedNotifIds();
+  const myYearForFilter = await _getMyYear();
   const merged = [
     ...(notifs || []).map(n => ({ ...n, _source: 'notif' })),
     ...(announces || []).map(a => ({ ...a, _source: 'announce' }))
   ]
-    .filter(n => (!n.target_college || n.target_college === window.currentUser.college) && !dismissed.has(`${n._source}:${n.id}`))
+    .filter(n =>
+      (!n.target_college || n.target_college === window.currentUser.college) &&
+      (!n.target_year_id || n.target_year_id === myYearForFilter?.id) &&
+      !dismissed.has(`${n._source}:${n.id}`)
+    )
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   window._appNotifs = merged;
 
@@ -1902,11 +1911,24 @@ export function isFeatureEnabled(featureName) {
 // ==================== SEARCH (with module + difficulty filters) ====================
 export async function renderSearch(term = '') {
   const wrap = document.getElementById('searchPageWrap');
-  const { data: modules } = await db(sb.from('modules').select('id,name'), 'Modules error');
+  // Scoped to the student's own year — same rule as everywhere else now
+  // (Past Papers, Home's "My Modules"): search should only ever surface
+  // this year's content, not every year mixed together.
+  const myYear = await _getMyYear();
+  let modules = [];
+  if (myYear) {
+    const { data: yearModules } = await db(sb.from('year_modules').select('module_id').eq('year_id', myYear.id), 'Modules error');
+    const moduleIds = (yearModules || []).map(ym => ym.module_id);
+    if (moduleIds.length) {
+      const { data } = await db(sb.from('modules').select('id,name').in('id', moduleIds), 'Modules error');
+      modules = data || [];
+    }
+  }
 
   wrap.innerHTML = `
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-2" style="font-family:var(--font-display)">🔍 Search</div>
+      ${!myYear ? '<p class="text-xs text-muted mb-2">Set your academic year in Profile to search your modules.</p>' : ''}
       <div class="input-group mb-2">
         <input type="text" id="searchInput" class="input-field" placeholder="Search questions, modules, subjects..." value="${term}" oninput="executeSearchDebounced()" onkeydown="if(event.key==='Enter')executeSearch()" style="margin:0;flex:1">
         <button class="btn btn-primary" style="width:auto;flex-shrink:0" onclick="executeSearch()">Search</button>
@@ -1939,13 +1961,24 @@ async function executeSearch() {
 
   resWrap.innerHTML = skeletonList(2, false);
 
+  // Same year-scoping as renderSearch above — every query below stays
+  // within the student's own year's modules, never searching other years'
+  // content mixed in.
+  const myYear = await _getMyYear();
+  let myModuleIds = [];
+  if (myYear) {
+    const { data: yearModules } = await db(sb.from('year_modules').select('module_id').eq('year_id', myYear.id), 'Modules error');
+    myModuleIds = (yearModules || []).map(ym => ym.module_id);
+  }
+  if (!myModuleIds.length) { resWrap.innerHTML = '<p class="text-sm text-muted text-center">Set your academic year in Profile to search.</p>'; return; }
+
   // Search modules and subjects if there's a text term and no module filter
   let moduleMatchHtml = '';
   let subjectMatchHtml = '';
   if (term && !moduleId) {
     const [modsRes, subRes] = await Promise.all([
-      db(sb.from('modules').select('id,name,icon_url').ilike('name', `%${term}%`).limit(5), 'Modules search failed'),
-      db(sb.from('subjects').select('id,name,module_id,modules(name)').ilike('name', `%${term}%`).limit(5), 'Subjects search failed')
+      db(sb.from('modules').select('id,name,icon_url').in('id', myModuleIds).ilike('name', `%${term}%`).limit(5), 'Modules search failed'),
+      db(sb.from('subjects').select('id,name,module_id,modules(name)').in('module_id', myModuleIds).ilike('name', `%${term}%`).limit(5), 'Subjects search failed')
     ]);
     if (modsRes.data?.length) {
       moduleMatchHtml = `<div class="section-label">Modules</div>` +
@@ -1971,7 +2004,7 @@ async function executeSearch() {
   }
 
   // Always search questions
-  let query = sb.from('questions').select('id,text,explanation,difficulty,options,correct_answer,module_id,modules(name)').order('id', { ascending: false }).limit(40);
+  let query = sb.from('questions').select('id,text,explanation,difficulty,options,correct_answer,module_id,modules(name)').in('module_id', myModuleIds).order('id', { ascending: false }).limit(40);
   if (term) query = query.ilike('text', `%${term}%`);
   if (moduleId) query = query.eq('module_id', moduleId);
   if (diff) query = query.eq('difficulty', diff);
