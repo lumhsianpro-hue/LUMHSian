@@ -1555,6 +1555,7 @@ function _adminPaperRowHtml(p, contextLabel) {
         <div class="text-xs text-muted">${contextLabel ? `${esc(contextLabel)} · ` : ''}${p.paper_year ? `📅 ${esc(p.paper_year)} · ` : ''}${p._moduleTag ? `📦 ${esc(p._moduleTag)} · ` : ''}${p._qCount} questions</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn btn-primary btn-xs" onclick="startAddQuestions('paper',${p.id},'${escJs(p.title)}',${p._qCount})">➕ Add Qs</button>
         ${p._qCount ? `<button class="btn btn-secondary btn-xs" onclick="downloadPaperQuestions(${p.id},'${escJs(p.title)}')">⬇️ Download</button>` : ''}
         <button class="btn btn-secondary btn-xs" onclick="startReplaceAllQuestions('paper',${p.id},'${escJs(p.title)}',${p._qCount})">🔁 Replace Qs</button>
         <button class="btn btn-secondary btn-xs" onclick="adminEditPastPaper(${p.id})">✏️</button>
@@ -2316,12 +2317,26 @@ window._bulkLockedTarget = null;
 
 
 function startReplaceAllQuestions(type, id, title, currentCount) {
-  window._bulkLockedTarget = { type, id, title, currentCount };
+  window._bulkLockedTarget = { type, id, title, currentCount, replaceDefault: true };
   window._currentContentTab = 'questions';
   window._currentQSubTab = 'bulk';
   adminShowTab('content', true);
 }
 window.startReplaceAllQuestions = startReplaceAllQuestions;
+
+
+// Jumps straight to Bulk Upload with this paper/test pre-selected — for when
+// you're already looking at it in a drill-down list and just want to add
+// its questions, without re-picking Year → College → Paper a second time in
+// a separate tab. Same locked-target mechanism as Replace All, just
+// defaulting to "add on top" instead of "delete first."
+function startAddQuestions(type, id, title, currentCount) {
+  window._bulkLockedTarget = { type, id, title, currentCount, replaceDefault: false };
+  window._currentContentTab = 'questions';
+  window._currentQSubTab = 'bulk';
+  adminShowTab('content', true);
+}
+window.startAddQuestions = startAddQuestions;
 
 
 function clearBulkLockedTarget() {
@@ -2335,6 +2350,7 @@ window.clearBulkLockedTarget = clearBulkLockedTarget;
 function bulkStep1Html() {
   const lock = window._bulkLockedTarget;
   if (lock) {
+    const replaceDefault = lock.replaceDefault !== false;
     return `
       <div class="card" style="margin-bottom:20px;border:1.5px solid var(--gold-500)">
         <div class="fw-700 mb-2">🎯 Step 1: Target locked</div>
@@ -2345,9 +2361,9 @@ function bulkStep1Html() {
           </div>
           <button class="btn btn-ghost btn-xs" onclick="clearBulkLockedTarget()">✕ Change target</button>
         </div>
-        <label style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;padding:10px 12px;background:var(--red-light,#fde8e8);border-radius:var(--radius-md);cursor:pointer">
-          <input type="checkbox" id="qx_replaceMode" checked style="width:18px;height:18px;accent-color:var(--red);flex-shrink:0;margin-top:1px">
-          <span class="text-xs" style="color:var(--red);font-weight:600;line-height:1.5">Replace mode: delete all ${lock.currentCount} existing question${lock.currentCount===1?'':'s'} in "${esc(lock.title)}" right before uploading the batch below. Uncheck to just ADD more questions on top instead.</span>
+        <label style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;padding:10px 12px;background:${replaceDefault ? 'var(--red-light,#fde8e8)' : 'var(--gold-50,#fdf6e3)'};border-radius:var(--radius-md);cursor:pointer">
+          <input type="checkbox" id="qx_replaceMode" ${replaceDefault ? 'checked' : ''} style="width:18px;height:18px;accent-color:${replaceDefault ? 'var(--red)' : 'var(--gold-600)'};flex-shrink:0;margin-top:1px">
+          <span class="text-xs" style="color:${replaceDefault ? 'var(--red)' : 'var(--ink-2)'};font-weight:600;line-height:1.5">Replace mode: delete all ${lock.currentCount} existing question${lock.currentCount===1?'':'s'} in "${esc(lock.title)}" right before uploading the batch below. ${replaceDefault ? 'Uncheck to just ADD more questions on top instead.' : 'Leave unchecked to just add these on top of what\'s already there.'}</span>
         </label>
       </div>`;
   }
@@ -4089,6 +4105,13 @@ async function adminAnnouncements(token = window._adminRenderToken) {
 
   if (_renderStale(token)) return;
   const { data: sentNotifs } = await db(sb.from('app_notifications').select('*').order('created_at', { ascending: false }), 'Notif load failed');
+  const { data: colleges } = await db(sb.from('colleges').select('name').order('name'), 'Colleges error');
+  const collegeOpts = (colleges || []).map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+  const { data: targetYears } = await db(sb.from('years').select('id,name').order('display_order'), 'Years error');
+  const yearOpts = (targetYears || []).map(y => `<option value="${y.id}">${esc(y.name)}</option>`).join('');
+  const yearNameById = {};
+  for (const y of (targetYears || [])) yearNameById[y.id] = y.name;
+
   const notifList = (sentNotifs || []).map(n => {
     const hoursLeft = Math.max(0, Math.round(48 - (Date.now() - new Date(n.created_at).getTime()) / 3600000));
     return `
@@ -4100,7 +4123,8 @@ async function adminAnnouncements(token = window._adminRenderToken) {
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
           <span class="chip" style="font-size:10px">${new Date(n.created_at).toLocaleDateString()}</span>
           <span class="chip" style="font-size:10px">⏳ expires in ${hoursLeft}h</span>
-          ${n.target_college === 'Others' ? '<span class="chip" style="font-size:10px">🌐 Others</span>' : (n.target_college ? `<span class="chip" style="font-size:10px">🏫 ${esc(n.target_college)}</span>` : '<span class="chip" style="font-size:10px">👥 All Students</span>')}
+          ${n.target_college === 'Others' ? '<span class="chip" style="font-size:10px">🌐 Others</span>' : (n.target_college ? `<span class="chip" style="font-size:10px">🏫 ${esc(n.target_college)}</span>` : '<span class="chip" style="font-size:10px">👥 All Colleges</span>')}
+          ${n.target_year_id ? `<span class="chip" style="font-size:10px">🎓 ${esc(yearNameById[n.target_year_id] || 'Unknown Year')}</span>` : '<span class="chip" style="font-size:10px">🎓 All Years</span>'}
         </div>
       </div>
       <div class="admin-row-actions">
@@ -4120,10 +4144,11 @@ async function adminAnnouncements(token = window._adminRenderToken) {
           </div>
         </div>
         ${a.image_url ? `<img src="${esc(a.image_url)}" style="max-width:160px;border-radius:var(--radius-md);margin-top:6px">` : ''}
-        <div style="margin-top:6px;display:flex;gap:6px">
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
           <span class="badge ${a.is_active ? 'badge-green' : 'badge-amber'}">${a.is_active ? '🟢 Live' : '⏸ Paused'}</span>
           <span class="chip" style="font-size:10px">${new Date(a.created_at).toLocaleDateString()}</span>
-          ${a.target_college === 'Others' ? '<span class="chip" style="font-size:10px">🌐 Others</span>' : (a.target_college ? `<span class="chip" style="font-size:10px">🏫 ${a.target_college}</span>` : '<span class="chip" style="font-size:10px">👥 All Students</span>')}
+          ${a.target_college === 'Others' ? '<span class="chip" style="font-size:10px">🌐 Others</span>' : (a.target_college ? `<span class="chip" style="font-size:10px">🏫 ${a.target_college}</span>` : '<span class="chip" style="font-size:10px">👥 All Colleges</span>')}
+          ${a.target_year_id ? `<span class="chip" style="font-size:10px">🎓 ${esc(yearNameById[a.target_year_id] || 'Unknown Year')}</span>` : '<span class="chip" style="font-size:10px">🎓 All Years</span>'}
         </div>
       </div>
       <div class="admin-row-actions">
@@ -4131,9 +4156,6 @@ async function adminAnnouncements(token = window._adminRenderToken) {
         <button class="btn btn-danger btn-xs" onclick="deleteAnnounce(${a.id})">🗑</button>
       </div>
     </div>`).join('');
-
-  const { data: colleges } = await db(sb.from('colleges').select('name').order('name'), 'Colleges error');
-  const collegeOpts = (colleges || []).map(c => `<option value="${c.name}">${c.name}</option>`).join('');
 
   document.getElementById('adminContent').innerHTML = `
     <div class="card" style="margin-bottom:20px">
@@ -4148,11 +4170,16 @@ async function adminAnnouncements(token = window._adminRenderToken) {
       <input type="file" id="ntf_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('ntf_img_file','ntf_img_url','ntf_img_preview')">
       <img id="ntf_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
       <input id="ntf_img_url" class="input-field" placeholder="Image URL" readonly>
-      <label class="input-label">Target Audience</label>
+      <label class="input-label">Target College</label>
       <select id="ntf_college" class="input-field" title="Target college" aria-label="Target college">
-        <option value="">👥 All Students</option>
+        <option value="">👥 All Colleges</option>
         <option value="Others">🌐 Others (students whose college isn't listed)</option>
         ${collegeOpts}
+      </select>
+      <label class="input-label">Target Academic Year</label>
+      <select id="ntf_year" class="input-field" title="Target academic year" aria-label="Target academic year">
+        <option value="">🎓 All Years</option>
+        ${yearOpts}
       </select>
       <button class="btn btn-primary mt-2" onclick="adminSendNotification()">🔔 Send to Notification Bell</button>
     </div>
@@ -4173,11 +4200,16 @@ async function adminAnnouncements(token = window._adminRenderToken) {
       <input type="file" id="an_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('an_img_file','an_img_url','an_img_preview')">
       <img id="an_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
       <input id="an_img_url" class="input-field" placeholder="Image URL" readonly>
-      <label class="input-label">Target Audience</label>
+      <label class="input-label">Target College</label>
       <select id="an_college" class="input-field" title="Target college" aria-label="Target college">
-        <option value="">👥 All Students</option>
+        <option value="">👥 All Colleges</option>
         <option value="Others">🌐 Others (students whose college isn't listed)</option>
         ${collegeOpts}
+      </select>
+      <label class="input-label">Target Academic Year</label>
+      <select id="an_year" class="input-field" title="Target academic year" aria-label="Target academic year">
+        <option value="">🎓 All Years</option>
+        ${yearOpts}
       </select>
       <label class="input-label">Announcement Type</label>
       <select id="an_type" class="input-field" title="Announcement type" aria-label="Announcement type">
@@ -4200,8 +4232,9 @@ async function adminSendNotification() {
   const body = document.getElementById('ntf_body').value.trim();
   const image_url = document.getElementById('ntf_img_url').value.trim() || null;
   const college = document.getElementById('ntf_college').value || null;
+  const target_year_id = parseInt(document.getElementById('ntf_year').value) || null;
   if (!title) return showToast('Please enter a title');
-  await db(sb.from('app_notifications').insert({ title, body, image_url, target_college: college }), 'Send failed');
+  await db(sb.from('app_notifications').insert({ title, body, image_url, target_college: college, target_year_id }), 'Send failed');
   showToast('🔔 Notification sent ✓');
   logAdminAction('Sent a notification', title);
   document.getElementById('ntf_title').value = '';
@@ -4232,10 +4265,11 @@ async function adminAddAnnouncement() {
   const body = document.getElementById('an_body').value.trim();
   const image_url = document.getElementById('an_img_url').value.trim() || null;
   const target_college = document.getElementById('an_college').value || null;
+  const target_year_id = parseInt(document.getElementById('an_year').value) || null;
   const type = document.getElementById('an_type').value;
   const is_active = document.getElementById('an_active').checked;
   if (!title) return showToast('Title required');
-  await db(sb.from('announcements').insert({ emoji, title, body, image_url, target_college, type, is_active, created_at: new Date().toISOString() }), 'Add failed');
+  await db(sb.from('announcements').insert({ emoji, title, body, image_url, target_college, target_year_id, type, is_active, created_at: new Date().toISOString() }), 'Add failed');
   cacheClear('announcements');
   showToast('Announcement published ✓'); adminAnnouncements();
 }
