@@ -1,10 +1,29 @@
 import { renderAdminPanel } from './admin.js';
 import { clearAppState, renderHome, restoreAppState, startHeartbeat, stopHeartbeat } from './app.js';
-import { showScreen } from './navigation.js';
+import { _resetNavigationRoot, showScreen } from './navigation.js';
 import { requestNotificationPermission } from './profile.js';
 import { RESUME_KEY, _showResumeDialog, _showTimeExpiredResult, clearPersistedTest } from './quiz.js';
 import { ADMIN_EMAIL, USERS_SAFE_COLS, _showReconnecting, db, sb } from './supabase.js';
 import { cacheGet, cacheSet, rateLimited, showLoading, showToast } from './utils.js';
+
+
+
+// Cover the splash screen with a loading spinner from the very first instant
+// this script runs, before we know anything about session state yet. On a
+// slow connection, the alternative is the raw "Continue with Google" splash
+// sitting fully visible (no spinner at all) for however long it takes
+// Supabase to confirm whether there's actually a valid session — which
+// reads as "the login screen keeps showing up" even though nothing is
+// actually wrong, it just hasn't finished checking. Cleared as soon as
+// _handleAuthedSessionInner() starts running (it sets _authSessionHandled
+// itself, further down this file) — or, if there's no session to confirm at
+// all (a brand new visitor, where neither SIGNED_IN nor SIGNED_OUT has any
+// reason to fire), by this timeout instead, so the spinner can never get
+// stuck forever with nothing to clear it.
+showLoading(true, 'Loading...');
+setTimeout(() => {
+  if (!window._authSessionHandled) { showLoading(false); showScreen('splash', false); }
+}, 6000);
 
 
 
@@ -35,7 +54,8 @@ window.signInWithGoogle = signInWithGoogle;
 async function cancelCreateAccount() {
   showLoading(true, 'Signing out...');
   try { await sb.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
-  window.currentUser = null; window.navStack = [];
+  window.currentUser = null;
+  _resetNavigationRoot();
   showLoading(false);
   showScreen('splash', false);
 }
@@ -155,6 +175,7 @@ async function _handleAuthedSessionInner(session) {
   if (row.is_banned) { showLoading(false); showToast('Account banned. Contact admin.'); await sb.auth.signOut(); return; }
 
   window.currentUser = row;
+  _resetNavigationRoot();
   showLoading(false);
 
   if (window.currentUser.is_admin) {
@@ -313,7 +334,8 @@ export async function logout() {
   clearAppState();
   localStorage.removeItem('lum_year');
   window._authSessionHandled = false;
-  window.currentUser = null; window.selectedYear = null; window.activeTest = null; window.navStack = [];
+  window.currentUser = null; window.selectedYear = null; window.activeTest = null;
+  _resetNavigationRoot();
   document.getElementById('bottomNav').classList.remove('show');
   try { await sb.auth.signOut(); } catch(e) { console.warn('signOut error', e); }
   showScreen('splash', false);
@@ -369,7 +391,7 @@ sb.auth.onAuthStateChange((event, session) => {
         window.currentUser = null;
         window.selectedYear = null;
         window.activeTest = null;
-        window.navStack = [];
+        _resetNavigationRoot();
         document.getElementById('bottomNav')?.classList.remove('show');
         showScreen('splash', false);
       }
