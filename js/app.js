@@ -1937,12 +1937,6 @@ export async function renderSearch(term = '') {
         <option value="">All Modules</option>
         ${(modules||[]).map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
       </select>
-      <select id="searchDiff" class="input-field" title="Filter by difficulty" aria-label="Filter by difficulty" onchange="executeSearch()">
-        <option value="">All Difficulties</option>
-        <option value="easy">🟢 Easy</option>
-        <option value="medium">🟡 Medium</option>
-        <option value="hard">🔴 Hard</option>
-      </select>
     </div>
     <div id="searchResults"></div>`;
 
@@ -1954,10 +1948,9 @@ export async function renderSearch(term = '') {
 async function executeSearch() {
   const term = document.getElementById('searchInput')?.value.trim() || '';
   const moduleId = document.getElementById('searchModule')?.value || '';
-  const diff = document.getElementById('searchDiff')?.value || '';
   const resWrap = document.getElementById('searchResults');
   if (!resWrap) return;
-  if (!term && !moduleId && !diff) { resWrap.innerHTML = ''; return; }
+  if (!term && !moduleId) { resWrap.innerHTML = ''; return; }
 
   resWrap.innerHTML = skeletonList(2, false);
 
@@ -2007,7 +2000,6 @@ async function executeSearch() {
   let query = sb.from('questions').select('id,text,explanation,difficulty,options,correct_answer,module_id,modules(name)').in('module_id', myModuleIds).order('id', { ascending: false }).limit(40);
   if (term) query = query.ilike('text', `%${term}%`);
   if (moduleId) query = query.eq('module_id', moduleId);
-  if (diff) query = query.eq('difficulty', diff);
 
   const { data: results } = await db(query, 'Search failed');
 
