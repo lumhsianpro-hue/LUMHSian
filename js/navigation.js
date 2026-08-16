@@ -16,7 +16,20 @@ export function showScreen(id, pushToStack = true) {
   next.classList.add('active');
   window.scrollTo(0, 0);
   if (pushToStack) {
-    if (window.navStack[window.navStack.length - 1] !== id) window.navStack.push(id);
+    if (window.navStack[window.navStack.length - 1] !== id) {
+      window.navStack.push(id);
+      // Keep the browser's REAL history in sync with our own logical stack —
+      // tagged with lumhsianScreen so the popstate handler below can tell
+      // "a real step back through screens we pushed" apart from "stepped
+      // past all of them, into whatever page history existed before this
+      // app instance" (e.g. the pre-login splash, or a leftover step from
+      // the Google OAuth redirect hop). Without this, the two stacks drift
+      // apart and the browser's own back button can resurface that old,
+      // stale state — see _resetNavigationRoot() in auth.js for the other
+      // half of this fix.
+      try { window.history.pushState({ lumhsianScreen: id, depth: window.navStack.length }, '', window.location.href); }
+      catch (e) { /* non-fatal: in-app navigation via navStack still works even if this throws */ }
+    }
     if (window.navStack.length > 30) window.navStack.shift();
   }
   updateBottomNav(id);
@@ -68,16 +81,36 @@ window._returnToScreen = _returnToScreen;
 
 
 
+// Called once, right when we know for certain whether someone is logging in
+// or out — never during ordinary in-app navigation. Clears the logical
+// stack and REPLACES (not pushes) the current history entry, so whatever
+// was there before (the splash screen's earlier load, a step left over from
+// the Google OAuth redirect hop, or — on logout — the just-ended
+// authenticated session's screens) is no longer reachable by pressing back.
+export function _resetNavigationRoot() {
+  window.navStack = [];
+  try { window.history.replaceState(null, '', window.location.href); }
+  catch (e) { /* non-fatal — worst case one stale entry remains reachable via back */ }
+}
+window._resetNavigationRoot = _resetNavigationRoot;
+
+
+
 export function goBack() {
   if (window.navStack.length > 1) {
     window.navStack.pop();
     const prev = window.navStack[window.navStack.length - 1];
     if (prev === 'test') { requestExitTest(); return; }
     _returnToScreen(prev);
-  } else {
-    if (window.currentUser) { renderHome(); showScreen('home'); }
-    else showScreen('splash');
   }
+  // At the root (navStack.length <= 1): deliberately do nothing further.
+  // This used to re-render Home (or the splash/login screen) here, which
+  // masked the real bug — every popstate ever routed through this function
+  // got "handled" in-app, so the browser's own natural back-navigation
+  // (which, now that history is kept in sync — see showScreen() and
+  // _resetNavigationRoot() — correctly has nothing left behind Home) never
+  // got a chance to actually happen. Leaving this empty lets that real exit
+  // happen instead of bouncing back to a stale pre-login screen.
 }
 window.goBack = goBack;
 
@@ -122,7 +155,7 @@ window.navGo = navGo;
 
 
 // Handle back button (Android)
-window.addEventListener('popstate', () => goBack());
-
-
-window.history.pushState({}, '', window.location.href);
+window.addEventListener('popstate', (event) => {
+  if (!event.state || !event.state.lumhsianScreen) return;
+  goBack();
+});
