@@ -1,0 +1,170 @@
+/* ===== FONTS =====
+   'Inter' and 'Space Grotesk' were referenced throughout via --font-body/
+   --font-display but never actually loaded anywhere — no @font-face, no
+   <link> in the HTML shell, nothing — so every device was silently falling
+   back to its own default system font (Roboto on Android, -apple-system on
+   iOS) this whole time. Loading them for real here is what actually makes
+   the intended typography show up. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700;800&display=swap');
+
+/* ===== RESET & ROOT ===== */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+
+:root{
+  color-scheme: light;
+  /* Brand accent — unchanged, now used ONLY for actions/emphasis, never for neutral surfaces */
+  --gold-900:#1a1200;--gold-800:#2e2000;--gold-700:#7a5c00;--gold-600:#8a6600;
+  --gold-500:#c9980a;--gold-400:#e8a820;--gold-300:#f0c040;--gold-200:#fae08a;
+  --gold-100:#fdf3c0;--gold-50:#fffce8;
+  /* Neutral scale — dark ink on a clean white surface system. --surface,
+     --surface-2 (page background) and --surface-3 (icon chips/thumbnails)
+     are all true white now; cards/chips still separate visually via
+     --border rather than a background tint. */
+  --ink:#18150e;--ink-2:#18150e;--ink-3:#18150e;--ink-4:#6b6558;
+  --surface:#ffffff;--surface-2:#ffffff;--surface-3:#f7f6f2;
+  --border:#e6e0d1;--border-2:#d6cdb8;
+  --overlay-bg:rgba(255,255,255,.95);
+  --red:#c81e1e;--red-light:#fef2f2;--red-border:#fecaca;
+  --amber:#a35604;--amber-light:#fffbeb;
+  --green:#047857;--green-light:#ecfdf5;
+  /* Soft-rounded system — cards/sheets get restrained radii; --radius-btn is dedicated to buttons/inputs */
+  --radius-sm:8px;--radius-md:10px;--radius-lg:12px;--radius-xl:16px;--radius-full:9999px;--radius-btn:10px;
+  /* Neutral, low-opacity "depth" shadows instead of heavy warm-tinted ones */
+  --shadow-sm:0 1px 2px rgba(23,23,23,.05),0 1px 1px rgba(23,23,23,.03);
+  --shadow-md:0 3px 10px -2px rgba(23,23,23,.08),0 1px 4px -1px rgba(23,23,23,.04);
+  --shadow-lg:0 8px 22px -6px rgba(23,23,23,.10),0 3px 8px -2px rgba(23,23,23,.05);
+  --shadow-xl:0 16px 36px -10px rgba(23,23,23,.14),0 6px 14px -4px rgba(23,23,23,.06);
+  --font-body:'Inter',sans-serif;--font-display:'Space Grotesk',sans-serif;
+  --transition:0.2s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* Dark mode is intentionally NOT wired to the phone's system setting — see
+   applyDarkMode() further down. It only turns on when a student flips the
+   Dark Mode switch in Profile, so it can't silently show up (or fail to
+   show up) based on a device setting nobody's looking at. That function
+   overrides every variable below via inline styles when active. */
+
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+
+body{font-family:var(--font-body);background:var(--surface-2);color:var(--ink);min-height:100vh;overflow-x:hidden;line-height:1.6}
+
+/* ===== SCREENS ===== */
+
+.screen{display:none;min-height:100vh;opacity:0;transform:translateY(6px);transition:opacity .18s ease,transform .18s ease;background:var(--surface)}
+.screen.active{display:block;opacity:1;transform:none}
+#screen-splash.active{display:flex}
+#screen-reconnecting.active{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+.page-wrap{max-width:680px;margin:0 auto;padding:16px 16px 80px}
+
+/* Safety net: even if a future rule accidentally forces display on an inactive screen,
+   it must never be able to intercept clicks again. */
+
+.screen:not(.active){pointer-events:none}
+
+/* ===== TYPOGRAPHY ===== */
+
+.display{font-family:var(--font-display);font-weight:700}
+h1{font-family:var(--font-display);font-size:clamp(24px,6vw,32px);font-weight:700;line-height:1.15;letter-spacing:-0.02em}
+h2{font-family:var(--font-display);font-size:20px;font-weight:600;line-height:1.25;letter-spacing:-0.015em}
+h3{font-size:16px;font-weight:600;line-height:1.3;letter-spacing:-0.01em}
+p{font-size:14px;color:var(--ink-3);line-height:1.65}
+
+/* ===== LAYOUT UTILS ===== */
+
+.flex{display:flex;align-items:center}
+.flex-between{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.flex-col{display:flex;flex-direction:column;gap:8px}
+.gap-2{gap:8px}.gap-3{gap:12px}.gap-4{gap:16px}
+.mt-1{margin-top:4px}.mt-2{margin-top:8px}.mt-3{margin-top:12px}.mt-4{margin-top:16px}.mt-6{margin-top:24px}
+.mb-1{margin-bottom:4px}.mb-2{margin-bottom:8px}.mb-3{margin-bottom:12px}
+.text-center{text-align:center}
+.text-sm{font-size:13px}.text-xs{font-size:12px}
+.text-muted{color:var(--ink-4)}.text-danger{color:var(--red)}.text-success{color:var(--green)}
+.fw-600{font-weight:600}.fw-700{font-weight:700}
+.w-full{width:100%}
+.hidden{display:none!important}
+
+/* ===== SECTION HEADER ===== */
+
+.section-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink);margin:20px 0 8px;padding-left:4px}
+
+/* ===== BACK BUTTON ===== */
+
+.back-btn{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:var(--ink-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-btn);padding:8px 16px;cursor:pointer;margin-bottom:16px;transition:all var(--transition)}
+.back-btn:hover{border-color:var(--gold-400);color:var(--gold-700)}
+
+/* ===== DIVIDER ===== */
+
+.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
+
+/* ===== NAV BAR (Bottom) ===== */
+
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--overlay-bg);backdrop-filter:blur(12px);border-top:1px solid var(--border);display:none;z-index:200;padding:8px 0 max(8px,env(safe-area-inset-bottom))}
+.bottom-nav.show{display:flex}
+.nav-items{display:flex;width:100%;max-width:500px;margin:0 auto}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;cursor:pointer;border:none;background:transparent;color:var(--ink-4);transition:all var(--transition)}
+.nav-item.active{color:var(--gold-600)}
+.nav-item-icon{font-size:20px;transition:transform var(--transition)}
+.nav-item.active .nav-item-icon{transform:translateY(-1px)}
+.nav-item-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+
+/* ===== DESKTOP LAYOUT =====
+   Below ~900px this app is deliberately still the same single-column mobile
+   layout — that's a phone-sized reading width, not a bug. Above it, a
+   bottom tab bar and a 680px column stranded in the middle of a wide
+   monitor is the actual bug being fixed here: a real left-hand nav rail
+   (so nothing about the app needs to scroll just to switch sections) and a
+   wider working column. `body:has(.bottom-nav.show)` scopes the content
+   shift to only the screens where the nav rail is actually showing (Home,
+   Modules, Search, Stats, Ranks, Profile) — login, the quiz itself, and the
+   admin panel are untouched by it. */
+@media (min-width:900px){
+  .bottom-nav.show{
+    left:0;right:auto;top:0;bottom:0;width:232px;height:100vh;
+    border-top:none;border-right:1px solid var(--border);
+    padding:28px 14px;flex-direction:column;align-items:stretch;
+    backdrop-filter:none;background:var(--surface-2)
+  }
+  .bottom-nav.show .nav-items{flex-direction:column;max-width:none;gap:4px}
+  .bottom-nav.show .nav-item{flex-direction:row;justify-content:flex-start;gap:12px;padding:11px 14px;border-radius:var(--radius-lg)}
+  .bottom-nav.show .nav-item:hover{background:var(--surface-3)}
+  .bottom-nav.show .nav-item.active{background:var(--gold-100)}
+  .bottom-nav.show .nav-item-icon{font-size:19px}
+  .bottom-nav.show .nav-item.active .nav-item-icon{transform:none}
+  .bottom-nav.show .nav-item-label{font-size:13px;font-weight:600;text-transform:none;letter-spacing:0}
+
+  body:has(.bottom-nav.show) .page-wrap{margin-left:232px;padding-bottom:32px}
+  .page-wrap{max-width:920px;padding:28px 32px 40px}
+}
+
+/* ===== SCROLLBAR ===== */
+
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--gold-200);border-radius:var(--radius-full)}
+
+/* ===== ANIMATIONS ===== */
+
+@keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.animate-in{animation:fadeInUp .3s ease forwards}
+
+/* ===== COMPLETE YOUR PROFILE SCREEN — DARK OVERRIDE =====
+   Scoped to #screen-createaccount only (the post-signup "Complete your
+   profile" step, shown via showScreen('createaccount') in auth.js).
+   Reuses the same dark palette as the existing Dark Mode toggle in
+   Profile, so this screen matches it visually. Nothing outside this
+   screen is affected. */
+
+#screen-createaccount{--surface:#000;--surface-2:#000;--surface-3:#000;--ink:#fff;--ink-2:#fff;--ink-3:#fff;--ink-4:#a6a6a6;--border:#2b2b2b;--border-2:#3d3d3d;--red:#f0645f;background:#000!important}
+
+#screen-createaccount h1,#screen-createaccount h2,#screen-createaccount h3,#screen-createaccount p,#screen-createaccount label,#screen-createaccount .input-label,#screen-createaccount .section-label{color:#fff!important}
+
+#screen-createaccount .text-muted{color:#a6a6a6!important}
+
+#screen-createaccount .input-field{background:#1a1a1a!important;color:#fff!important;border-color:#3d3d3d!important}
+
+#screen-createaccount .input-field::placeholder{color:#888!important}
+
+#screen-createaccount select.input-field{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23ffffff' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")!important}
+
+#screen-createaccount [onclick*="cancelCreateAccount"]{color:#ccc!important}
