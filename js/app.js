@@ -3,7 +3,7 @@ import { handleAuthedSession } from './auth.js';
 import { renderRanking } from './leaderboard.js';
 import { goBack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
-import { getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
+import { checkExpiredAttemptOnRender, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
 import { _hasStoredSupabaseSession, _showReconnecting, db, getSessionWithRetry, sb } from './supabase.js';
 import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, ICON_X_CIRCLE, _debounce, attemptBadgeHtml, attemptLineHtml, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
@@ -160,7 +160,7 @@ window.selectYear = selectYear;
 function changeYear() {
   const current = window.currentUser?.year_of_study;
   if (current) {
-    showConfirm(`You're currently set to <strong>${current}</strong>. Change your year? Your stats and history will stay, only your active year changes.`, () => loadYearScreen(), 'Change Year', false);
+    showConfirm(`You're currently set to <strong>${current}</strong>. Switching years locks you out of ${current}'s modules and practice tests — you'd only be able to browse them, not attempt or review, same as any other year that isn't your own. You'll effectively start fresh in the new year, like a brand new student. This can't be easily undone. Continue?`, () => loadYearScreen(), 'Change Year', true);
   } else {
     loadYearScreen();
   }
@@ -423,6 +423,7 @@ window._animateHeaderStats = _animateHeaderStats;
 
 
 export async function renderHome() {
+  checkExpiredAttemptOnRender();
   const wrap = document.getElementById('homePageWrap');
   wrap.innerHTML = `
     <div class="skel-card"><div class="skeleton" style="height:140px;margin-bottom:0"></div></div>
@@ -709,7 +710,13 @@ async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, from
 
   // Whole-module practice tests (admin-curated, e.g. "Head & Neck Practice Test 1") —
   // tapping opens openModuleTestGroup() below, which lists them with Review/Attempt.
-  const moduleTestsHtml = `
+  // This count is specifically whole-module tests (subject_id IS NULL) — most
+  // modules only have subject-scoped tests (shown per-subject below instead),
+  // so showing "0 tests" here for every such module read as a broken/missing
+  // count rather than what it actually is: correctly zero of this one
+  // specific kind. Hidden entirely when there are none, same as the banner
+  // subtitle below.
+  const moduleTestsHtml = moduleTestCount > 0 ? `
     <div class="list-item" onclick="openModuleTestGroup(${moduleId},'${moduleName.replace(/'/g,"\\'")}')">
       <div class="list-item-left">
         <div class="list-item-icon">${ICON_TARGET}</div>
@@ -719,7 +726,7 @@ async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, from
         </div>
       </div>
       <span style="color:var(--ink-4)">›</span>
-    </div>`;
+    </div>` : '';
 
   const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
@@ -729,7 +736,7 @@ async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, from
       <img src="${iconUrl || 'https://placehold.co/72x72/ffffff/c9980a?text=📚'}" style="width:72px;height:72px;border-radius:var(--radius-lg);object-fit:cover;background:rgba(255,255,255,.15)" onerror="this.src='https://placehold.co/72x72/ffffff/c9980a?text=📚'">
       <div>
         <h2>${moduleName}</h2>
-        <p>${subjects.length} subject${subjects.length === 1 ? '' : 's'} · ${moduleTestCount} practice test${moduleTestCount === 1 ? '' : 's'}</p>
+        <p>${subjects.length} subject${subjects.length === 1 ? '' : 's'}${moduleTestCount > 0 ? ` · ${moduleTestCount} practice test${moduleTestCount === 1 ? '' : 's'}` : ''}</p>
       </div>
     </div>
 
@@ -913,8 +920,11 @@ function _resumeRowHtml(saved, idField, idValue) {
   if (!saved || idValue == null || saved[idField] !== idValue) return null;
   const answered = (saved.answers || []).filter(a => a !== null).length;
   const total = (saved.questions || []).length;
-  const label = saved.mode === 'browse' ? '📖 Resume Review' : (saved.mode === 'practice' ? '📝 Resume Practice' : '⏳ Resume Test');
-  return `<button class="btn btn-primary btn-sm" style="flex:1;background:linear-gradient(105deg,#0d7a4f,#22c55e)" onclick="checkResumableTest()">${label} · ${answered}/${total}</button>`;
+  const label = saved.mode === 'browse' ? 'Resume Review' : (saved.mode === 'practice' ? 'Resume Practice' : 'Resume Test');
+  return `<div style="width:100%">
+    <div class="text-xs fw-700" style="color:var(--gold-700);margin-bottom:6px">⏸ Paused — ${answered}/${total} answered</div>
+    <button class="btn btn-primary btn-sm" style="width:100%;background:linear-gradient(105deg,#0d7a4f,#22c55e)" onclick="checkResumableTest()">▶ ${label}</button>
+  </div>`;
 }
 
 
@@ -1463,15 +1473,24 @@ async function checkNewNotifications() {
   // of window._appNotifs (badge count, bell modal) respects the window
   // automatically, with no separate cleanup step required client-side.
   const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  const [{ data: notifs }, { data: announces }] = await Promise.all([
+  const [{ data: notifs }, { data: announces }, { data: replies }] = await Promise.all([
     db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Notif load failed'),
-    db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce load failed')
+    db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce load failed'),
+    // A student's own report/feedback getting a reply is personal, not a
+    // broadcast — scoped to user_email, so it only ever shows for the
+    // student who filed it, unlike app_notifications/announcements above.
+    db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at').eq('user_email', window.currentUser.email).eq('status', 'replied').gte('replied_at', cutoff).order('replied_at', { ascending: false }).limit(20), 'Reply notif load failed')
   ]);
   const dismissed = _getDismissedNotifIds();
   const myYearForFilter = await _getMyYear();
   const merged = [
     ...(notifs || []).map(n => ({ ...n, _source: 'notif' })),
-    ...(announces || []).map(a => ({ ...a, _source: 'announce' }))
+    ...(announces || []).map(a => ({ ...a, _source: 'announce' })),
+    ...(replies || []).map(r => ({
+      id: r.id, _source: 'report_reply', created_at: r.replied_at,
+      title: '📬 Your report got a reply',
+      body: (r.admin_reply || '').substring(0, 140) + ((r.admin_reply || '').length > 140 ? '…' : '')
+    }))
   ]
     .filter(n =>
       (!n.target_college || n.target_college === window.currentUser.college) &&
@@ -1513,16 +1532,18 @@ function openNotificationBell(isRerender) {
       </div>
       ${notifs.length ? notifs.map(n => {
         const isUnread = new Date(n.created_at).getTime() > lastSeen;
-        const icon = n._source === 'announce' ? (n.emoji || '📢') : '🔔';
+        const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'report_reply' ? '📬' : '🔔');
+        const isReportReply = n._source === 'report_reply';
         return `
-        <div class="card" style="margin-bottom:8px;position:relative;${isUnread ? 'border-color:var(--gold-500)' : ''}">
+        <div class="card" style="margin-bottom:8px;position:relative;${isUnread ? 'border-color:var(--gold-500)' : ''}${isReportReply ? ';cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openMyReports()"` : ''}>
           ${isUnread ? '<span style="position:absolute;top:10px;left:-4px;width:8px;height:8px;background:var(--gold-500);border-radius:50%"></span>' : ''}
           <div class="flex-between" style="align-items:flex-start">
             <div style="min-width:0;flex:1">
               <div class="fw-700 text-sm">${icon} ${esc(n.title)}</div>
               ${n.body ? `<div class="text-sm" style="margin-top:2px">${esc(n.body)}</div>` : ''}
+              ${isReportReply ? `<div class="text-xs" style="color:var(--gold-700);margin-top:4px">Tap to view in My Reports →</div>` : ''}
             </div>
-            <button onclick="dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:15px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:2px 0 0 8px">🗑</button>
+            <button onclick="event.stopPropagation();dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:15px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:2px 0 0 8px">🗑</button>
           </div>
           ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
           <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}</div>
@@ -1847,36 +1868,20 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key === 'l') { e.preventDefault(); adminShowTab('analytics'); }
 });
 
-const manifestData = {
-  name: "LUMHSian",
-  short_name: "LUMHSian",
-  description: "AI-powered MBBS QBank for medical students",
-  start_url: "/",
-  display: "standalone",
-  background_color: "#c9980a",
-  theme_color: "#ffffff",
-  icons: [
-    { src: "https://placehold.co/192x192/c9980a/ffffff?text=L", sizes: "192x192", type: "image/png" },
-    { src: "https://placehold.co/512x512/c9980a/ffffff?text=L", sizes: "512x512", type: "image/png" }
-  ]
-};
-
-
-const manifestBlob = new Blob([JSON.stringify(manifestData)], { type: 'application/json' });
-
-
-const manifestUrl = URL.createObjectURL(manifestBlob);
-
-
+// A real, static, network-fetchable manifest.json (see the file delivered
+// alongside this one) — NOT built as a Blob. A blob: URL only exists inside
+// this one browser tab's memory, so while it's good enough for the browser
+// to read in-page (which is why the install prompt/banner below still shows
+// up), Chrome's actual Android install flow needs to hand the manifest +
+// icons to Google's own WebAPK-signing service to build a real standalone
+// app — and that service can't fetch a blob: URL at all, since it isn't a
+// real network resource. The install silently fell back to a plain
+// bookmark shortcut instead, which is exactly why it opened in ordinary
+// Chrome instead of launching standalone. manifest.json must be uploaded to
+// the site's root (same folder as index.html/sw.js) for this to resolve.
 const manifestLink = document.createElement('link');
-
-
 manifestLink.rel = 'manifest';
-
-
-manifestLink.href = manifestUrl;
-
-
+manifestLink.href = '/manifest.json';
 document.head.appendChild(manifestLink);
 
 

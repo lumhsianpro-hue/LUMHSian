@@ -2,7 +2,7 @@ import { timeAgo } from './admin.js';
 import { APP_VERSION, _isStandalone, getRankInfo, getSetting, getUserStats, isAIEnabled, renderHome } from './app.js';
 import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
-import { getResumableSnapshot } from './quiz.js';
+import { checkExpiredAttemptOnRender, getResumableSnapshot } from './quiz.js';
 import { db, sb } from './supabase.js';
 import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, renderAvatar, renderMd, showConfirm, showToast, skeletonList } from './utils.js';
 
@@ -460,6 +460,7 @@ window.showTermsPage = showTermsPage;
 
 
 export async function renderProfile() {
+  checkExpiredAttemptOnRender();
   const wrap = document.getElementById('profilePageWrap');
   wrap.innerHTML = `${skeletonList(4)}`;
   const stats = await getUserStats();

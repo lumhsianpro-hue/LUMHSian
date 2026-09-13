@@ -153,6 +153,33 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
 
 
 async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
+  // If a DIFFERENT session is already paused, jumping straight into this one
+  // would otherwise silently wipe it out a few lines down (clearPersistedTest()
+  // inside _startTestNow) with no warning at all. Asking first makes starting
+  // a different test/paper while one is paused a deliberate choice, not an
+  // accident that quietly costs unsaved progress. The SAME test/paper being
+  // resumed (e.g. via the "Resume" button rendered on its own card, which
+  // calls checkResumableTest() instead of this function) never reaches this
+  // check at all.
+  const existing = getResumableSnapshot();
+  const isSameSession = existing && (
+    (testId && existing.testId === testId) ||
+    (paperId && existing.paperId === paperId) ||
+    (!testId && !paperId && !existing.testId && !existing.paperId && existing.moduleId === moduleId && existing.mode === mode)
+  );
+  if (existing && !isSameSession) {
+    const name = existing.testTitle || existing.paperTitle || existing.moduleName || 'a test';
+    const verb = existing.mode === 'browse' ? 'review' : (existing.mode === 'practice' ? 'practice session' : 'test');
+    showConfirm(`You have an unfinished ${verb} paused for "${esc(name)}". Starting this instead will discard that progress. Continue anyway?`, () => _startTestNow(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle), 'Start New Instead', true);
+    return;
+  }
+  _startTestNow(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle);
+}
+window.startTest = startTest;
+
+
+
+async function _startTestNow(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
   // Remember where the student tapped in from (e.g. a module's paper list) so
   // finishing or exiting the test can return them there instead of always
   // dropping them back at Home.
@@ -221,7 +248,6 @@ async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTi
   renderTestScreen();
   showScreen('test');
 }
-window.startTest = startTest;
 
 
 
@@ -294,6 +320,32 @@ export function getResumableSnapshot() {
   return saved;
 }
 window.getResumableSnapshot = getResumableSnapshot;
+
+
+
+// Called at the top of renderHome() and renderProfile() — catches a timed
+// Attempt whose clock ran out while the student was off doing something else
+// in the app (never actually closed/reopened it, so auth.js's boot-time check
+// never ran). Without this, getResumableSnapshot() above just quietly stops
+// returning it once expired — hiding the Resume badges correctly, but never
+// actually submitting it, so those answers would never get counted at all.
+// This submits it for real (via the same time's-up flow used at boot) and
+// clears the persisted copy, so it disappears from Home/Profile/every test
+// card AND still counts as a real, scored attempt.
+export function checkExpiredAttemptOnRender() {
+  if (window.activeTest) return; // already mid-session somewhere — nothing to reconcile
+  const raw = localStorage.getItem(RESUME_KEY);
+  if (!raw) return;
+  let saved;
+  try { saved = JSON.parse(raw); } catch { return; }
+  if (!saved || saved.submitted || saved.mode !== 'attempt' || !saved.timeLimit) return;
+  const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
+  if (elapsed < saved.timeLimit) return;
+  clearPersistedTest();
+  window.activeTest = { ...saved, bookmarked: new Set(saved.bookmarked || []), timerInterval: null, submitted: false };
+  _showTimeExpiredResult();
+}
+window.checkExpiredAttemptOnRender = checkExpiredAttemptOnRender;
 
 
 
