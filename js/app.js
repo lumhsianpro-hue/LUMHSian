@@ -3,7 +3,7 @@ import { handleAuthedSession } from './auth.js';
 import { renderRanking } from './leaderboard.js';
 import { goBack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
-import { checkExpiredAttemptOnRender, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
+import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
 import { _hasStoredSupabaseSession, _showReconnecting, db, getSessionWithRetry, sb } from './supabase.js';
 import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, ICON_X_CIRCLE, _debounce, attemptBadgeHtml, attemptLineHtml, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
@@ -131,8 +131,9 @@ export async function loadYearScreen() {
 
 
 
-function selectYear(id, name) {
+async function selectYear(id, name) {
   const isChange = !!window.selectedYear && window.selectedYear.id !== id;
+  const oldYearName = window.selectedYear?.name;
   window.selectedYear = { id, name };
   localStorage.setItem('lum_year', JSON.stringify(window.selectedYear));
   if (window.currentUser) {
@@ -145,11 +146,49 @@ function selectYear(id, name) {
     // previewed as.
     db(sb.from('users').update({ year_of_study: name }).eq('email', window.currentUser.email), 'Year update failed');
   }
+
+  // A genuine year change (not just picking a year for the very first time)
+  // resets this student's visible progress to zero — matching the warning
+  // shown in changeYear() below ("you'll start over like a new student").
+  // The old numbers are archived first rather than dropped outright, as a
+  // safety net (support requests, or switching back later) — written in a
+  // SEPARATE call from the zero-reset itself, and allowed to fail quietly if
+  // the archived_years column hasn't been migrated in yet (see the note near
+  // the schema block further down this file), so a missing column there can
+  // never block the actual reset the student is waiting on.
+  if (isChange && window.currentUser) {
+    showLoading(true, 'Setting up your new year...');
+    try {
+      const stats = await getUserStats(true);
+      db(sb.from('user_stats').update({
+        archived_years: { ...(stats.archived_years || {}), [oldYearName || 'previous']: {
+          archived_at: new Date().toISOString(), total_tests: stats.total_tests, total_questions: stats.total_questions,
+          total_correct: stats.total_correct, best_score: stats.best_score, streak: stats.streak, history: stats.history,
+          subject_stats: stats.subject_stats, paper_stats: stats.paper_stats, test_stats: stats.test_stats,
+          completed_attempt_tests: stats.completed_attempt_tests
+        } }
+      }).eq('email', window.currentUser.email)).then(({ error }) => {
+        if (error) console.warn('archived_years not saved — run the migration in Supabase SQL Editor (see SQL reference section). The reset itself still went through.', error);
+      });
+      await saveUserStats({
+        total_tests: 0, total_questions: 0, total_correct: 0, best_score: 0,
+        streak: 0, last_practice_date: null, history: [],
+        subject_stats: {}, paper_stats: {}, test_stats: {}, completed_attempt_tests: 0
+      });
+      // A test paused under the OLD year no longer makes sense once switching
+      // years — clear it so it can't be silently resumed into a module that
+      // isn't "this year" for the student anymore.
+      clearPersistedTest();
+    } finally {
+      showLoading(false);
+    }
+  }
+
   // Invalidate stats cache so home shows fresh data
   window._lastStatsFetchedAt = 0;
   renderHome();
   showScreen('home');
-  if (isChange) showToast(`✅ Year changed to ${name}`);
+  if (isChange) showToast(`✅ Year changed to ${name} — starting fresh`);
 }
 window.selectYear = selectYear;
 
@@ -206,19 +245,19 @@ export async function getRankInfo() {
 // ==================== HOME / DASHBOARD ====================
 // Shared module-card HTML builder — used by both the Home teaser and the
 // dedicated Modules tab so they always render identically.
-function buildModuleCardHtml(m, qCount, mAcc, yearId, yearName) {
+function buildModuleCardHtml(m, subjectCount, mAcc, yearId, yearName) {
   const safeYearName = escJs(yearName||'');
-  // Deliberately no question-count shown at module level (or subject level,
-  // see openModule() below) — a total that mixes every test/paper in the
-  // module isn't meaningful to a student and reads as confusing clutter.
-  // Only an individual test or paper (what they're about to actually start)
-  // shows its own count, further down the navigation.
+  // A module the student hasn't started yet shows how many subjects it has
+  // instead of a bare "Not started" with no other information on the card.
+  const subLine = mAcc !== null && mAcc !== undefined
+    ? `${mAcc}% accuracy`
+    : `${subjectCount} subject${subjectCount === 1 ? '' : 's'}`;
   return `
     <div class="module-card" onclick="openModule(${m.id},'${escJs(m.name)}','${escJs(m.icon_url||'')}','${escJs(m.color||'')}',${yearId||'null'},'${safeYearName}')">
-      <img class="module-thumb" src="${esc(m.icon_url) || 'https://placehold.co/72x72/fdf3c0/c9980a?text=📚'}" onerror="this.src='https://placehold.co/72x72/fdf3c0/c9980a?text=📚'">
+      <img class="module-thumb" src="${esc(m.icon_url) || 'https://placehold.co/96x96/fdf3c0/c9980a?text=📚'}" onerror="this.src='https://placehold.co/96x96/fdf3c0/c9980a?text=📚'">
       <div class="module-info">
         <div class="module-title">${esc(m.name)}</div>
-        <div class="module-sub">${mAcc !== null && mAcc !== undefined ? `${mAcc}% accuracy` : 'Not started'}</div>
+        <div class="module-sub">${subLine}</div>
         ${mAcc !== null && mAcc !== undefined ? `<div class="progress-track" style="margin-top:6px;height:4px"><div class="progress-fill" style="width:${mAcc}%"></div></div>` : ''}
       </div>
       <span style="color:var(--ink-4);font-size:18px">›</span>
@@ -268,15 +307,30 @@ export async function getQuestionCountsBy(column, ids) {
 }
 
 
-async function getQuestionCountsForModules(moduleIds) {
+// Powers the "X subjects" line shown on a not-yet-started module's card, in
+// place of a bare "Not started" with no other information on it.
+// Same pattern as getQuestionCountsBy above, but against practice_tests
+// grouped by subject — powers the "X tests" line shown on a not-yet-started
+// subject's row, in place of a bare "Not started".
+async function getTestCountsBySubject(subjectIds) {
+  const counts = {};
+  for (const id of subjectIds) counts[id] = 0;
+  if (!subjectIds.length) return counts;
+  const results = await Promise.all(subjectIds.map(id =>
+    sb.from('practice_tests').select('id', { count: 'exact', head: true }).eq('subject_id', id).eq('is_active', true)
+  ));
+  subjectIds.forEach((id, i) => { counts[id] = results[i]?.count || 0; });
+  return counts;
+}
+
+
+
+async function getSubjectCountsForModules(moduleIds) {
   const counts = {};
   for (const id of moduleIds) counts[id] = 0;
   if (!moduleIds.length) return counts;
-  // See getQuestionCountsBy above — same fix, same reason (head:true exact
-  // count per id can't be truncated by PostgREST's default 1000-row cap the
-  // way fetching every matching row and counting client-side could).
   const results = await Promise.all(moduleIds.map(id =>
-    sb.from('questions').select('id', { count: 'exact', head: true }).eq('module_id', id).is('paper_id', null)
+    sb.from('subjects').select('id', { count: 'exact', head: true }).eq('module_id', id)
   ));
   moduleIds.forEach((id, i) => { counts[id] = results[i]?.count || 0; });
   return counts;
@@ -357,7 +411,7 @@ export async function renderModulesScreen() {
           // We don't know module ids yet, fetch after
         ]);
         const ordered = (yearModules||[]).map(ym => modules?.find(m => m.id===ym.module_id)).filter(Boolean);
-        const qCounts = await getQuestionCountsForModules(ordered.map(m => m.id));
+        const qCounts = await getSubjectCountsForModules(ordered.map(m => m.id));
         ordered.forEach((m,i) => {
           const mSt = stats.subject_stats?.[m.id] || {};
           const mAcc = mSt.total ? Math.round((mSt.correct/mSt.total)*100) : null;
@@ -422,6 +476,20 @@ window._animateHeaderStats = _animateHeaderStats;
 
 
 
+// Jumps straight into the Donations page from Home's banner — deliberately
+// does NOT go through navGo('profile')/renderProfile() first. renderProfile()
+// is async and un-awaited there, so calling showDonationPage() right after it
+// could occasionally lose the race and get silently overwritten once that
+// render finished. Switching the screen directly and skipping the normal
+// profile render entirely sidesteps that.
+function goToDonationPage() {
+  showScreen('profile', true);
+  showDonationPage();
+}
+window.goToDonationPage = goToDonationPage;
+
+
+
 export async function renderHome() {
   checkExpiredAttemptOnRender();
   const wrap = document.getElementById('homePageWrap');
@@ -467,7 +535,7 @@ export async function renderHome() {
     if (moduleIds.length) {
       const { data: modules } = await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules error');
       const ordered = (yearModules || []).map(ym => modules?.find(m => m.id === ym.module_id)).filter(Boolean).slice(0, 3);
-      const counts = await getQuestionCountsForModules(ordered.map(m => m.id));
+      const counts = await getSubjectCountsForModules(ordered.map(m => m.id));
       ordered.forEach((m,i) => {
         const mSt = stats.subject_stats?.[m.id] || {};
         const mAcc = mSt.total ? Math.round((mSt.correct/mSt.total)*100) : null;
@@ -476,25 +544,6 @@ export async function renderHome() {
     }
   }
   if (!myYearModuleHtml) myYearModuleHtml = `<div class="card"><p>${myYearName ? `No modules for ${myYearName} yet.` : 'Set your year in Profile to see your modules here.'}</p></div>`;
-
-  // Other years collapsible
-  let allYearsHtml = '';
-  for (const y of (years||[])) {
-    if (y.name === myYearName) continue;
-    const active = y.is_active;
-    allYearsHtml += `
-      <div class="card" style="margin-bottom:8px;padding:0;overflow:hidden">
-        <div style="padding:14px 16px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="${active ? `toggleYearSection(${y.id})` : `showToast('${(y.coming_soon_text||'Coming soon').replace(/'/g,"\\'")}')` }">
-          <span style="font-size:20px">${active ? ICON_BOOK : ICON_LOCK}</span>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:14px">${y.name}</div>
-            <div style="font-size:11px;color:var(--ink-4)">${active ? 'Tap to browse modules' : (y.coming_soon_text||'Coming soon')}</div>
-          </div>
-          ${active ? `<span id="yearChevron${y.id}" style="color:var(--ink-4)">▾</span>` : ''}
-        </div>
-        <div id="yearSection${y.id}" style="display:none;padding:0 12px 12px"></div>
-      </div>`;
-  }
 
   const acc = stats.total_questions ? Math.round((stats.total_correct/stats.total_questions)*100) : 0;
   const greeting = (() => { const h=new Date().getHours(); if(h<12) return '🌅 Good morning'; if(h<17) return '☀️ Good afternoon'; return '🌙 Good evening'; })();
@@ -591,19 +640,15 @@ export async function renderHome() {
       <div class="flex-between mt-2"><span class="text-xs text-muted">Best score: ${stats.best_score||0}%</span><button class="btn btn-ghost btn-sm" style="padding:4px 10px" onclick="navGo('stats')">Full stats →</button></div>
     </div>
 
-    ${donation ? `
-    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px;padding:12px 14px">
+    ${donation && getSetting('donation_enabled','false') === 'true' ? `
+    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer" onclick="goToDonationPage()">
       ${donation.image_url ? `<img src="${esc(donation.image_url)}" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:26px;flex-shrink:0">💛</span>`}
       <div style="min-width:0;flex:1">
         <div class="text-sm fw-700">${esc(donation.title)}</div>
         ${donation.description ? `<div class="text-xs text-muted" style="margin-top:1px">${esc(donation.description)}</div>` : ''}
       </div>
-      ${donation.donation_link ? `<a href="${esc(donation.donation_link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="flex-shrink:0;white-space:nowrap;padding:7px 14px">Support Us</a>` : ''}
+      <span class="btn btn-secondary btn-sm" style="flex-shrink:0;white-space:nowrap;padding:7px 14px;pointer-events:none">Support Us</span>
     </div>` : ''}
-
-    <div class="section-label">Browse Other Years</div>
-    <div style="font-size:11px;color:var(--ink-4);margin:-4px 0 10px">You can explore any year's content. To attempt or review, your profile year must match.</div>
-    ${allYearsHtml || '<div class="card"><p>No other years configured yet.</p></div>'}
     <div style="height:16px"></div>`;
 
   _animateHeaderStats();
@@ -618,27 +663,6 @@ window.renderHome = renderHome;
 
 
 // Expand/collapse a year section on Home to show its modules
-async function toggleYearSection(yearId) {
-  const section = document.getElementById('yearSection'+yearId);
-  const chevron = document.getElementById('yearChevron'+yearId);
-  if (!section) return;
-  const isOpen = section.style.display !== 'none';
-  section.style.display = isOpen ? 'none' : 'block';
-  if (chevron) chevron.textContent = isOpen ? '▾' : '▴';
-  if (isOpen || section.dataset.loaded === 'true') return;
-
-  section.innerHTML = '<div class="spinner" style="margin:16px auto"></div>';
-  const { data: yearRow } = await db(sb.from('years').select('name').eq('id', yearId).maybeSingle(), 'Year error');
-  const { data: yearModules } = await db(sb.from('year_modules').select('module_id,display_order').eq('year_id', yearId).order('display_order'), 'YM error');
-  const moduleIds = (yearModules||[]).map(ym => ym.module_id);
-  if (!moduleIds.length) { section.innerHTML = '<div style="font-size:12px;color:var(--ink-4);padding:8px 0">No modules added yet.</div>'; section.dataset.loaded='true'; return; }
-  const { data: modules } = await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules error');
-  const ordered = (yearModules||[]).map(ym => modules?.find(m => m.id===ym.module_id)).filter(Boolean);
-  const counts = await getQuestionCountsForModules(ordered.map(m => m.id));
-  section.innerHTML = ordered.map(m => buildModuleCardHtml(m, counts[m.id]||0, null, yearId, yearRow?.name||'')).join('');
-  section.dataset.loaded = 'true';
-}
-window.toggleYearSection = toggleYearSection;
 
 
 
@@ -687,21 +711,21 @@ async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, from
   const isOwnYear = _isYearContentUnlocked(fromYearName);
   window._currentModuleYearName = fromYearName || window.currentUser?.year_of_study || null;
 
-  // Batch fetch subject counts — one request total instead of one per subject
-  const subCounts = await getQuestionCountsBy('subject_id', subjects.map(s => s.id));
+  // Batch fetch test counts per subject — one request total instead of one per subject
+  const subTestCounts = await getTestCountsBySubject(subjects.map(s => s.id));
 
   let subjectHtml = '';
   for (const s of subjects) {
-    const sCount = subCounts[s.id];
     const sStats = stats.subject_stats?.[`${moduleId}_${s.id}`] || {};
     const sAcc = sStats.total ? Math.round((sStats.correct / sStats.total) * 100) : null;
+    const sTestCount = subTestCounts[s.id] || 0;
     subjectHtml += `
       <div class="list-item" onclick="openSubjectTestGroup(${moduleId},'${moduleName.replace(/'/g,"\\'")}',${s.id},'${s.name.replace(/'/g,"\\'")}')">
         <div class="list-item-left">
           <div class="list-item-icon">${ICON_BOOK}</div>
           <div style="min-width:0">
             <div class="list-item-title">${s.name}</div>
-            <div class="list-item-sub">${sAcc !== null ? `${sAcc}% last accuracy` : 'Not started'}</div>
+            <div class="list-item-sub">${sAcc !== null ? `${sAcc}% last accuracy` : `${sTestCount} test${sTestCount === 1 ? '' : 's'}`}</div>
           </div>
         </div>
         <span style="color:var(--ink-4)">›</span>
@@ -1132,10 +1156,11 @@ async function openCustomTestBuilder() {
   }
   const { data: yearModules } = await db(sb.from('year_modules').select('module_id').eq('year_id', myYear.id), 'Modules error');
   const moduleIds = (yearModules || []).map(ym => ym.module_id);
-  const { data: modules } = moduleIds.length
-    ? await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules fetch error')
-    : { data: [] };
-  const { data: savedTests } = await db(sb.from('custom_tests').select('*').eq('user_email', window.currentUser.email).order('created_at', { ascending: false }), 'Saved tests error');
+  const [{ data: modules }, { data: papers }, { data: savedTests }] = await Promise.all([
+    moduleIds.length ? db(sb.from('modules').select('*').in('id', moduleIds), 'Modules fetch error') : Promise.resolve({ data: [] }),
+    db(sb.from('past_papers').select('id,title').eq('is_active', true).eq('year_id', myYear.id).order('display_order'), 'Past papers error'),
+    db(sb.from('custom_tests').select('*').eq('user_email', window.currentUser.email).order('created_at', { ascending: false }), 'Saved tests error')
+  ]);
   showLoading(false);
 
   const overlay = document.createElement('div');
@@ -1147,14 +1172,14 @@ async function openCustomTestBuilder() {
         <span class="fw-700">🛠️ Build Your Own Test</span>
         <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
       </div>
-      <p class="text-xs text-muted mb-3">Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your stats or the leaderboard.</p>
+      <p class="text-xs text-muted mb-3">Mix and match — pick any combination of modules, past papers, and practice tests below. Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your stats or the leaderboard.</p>
 
       ${savedTests?.length ? `
       <div class="card" style="margin-bottom:14px">
         <div class="fw-700 mb-2 text-sm">📁 My Saved Tests</div>
         ${savedTests.map(t => `
           <div class="flex-between" style="padding:6px 0">
-            <div class="text-sm">${t.name} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
+            <div class="text-sm">${esc(t.name)} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
             <div style="display:flex;gap:4px">
               <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id})">▶ Start</button>
               <button class="btn btn-ghost btn-xs" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
@@ -1162,25 +1187,48 @@ async function openCustomTestBuilder() {
           </div>`).join('')}
       </div>` : ''}
 
-      <div class="fw-700 mb-2 text-sm">1. Pick Module(s)</div>
-      <div id="ctbModules" style="margin-bottom:14px">
-        ${(modules||[]).length ? (modules||[]).map(m => `
-          <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-            <input type="checkbox" class="ctb-module" value="${m.id}" data-name="${m.name.replace(/"/g,'&quot;')}" onchange="ctbModulesChanged()">
-            <span class="text-sm">${m.name}</span>
-          </label>`).join('') : '<p class="text-xs text-muted">No modules are set up for your year yet. Ask your admin to add some first.</p>'}
+      <div class="tab-bar" id="ctbSourceTabs" style="margin-bottom:14px">
+        <button class="tab-btn active" onclick="ctbShowSource('modules')">📚 Modules</button>
+        <button class="tab-btn" onclick="ctbShowSource('papers')">📜 Past Papers</button>
+        <button class="tab-btn" onclick="ctbShowSource('tests')">🎯 Practice Tests</button>
       </div>
 
-      <div class="fw-700 mb-2 text-sm">2. Pick Subject(s) <span class="text-xs text-muted">(optional, leave blank for all)</span></div>
-      <div id="ctbSubjects" style="margin-bottom:14px"><p class="text-xs text-muted">Select a module first</p></div>
+      <div id="ctbSrcModules">
+        <div class="fw-700 mb-2 text-sm">Modules</div>
+        <div id="ctbModules" style="margin-bottom:10px">
+          ${(modules||[]).length ? (modules||[]).map(m => `
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
+              <input type="checkbox" class="ctb-module" value="${m.id}" data-name="${m.name.replace(/"/g,'&quot;')}" onchange="ctbModulesChanged()">
+              <span class="text-sm">${esc(m.name)}</span>
+            </label>`).join('') : '<p class="text-xs text-muted">No modules are set up for your year yet. Ask your admin to add some first.</p>'}
+        </div>
+        <div class="fw-700 mb-2 text-sm">Subject(s) <span class="text-xs text-muted fw-400">(optional, leave blank for all)</span></div>
+        <div id="ctbSubjects" style="margin-bottom:6px"><p class="text-xs text-muted">Select a module first</p></div>
+      </div>
 
-      <div class="fw-700 mb-2 text-sm">3. Test Settings</div>
+      <div id="ctbSrcPapers" style="display:none">
+        <div class="fw-700 mb-2 text-sm">Past Papers</div>
+        <div style="margin-bottom:6px">
+          ${(papers||[]).length ? (papers||[]).map(p => `
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
+              <input type="checkbox" class="ctb-paper" value="${p.id}">
+              <span class="text-sm">${esc(p.title)}</span>
+            </label>`).join('') : '<p class="text-xs text-muted">No past papers added for your year yet.</p>'}
+        </div>
+      </div>
+
+      <div id="ctbSrcTests" style="display:none">
+        <div class="fw-700 mb-2 text-sm">Practice Tests</div>
+        <div id="ctbTests" style="margin-bottom:6px"><p class="text-xs text-muted">Pick a module in the Modules tab first — its practice tests will show up here.</p></div>
+      </div>
+
+      <div class="fw-700 mb-2 text-sm mt-2">Test Settings</div>
       <label class="input-label">Number of Questions</label>
       <input id="ctb_count" type="number" class="input-field" value="20" min="5" max="200">
       <label class="input-label">Timer (minutes, 0 for no timer)</label>
       <input id="ctb_timer" type="number" class="input-field" value="30" min="0" max="240">
       <label class="input-label">Save this test as (optional)</label>
-      <input id="ctb_name" class="input-field" placeholder="e.g. My Anatomy + Physio Mix">
+      <input id="ctb_name" class="input-field" placeholder="e.g. My Anatomy + Past Paper Mix">
 
       <div class="btn-row mt-3">
         <button class="btn btn-secondary" onclick="buildCustomTest(true)">💾 Save Only</button>
@@ -1193,20 +1241,45 @@ window.openCustomTestBuilder = openCustomTestBuilder;
 
 
 
+function ctbShowSource(which) {
+  document.querySelectorAll('#ctbSourceTabs .tab-btn').forEach((b,i) => b.classList.toggle('active', ['modules','papers','tests'][i] === which));
+  document.getElementById('ctbSrcModules').style.display = which === 'modules' ? '' : 'none';
+  document.getElementById('ctbSrcPapers').style.display = which === 'papers' ? '' : 'none';
+  document.getElementById('ctbSrcTests').style.display = which === 'tests' ? '' : 'none';
+}
+window.ctbShowSource = ctbShowSource;
+
+
+
 async function ctbModulesChanged() {
   const checked = [...document.querySelectorAll('.ctb-module:checked')];
   const subWrap = document.getElementById('ctbSubjects');
-  if (!checked.length) { subWrap.innerHTML = '<p class="text-xs text-muted">Select a module first</p>'; return; }
+  const testWrap = document.getElementById('ctbTests');
+  if (!checked.length) {
+    subWrap.innerHTML = '<p class="text-xs text-muted">Select a module first</p>';
+    testWrap.innerHTML = '<p class="text-xs text-muted">Pick a module in the Modules tab first — its practice tests will show up here.</p>';
+    return;
+  }
   const moduleIds = checked.map(c => c.value);
-  const { data: subs } = await db(sb.from('subjects').select('id,name,module_id').in('module_id', moduleIds).order('display_order'), 'Subjects error');
-  if (!subs?.length) { subWrap.innerHTML = '<p class="text-xs text-muted">No subjects defined. All questions in the module(s) will be used.</p>'; return; }
   const moduleNameMap = {};
   checked.forEach(c => moduleNameMap[c.value] = c.dataset.name);
-  subWrap.innerHTML = subs.map(s => `
+
+  const [{ data: subs }, { data: tests }] = await Promise.all([
+    db(sb.from('subjects').select('id,name,module_id').in('module_id', moduleIds).order('display_order'), 'Subjects error'),
+    db(sb.from('practice_tests').select('id,title,module_id').in('module_id', moduleIds).eq('is_active', true).order('display_order'), 'Tests error')
+  ]);
+
+  subWrap.innerHTML = subs?.length ? subs.map(s => `
     <label style="display:flex;align-items:center;gap:8px;padding:5px 0">
       <input type="checkbox" class="ctb-subject" value="${s.id}">
-      <span class="text-sm">${s.name} <span class="text-xs text-muted">(${moduleNameMap[s.module_id]||''})</span></span>
-    </label>`).join('');
+      <span class="text-sm">${esc(s.name)} <span class="text-xs text-muted">(${esc(moduleNameMap[s.module_id]||'')})</span></span>
+    </label>`).join('') : '<p class="text-xs text-muted">No subjects defined. All questions in the module(s) will be used.</p>';
+
+  testWrap.innerHTML = tests?.length ? tests.map(t => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0">
+      <input type="checkbox" class="ctb-test" value="${t.id}">
+      <span class="text-sm">${esc(t.title)} <span class="text-xs text-muted">(${esc(moduleNameMap[t.module_id]||'')})</span></span>
+    </label>`).join('') : '<p class="text-xs text-muted">No practice tests in the selected module(s) yet.</p>';
 }
 window.ctbModulesChanged = ctbModulesChanged;
 
@@ -1215,21 +1288,24 @@ window.ctbModulesChanged = ctbModulesChanged;
 async function buildCustomTest(saveOnly) {
   const moduleIds = [...document.querySelectorAll('.ctb-module:checked')].map(c => parseInt(c.value));
   const subjectIds = [...document.querySelectorAll('.ctb-subject:checked')].map(c => parseInt(c.value));
+  const paperIds = [...document.querySelectorAll('.ctb-paper:checked')].map(c => parseInt(c.value));
+  const testIds = [...document.querySelectorAll('.ctb-test:checked')].map(c => parseInt(c.value));
   const count = parseInt(document.getElementById('ctb_count').value) || 20;
   const timer = parseInt(document.getElementById('ctb_timer').value) || 0;
   const name = document.getElementById('ctb_name').value.trim() || `Custom Test ${new Date().toLocaleDateString()}`;
-  if (!moduleIds.length) return showToast('Please select at least one module');
+  if (!moduleIds.length && !paperIds.length && !testIds.length) return showToast('Pick at least one module, past paper, or practice test');
 
   if (saveOnly || document.getElementById('ctb_name').value.trim()) {
-    await db(sb.from('custom_tests').insert({
+    const { error } = await db(sb.from('custom_tests').insert({
       user_email: window.currentUser.email, name, module_ids: moduleIds, subject_ids: subjectIds,
-      question_count: count, time_limit_minutes: timer
+      paper_ids: paperIds, test_ids: testIds, question_count: count, time_limit_minutes: timer
     }), 'Save failed');
+    if (error) return; // db() already showed the specific error (e.g. paper_ids/test_ids not migrated yet — see schema note)
     showToast('Test saved ✓');
     if (saveOnly) { document.getElementById('ctbOverlay')?.remove(); return; }
   }
   document.getElementById('ctbOverlay')?.remove();
-  startCustomTest(moduleIds, subjectIds, count, timer, name);
+  startCustomTest(moduleIds, subjectIds, count, timer, name, paperIds, testIds);
 }
 window.buildCustomTest = buildCustomTest;
 
@@ -1239,7 +1315,7 @@ async function startSavedCustomTest(id) {
   const { data: t } = await db(sb.from('custom_tests').select('*').eq('id', id).single(), 'Load failed');
   if (!t) return;
   document.getElementById('ctbOverlay')?.remove();
-  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name);
+  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name, t.paper_ids || [], t.test_ids || []);
 }
 window.startSavedCustomTest = startSavedCustomTest;
 
@@ -1511,7 +1587,8 @@ async function checkNewNotifications() {
 
 
 
-function openNotificationBell(isRerender) {
+function openNotificationBell(isRerender, filter) {
+  filter = filter || 'all';
   const notifs = window._appNotifs || [];
   const lastSeen = parseInt(localStorage.getItem('last_seen_notif_time') || '0');
   if (!isRerender) {
@@ -1521,34 +1598,70 @@ function openNotificationBell(isRerender) {
   } else {
     document.getElementById('notifBellOverlay')?.remove();
   }
+
+  const unreadCount = notifs.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
+  const visible = filter === 'unread' ? notifs.filter(n => new Date(n.created_at).getTime() > lastSeen) : notifs;
+
+  // A per-type accent (left border + icon chip color) instead of every card
+  // looking identical regardless of what kind of notification it is.
+  const typeMeta = {
+    announce: { color: 'var(--gold-500)', bg: 'var(--gold-50)' },
+    report_reply: { color: '#0d7a4f', bg: '#e8f8f0' },
+    notif: { color: '#6d5bd0', bg: '#efecfc' }
+  };
+
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const today = visible.filter(n => new Date(n.created_at).getTime() >= todayStart.getTime());
+  const earlier = visible.filter(n => new Date(n.created_at).getTime() < todayStart.getTime());
+
+  const cardHtml = (n) => {
+    const isUnread = new Date(n.created_at).getTime() > lastSeen;
+    const meta = typeMeta[n._source] || typeMeta.notif;
+    const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'report_reply' ? '📬' : '🔔');
+    const isReportReply = n._source === 'report_reply';
+    return `
+      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${isUnread ? meta.bg : 'var(--surface)'};border:1px solid ${isUnread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openMyReports()"` : ''}>
+        <div style="width:34px;height:34px;border-radius:50%;background:${meta.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;border:1px solid ${meta.color}33">${icon}</div>
+        <div style="min-width:0;flex:1">
+          <div class="flex-between" style="align-items:flex-start;gap:6px">
+            <div class="fw-700 text-sm" style="min-width:0">${esc(n.title)}</div>
+            <button onclick="event.stopPropagation();dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:14px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:0">🗑</button>
+          </div>
+          ${n.body ? `<div class="text-sm" style="margin-top:2px;color:var(--ink-3)">${esc(n.body)}</div>` : ''}
+          ${isReportReply ? `<div class="text-xs fw-600" style="color:${meta.color};margin-top:5px">Tap to view in My Reports →</div>` : ''}
+          ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
+          <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}${isUnread ? ' · <span style="color:'+meta.color+';font-weight:700">NEW</span>' : ''}</div>
+        </div>
+      </div>`;
+  };
+
   const overlay = document.createElement('div');
   overlay.id = 'notifBellOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:420px;max-height:80vh;overflow-y:auto">
-      <div class="flex-between mb-3">
-        <span class="fw-700">🔔 Notifications</span>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
-      </div>
-      ${notifs.length ? notifs.map(n => {
-        const isUnread = new Date(n.created_at).getTime() > lastSeen;
-        const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'report_reply' ? '📬' : '🔔');
-        const isReportReply = n._source === 'report_reply';
-        return `
-        <div class="card" style="margin-bottom:8px;position:relative;${isUnread ? 'border-color:var(--gold-500)' : ''}${isReportReply ? ';cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openMyReports()"` : ''}>
-          ${isUnread ? '<span style="position:absolute;top:10px;left:-4px;width:8px;height:8px;background:var(--gold-500);border-radius:50%"></span>' : ''}
-          <div class="flex-between" style="align-items:flex-start">
-            <div style="min-width:0;flex:1">
-              <div class="fw-700 text-sm">${icon} ${esc(n.title)}</div>
-              ${n.body ? `<div class="text-sm" style="margin-top:2px">${esc(n.body)}</div>` : ''}
-              ${isReportReply ? `<div class="text-xs" style="color:var(--gold-700);margin-top:4px">Tap to view in My Reports →</div>` : ''}
-            </div>
-            <button onclick="event.stopPropagation();dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:15px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:2px 0 0 8px">🗑</button>
+    <div style="background:var(--surface);border-radius:var(--radius-xl);width:100%;max-width:420px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:16px 18px 12px;border-bottom:1px solid var(--border)">
+        <div class="flex-between mb-2">
+          <span class="fw-700" style="font-size:16px;font-family:var(--font-display)">🔔 Notifications</span>
+          <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink-4)">✕</button>
+        </div>
+        <div class="flex-between">
+          <div class="tab-bar" style="margin:0;flex:1">
+            <button class="tab-btn ${filter==='all'?'active':''}" onclick="openNotificationBell(true,'all')">All (${notifs.length})</button>
+            <button class="tab-btn ${filter==='unread'?'active':''}" onclick="openNotificationBell(true,'unread')">Unread (${unreadCount})</button>
           </div>
-          ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
-          <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}</div>
-        </div>`;
-      }).join('') : '<p class="text-sm text-muted text-center">No notifications yet.</p>'}
+        </div>
+      </div>
+      <div style="padding:14px 18px 18px;overflow-y:auto">
+        ${visible.length ? `
+          ${today.length ? `<div class="text-xs fw-700 text-muted mb-2" style="text-transform:uppercase;letter-spacing:.5px">Today</div>${today.map(cardHtml).join('')}` : ''}
+          ${earlier.length ? `<div class="text-xs fw-700 text-muted mb-2" style="text-transform:uppercase;letter-spacing:.5px;margin-top:${today.length?'12px':'0'}">Earlier</div>${earlier.map(cardHtml).join('')}` : ''}
+        ` : `
+          <div style="text-align:center;padding:32px 0">
+            <div style="font-size:36px;margin-bottom:8px">🔕</div>
+            <p class="text-sm text-muted">${filter==='unread' ? "You're all caught up." : 'No notifications yet.'}</p>
+          </div>`}
+      </div>
     </div>`;
   document.body.appendChild(overlay);
 }
@@ -2225,6 +2338,22 @@ CREATE TABLE IF NOT EXISTS user_stats (
 -- database that already exists:
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS paper_stats JSONB DEFAULT '{}';
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS test_stats JSONB DEFAULT '{}';
+
+-- MIGRATION (safe to re-run): switching years now resets a student's visible
+-- stats to zero (see selectYear() in this file) rather than just locking the
+-- old year's content by name-mismatch. The old numbers are archived into this
+-- column first rather than being dropped outright. Written in a separate call
+-- from the reset itself, so a missing column here only loses the archive, not
+-- the reset the student is actually waiting on — but run this once against
+-- the real database for the archive to actually work:
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS archived_years JSONB DEFAULT '{}';
+
+-- MIGRATION (safe to re-run): Build Your Own Test can now also pull from past
+-- papers and specific practice tests, not just whole modules/subjects (see
+-- startCustomTest() in quiz.js and openCustomTestBuilder() in this file).
+-- Saving a custom test with either of those selected needs these two columns:
+ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS paper_ids INTEGER[] DEFAULT '{}';
+ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS test_ids INTEGER[] DEFAULT '{}';
 
 -- MIGRATION (safe to re-run, run once in Supabase SQL Editor): leaderboard
 -- eligibility now requires fully completing at least one timed Attempt test
