@@ -111,12 +111,31 @@ export function _showResumeDialog(saved, elapsed) {
 
 
 
-export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name) {
+export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds) {
   showLoading(true, 'Building your test...');
-  let query = sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('module_id', moduleIds);
-  if (subjectIds?.length) query = query.in('subject_id', subjectIds);
-  const { data: qs } = await db(query, 'Failed to load questions');
-  if (!qs?.length) { showLoading(false); showToast('No questions found for this selection.'); return; }
+  const queries = [];
+  if (moduleIds?.length) {
+    let q = sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('module_id', moduleIds);
+    if (subjectIds?.length) q = q.in('subject_id', subjectIds);
+    queries.push(db(q, 'Failed to load questions'));
+  }
+  if (paperIds?.length) {
+    queries.push(db(sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('paper_id', paperIds), 'Failed to load paper questions'));
+  }
+  if (testIds?.length) {
+    queries.push(db(sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('practice_test_id', testIds), 'Failed to load test questions'));
+  }
+  const results = await Promise.all(queries);
+  // Pooled from every selected source, then deduplicated by id — the same
+  // question could otherwise appear twice if it happens to belong to both a
+  // selected module AND a selected practice test within it.
+  const seen = new Set();
+  const qs = [];
+  for (const r of results) for (const q of (r.data || [])) {
+    if (seen.has(q.id)) continue;
+    seen.add(q.id); qs.push(q);
+  }
+  if (!qs.length) { showLoading(false); showToast('No questions found for this selection.'); return; }
 
   const shuffled = shuffleArray([...qs]).slice(0, count);
   const mapped = shuffled.map(q => ({
@@ -165,7 +184,7 @@ async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTi
   const isSameSession = existing && (
     (testId && existing.testId === testId) ||
     (paperId && existing.paperId === paperId) ||
-    (!testId && !paperId && !existing.testId && !existing.paperId && existing.moduleId === moduleId && existing.mode === mode)
+    (!testId && !paperId && !existing.testId && !existing.paperId && existing.moduleId === moduleId && existing.subjectId === subjectId && existing.mode === mode)
   );
   if (existing && !isSameSession) {
     const name = existing.testTitle || existing.paperTitle || existing.moduleName || 'a test';
@@ -1336,11 +1355,25 @@ async function quickViewQuestion(id) {
   ]);
   showLoading(false);
   if (!q) return;
-  window._qvState = { question: q, bookmarked: !!existingBm, explanationShown: false };
+  window._qvState = { question: q, bookmarked: !!existingBm, explanationShown: false, userAnswer: null };
   renderQuickView();
   showScreen('review');
 }
 window.quickViewQuestion = quickViewQuestion;
+
+
+
+// Tapping an option here works exactly like Practice/Review mode's
+// selectOption() — neutral until tapped, then reveals correct/wrong — just
+// against Quick View's own standalone state instead of an active test.
+function selectQuickViewOption(idx) {
+  const st = window._qvState;
+  if (!st || st.userAnswer !== null) return; // already answered — locked, same as Practice/Review
+  st.userAnswer = idx;
+  playSound(idx === st.question.correct_answer ? 'correct' : 'wrong');
+  renderQuickView();
+}
+window.selectQuickViewOption = selectQuickViewOption;
 
 
 
@@ -1353,11 +1386,21 @@ export function renderQuickView() {
   const imgHtml = q.image_url ? `<img src="${esc(q.image_url)}" style="max-width:100%;border-radius:var(--radius-lg);margin-top:10px" onerror="this.style.display='none'">` : '';
   const expImgHtml = q.explanation_image_url ? `<img src="${esc(q.explanation_image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:10px" onerror="this.style.display='none'">` : '';
 
-  const optHtml = opts.map((opt, idx) => `
-    <button class="opt-btn ${idx === q.correct_answer ? 'correct' : ''}" disabled>
+  // Neutral and clickable until the student actually taps one themselves —
+  // nothing pre-ticked, same as a real attempt.
+  const answered = st.userAnswer !== null;
+  const optHtml = opts.map((opt, idx) => {
+    let cls = 'opt-btn';
+    let icon = '';
+    if (answered) {
+      if (idx === q.correct_answer) { cls += ' correct'; icon = '✓ '; }
+      else if (idx === st.userAnswer) { cls += ' wrong'; icon = '✗ '; }
+    }
+    return `<button class="${cls}" onclick="selectQuickViewOption(${idx})" ${answered ? 'disabled' : ''}>
       <span class="opt-letter">${letters[idx]}</span>
-      <span>${esc(opt)}</span>
-    </button>`).join('');
+      <span>${icon}${esc(opt)}</span>
+    </button>`;
+  }).join('');
 
   document.getElementById('reviewPageWrap').innerHTML = `
     <button class="back-btn" onclick="closeQuickView()">← Back to Search</button>
