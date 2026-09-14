@@ -1188,8 +1188,15 @@ async function adminEditModule(id) {
       <input id="_em_name" class="input-field" value="${esc(m.name)}">
       <label class="input-label">Description</label>
       <textarea id="_em_desc" class="input-field" rows="2" placeholder="Brief description" style="resize:vertical">${esc(m.description||'')}</textarea>
-      <label class="input-label">Image URL</label>
-      <input id="_em_img" class="input-field" placeholder="Image URL" value="${esc(m.icon_url||'')}">
+      <label class="input-label">Module Image</label>
+      <div class="upload-area" onclick="document.getElementById('_em_img_file').click()">
+        <div style="font-size:32px">📸</div>
+        <div class="text-sm mt-1">Click to upload &amp; crop a new image</div>
+        <div class="text-xs text-muted">PNG, JPG, WebP</div>
+      </div>
+      <input type="file" id="_em_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('_em_img_file','_em_img','_em_preview')">
+      <img id="_em_preview" src="${esc(m.icon_url||'')}" style="${m.icon_url ? '' : 'display:none;'}max-width:100%;border-radius:var(--radius-lg);margin-top:8px">
+      <input id="_em_img" class="input-field" placeholder="Image URL (auto-filled after upload, or paste one directly)" value="${esc(m.icon_url||'')}" style="margin-top:8px">
       <label class="input-label">Accent Color</label>
       <input id="_em_color" type="color" class="input-field" title="Accent color" aria-label="Accent color" value="${m.color||'#c9980a'}" style="height:44px;padding:4px 12px">
       <label class="input-label">Category</label>
@@ -4610,7 +4617,7 @@ async function adminMonetization(token = window._adminRenderToken) {
       <hr class="divider">
       <div class="fw-700 mb-2">➕ Create Campaign</div>
       <label class="input-label">Title</label>
-      <input id="dn_title" class="input-field" placeholder="e.g., Help Keep LUMHSian Pro Free">
+      <input id="dn_title" class="input-field" placeholder="e.g., Help Keep LUMHSian Free">
       <label class="input-label">Description</label>
       <textarea id="dn_desc" class="input-field" rows="2" placeholder="Short, honest explanation of why you're asking"></textarea>
       <label class="input-label">Purpose (optional)</label>
