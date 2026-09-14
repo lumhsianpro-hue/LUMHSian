@@ -150,6 +150,7 @@ export async function checkRankCelebration() {
 function showRankCelebration(rank) {
   playAchievementSound();
   const overlay = document.createElement('div');
+  overlay.id = 'rankCelebrationOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,20,.85);z-index:10005;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(8px);animation:fadeInUp .3s ease-out';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:32px 24px;width:100%;max-width:380px;text-align:center">
@@ -159,8 +160,8 @@ function showRankCelebration(rank) {
       <div style="height:1px;background:var(--border);margin:20px 0"></div>
       <div style="font-size:13px;color:var(--ink-3);margin-bottom:14px">Would you like other students to see your name, or stay anonymous?</div>
       <div class="btn-row" style="justify-content:center">
-        <button class="btn btn-primary" style="flex:1" onclick="setLeaderboardVisibility(true,this)">Show My Name</button>
-        <button class="btn btn-secondary" style="flex:1" onclick="setLeaderboardVisibility(false,this)">Stay Anonymous</button>
+        <button class="btn btn-primary" style="flex:1" onclick="setLeaderboardVisibility(true)">Show My Name</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="setLeaderboardVisibility(false)">Stay Anonymous</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -168,10 +169,11 @@ function showRankCelebration(rank) {
 
 
 
-async function setLeaderboardVisibility(val, btnEl) {
-  await db(sb.from('users').update({ show_on_leaderboard: val }).eq('email', window.currentUser.email), 'Privacy save failed');
+async function setLeaderboardVisibility(val) {
+  const { error } = await db(sb.from('users').update({ show_on_leaderboard: val }).eq('email', window.currentUser.email), 'Privacy save failed');
+  if (error) return; // db() already showed the specific error — leave the dialog open so they can retry
   window.currentUser.show_on_leaderboard = val;
-  btnEl.closest('[style*="position:fixed"]').remove();
+  document.getElementById('rankCelebrationOverlay')?.remove();
   showToast(val ? '👁️ Your name is now visible on the leaderboard' : '🎭 You\'ll stay anonymous on the leaderboard');
 }
 window.setLeaderboardVisibility = setLeaderboardVisibility;
