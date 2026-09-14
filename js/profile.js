@@ -9,35 +9,56 @@ import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, 
 
 
 // ==================== AI TUTOR ====================
-function openDonateModal() {
+// Proper dedicated page (not a small popup) — combines whatever campaign
+// banner the admin has set up (donation_campaigns, e.g. a specific fundraiser
+// with its own title/description/image/link) with the standing payment
+// details (JazzCash/Easypaisa/bank), same pattern as showSubscriptionPlans().
+// Its Profile menu entry is gated by donation_enabled (see renderProfile
+// below) — turning that off makes this page disappear from Profile entirely,
+// same as payment_enabled does for the Subscriptions page.
+async function showDonationPage() {
+  showLoading(true, 'Loading...');
+  const { data: campaigns } = await db(sb.from('donation_campaigns').select('*').eq('is_active', true).order('created_at', { ascending: false }), 'Donation error');
+  showLoading(false);
   const jazzcash = getSetting('donation_jazzcash','');
   const easypaisa = getSetting('donation_easypaisa','');
   const bank = getSetting('donation_bank','');
   const message = getSetting('donation_message','Help us keep this app free and growing for every student. Any contribution helps!');
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+
   const row = (label, value, icon) => value ? `
     <div class="card" style="margin-bottom:10px;padding:14px">
       <div class="text-xs text-muted mb-1">${icon} ${label}</div>
       <div class="flex-between">
-        <div class="fw-700">${value}</div>
-        <button class="btn btn-secondary btn-xs" onclick="navigator.clipboard?.writeText('${value.replace(/'/g,"\\'")}');showToast('Copied ✓')">📋 Copy</button>
+        <div class="fw-700">${esc(value)}</div>
+        <button class="btn btn-secondary btn-xs" onclick="navigator.clipboard?.writeText('${escJs(value)}');showToast('Copied ✓')">📋 Copy</button>
       </div>
     </div>` : '';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto">
-      <div style="font-size:40px;text-align:center;margin-bottom:8px">💛</div>
-      <div class="fw-700 text-center mb-2" style="font-size:17px">Support LUMHSian</div>
-      <p class="text-sm text-muted text-center mb-3">${message}</p>
-      ${row('JazzCash', jazzcash, '📱')}
-      ${row('Easypaisa', easypaisa, '📱')}
-      ${row('Bank Account', bank, '🏦')}
-      ${!jazzcash && !easypaisa && !bank ? '<p class="text-sm text-muted text-center">Payment details coming soon.</p>' : ''}
-      <button class="btn btn-ghost mt-2" style="width:100%" onclick="this.closest('[style*=fixed]').remove()">Close</button>
-    </div>`;
-  document.body.appendChild(overlay);
+
+  const campaignHtml = (campaigns||[]).map(c => `
+    <div class="card" style="margin-bottom:14px;overflow:hidden;padding:0">
+      ${c.image_url ? `<img src="${esc(c.image_url)}" style="width:100%;max-height:160px;object-fit:cover">` : ''}
+      <div style="padding:14px">
+        <div class="fw-700" style="font-size:16px">${esc(c.title)}</div>
+        ${c.description ? `<p class="text-sm text-muted" style="margin-top:4px">${esc(c.description)}</p>` : ''}
+        ${c.donation_link ? `<a href="${esc(c.donation_link)}" target="_blank" rel="noopener" class="btn btn-primary mt-2" style="width:100%">Support This Campaign</a>` : ''}
+      </div>
+    </div>`).join('');
+
+  const wrap = document.getElementById('profilePageWrap');
+  wrap.innerHTML = `
+    <button class="back-btn" onclick="renderProfile()">← Back</button>
+    <div class="card-teal" style="margin-bottom:16px;text-align:center">
+      <div style="font-size:36px;margin-bottom:4px">💛</div>
+      <h2>Support LUMHSian</h2>
+      <p>${esc(message)}</p>
+    </div>
+    ${campaignHtml}
+    ${row('JazzCash', jazzcash, '📱')}
+    ${row('Easypaisa', easypaisa, '📱')}
+    ${row('Bank Account', bank, '🏦')}
+    ${!campaigns?.length && !jazzcash && !easypaisa && !bank ? '<div class="card text-center"><p class="text-muted">Payment details coming soon.</p></div>' : ''}`;
 }
-window.openDonateModal = openDonateModal;
+window.showDonationPage = showDonationPage;
 
 
 
@@ -594,7 +615,7 @@ export async function renderProfile() {
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
     ${getSetting('donation_enabled','false') === 'true' ? `
-    <div class="list-item" onclick="openDonateModal()">
+    <div class="list-item" onclick="showDonationPage()">
       <div class="list-item-left"><div class="list-item-icon">💛</div><div><div class="list-item-title">Support Us</div><div class="list-item-sub">Help keep this app free</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
