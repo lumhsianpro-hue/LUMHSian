@@ -111,7 +111,7 @@ export function _showResumeDialog(saved, elapsed) {
 
 
 
-export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode) {
+export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId) {
   mode = mode === 'browse' ? 'browse' : 'attempt';
   showLoading(true, 'Building your test...');
   const queries = [];
@@ -161,7 +161,7 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
     questions: mapped, answers: new Array(mapped.length).fill(null),
     explanationShown: new Array(mapped.length).fill(false),
     bookmarked,
-    currentIndex: 0, mode, isCustom: true, moduleId: moduleIds[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
+    currentIndex: 0, mode, isCustom: true, customTestId: customTestId || null, moduleId: moduleIds[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
     startTime: Date.now(), timeLimit: mode === 'attempt' && timerMinutes > 0 ? timerMinutes * 60 : null,
     timerInterval: null, submitted: false
   };
