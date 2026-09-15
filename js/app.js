@@ -199,7 +199,7 @@ window.selectYear = selectYear;
 function changeYear() {
   const current = window.currentUser?.year_of_study;
   if (current) {
-    showConfirm(`You're currently set to <strong>${current}</strong>. Switching years locks you out of ${current}'s modules and practice tests — you'd only be able to browse them, not attempt or review, same as any other year that isn't your own. You'll effectively start fresh in the new year, like a brand new student. This can't be easily undone. Continue?`, () => loadYearScreen(), 'Change Year', true);
+    showConfirm(`You're currently set to <strong>${current}</strong>. Switching years locks you out of ${current}'s modules and practice tests entirely, and resets your stats to zero — you'll effectively start fresh in the new year, like a brand new student. This can't be easily undone. Continue?`, () => loadYearScreen(), 'Change Year', true);
   } else {
     loadYearScreen();
   }
@@ -364,19 +364,6 @@ function _fetchAnnouncementsCached() {
 }
 
 
-// Unlike announcements/notifications, a donation campaign has no auto-expiry
-// filter here — it's meant to stay visible until admin explicitly pauses or
-// deletes it (is_active does the filtering, nothing time-based).
-function _fetchDonationCached() {
-  const cached = cacheGet('donation', 180000);
-  if (cached) return Promise.resolve({ data: cached });
-  return db(sb.from('donation_campaigns').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1), 'Donation error').then(r => {
-    if (r.data) cacheSet('donation', r.data);
-    return r;
-  });
-}
-
-
 
 // ==================== DEDICATED MODULES TAB ====================
 export async function renderModulesScreen() {
@@ -476,20 +463,6 @@ window._animateHeaderStats = _animateHeaderStats;
 
 
 
-// Jumps straight into the Donations page from Home's banner — deliberately
-// does NOT go through navGo('profile')/renderProfile() first. renderProfile()
-// is async and un-awaited there, so calling showDonationPage() right after it
-// could occasionally lose the race and get silently overwritten once that
-// render finished. Switching the screen directly and skipping the normal
-// profile render entirely sidesteps that.
-function goToDonationPage() {
-  showScreen('profile', true);
-  showDonationPage();
-}
-window.goToDonationPage = goToDonationPage;
-
-
-
 export async function renderHome() {
   checkExpiredAttemptOnRender();
   const wrap = document.getElementById('homePageWrap');
@@ -504,11 +477,10 @@ export async function renderHome() {
   try {
 
   const myYearName = window.currentUser?.year_of_study || null;
-  const [{ data: years }, stats, annoRes, donoRes] = await Promise.all([
+  const [{ data: years }, stats, annoRes] = await Promise.all([
     _fetchYearsCached(),
     getUserStats(),
-    _fetchAnnouncementsCached(),
-    _fetchDonationCached()
+    _fetchAnnouncementsCached()
   ]);
   // Bug fix: target_college was saved when an announcement was created but
   // never actually checked here, so every "targeted" announcement was shown
@@ -519,7 +491,6 @@ export async function renderHome() {
     (!a.target_college || a.target_college === window.currentUser.college) &&
     (!a.target_year_id || a.target_year_id === myYearForFilter?.id)
   ).slice(0, 3);
-  const donation = (donoRes.data || [])[0] || null;
 
   // My year modules teaser (top 3) — parallel fetch
   const myYear = (years || []).find(y => y.name === myYearName);
@@ -611,8 +582,9 @@ export async function renderHome() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:8px;margin-bottom:16px">
       <div class="quick-tile" onclick="navGo('modules')"><span class="quick-tile-icon">${ICON_BOOK}</span><span class="quick-tile-label">Modules</span></div>
       <div class="quick-tile" onclick="openPastPapersRoot()"><span class="quick-tile-icon">${ICON_BUILDING}</span><span class="quick-tile-label">Past Papers</span></div>
+      <div class="quick-tile" onclick="openCustomTestBuilder()"><span class="quick-tile-icon">🛠️</span><span class="quick-tile-label">Own Test</span></div>
       ${isAIEnabled() ? `<div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">${ICON_ROBOT}</span><span class="quick-tile-label">AI Tutor</span></div>` : ''}
-      <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">${ICON_BOOKMARK}</span><span class="quick-tile-label">Saved</span></div>
+      <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">${ICON_BOOKMARK}</span><span class="quick-tile-label">Bookmark</span></div>
       <div class="quick-tile" onclick="navGo('wrongattempts')"><span class="quick-tile-icon">${ICON_X_CIRCLE}</span><span class="quick-tile-label">Wrong</span></div>
       <div class="quick-tile" onclick="navGo('planner')"><span class="quick-tile-icon">${ICON_CALENDAR}</span><span class="quick-tile-label">Planner</span></div>
     </div>
@@ -639,16 +611,6 @@ export async function renderHome() {
       <div class="progress-track"><div class="progress-fill" style="width:${acc}%"></div></div>
       <div class="flex-between mt-2"><span class="text-xs text-muted">Best score: ${stats.best_score||0}%</span><button class="btn btn-ghost btn-sm" style="padding:4px 10px" onclick="navGo('stats')">Full stats →</button></div>
     </div>
-
-    ${donation && getSetting('donation_enabled','false') === 'true' ? `
-    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer" onclick="goToDonationPage()">
-      ${donation.image_url ? `<img src="${esc(donation.image_url)}" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:26px;flex-shrink:0">💛</span>`}
-      <div style="min-width:0;flex:1">
-        <div class="text-sm fw-700">${esc(donation.title)}</div>
-        ${donation.description ? `<div class="text-xs text-muted" style="margin-top:1px">${esc(donation.description)}</div>` : ''}
-      </div>
-      <span class="btn btn-secondary btn-sm" style="flex-shrink:0;white-space:nowrap;padding:7px 14px;pointer-events:none">Support Us</span>
-    </div>` : ''}
     <div style="height:16px"></div>`;
 
   _animateHeaderStats();
@@ -940,15 +902,31 @@ window.filterPastPaperColleges = filterPastPaperColleges;
 // continue right from its own card, not just from the generic bar on Home or
 // the card on Profile. Every other card keeps its normal Review/Attempt row,
 // since only one test can ever be paused/resumable at once.
+// Practice/Attempt: replaces the normal Review/Attempt row entirely with a
+// prominent Resume button on whichever exact card matches the one paused
+// session (see getResumableSnapshot() in quiz.js).
 function _resumeRowHtml(saved, idField, idValue) {
-  if (!saved || idValue == null || saved[idField] !== idValue) return null;
+  if (!saved || idValue == null || saved[idField] !== idValue || saved.mode === 'browse') return null;
   const answered = (saved.answers || []).filter(a => a !== null).length;
   const total = (saved.questions || []).length;
-  const label = saved.mode === 'browse' ? 'Resume Review' : (saved.mode === 'practice' ? 'Resume Practice' : 'Resume Test');
+  const label = saved.mode === 'practice' ? 'Resume Practice' : 'Resume Test';
   return `<div style="width:100%">
     <div class="text-xs fw-700" style="color:var(--gold-700);margin-bottom:6px">⏸ Paused — ${answered}/${total} answered</div>
     <button class="btn btn-primary btn-sm" style="width:100%;background:linear-gradient(105deg,#0d7a4f,#22c55e)" onclick="checkResumableTest()">▶ ${label}</button>
   </div>`;
+}
+
+
+
+// Review: deliberately NOT a replacement — just a small line underneath the
+// normal Review/Attempt buttons, since a paused review should barely
+// intrude. Tapping it opens the usual Continue-from-here vs Start Fresh
+// choice (checkResumableTest()).
+function _pausedReviewNoteHtml(saved, idField, idValue) {
+  if (!saved || saved.mode !== 'browse' || idValue == null || saved[idField] !== idValue) return '';
+  const answered = (saved.answers || []).filter(a => a !== null).length;
+  const total = (saved.questions || []).length;
+  return `<div class="text-xs mt-1" style="color:var(--gold-700);cursor:pointer" onclick="checkResumableTest()">⏸ Review paused here (${answered}/${total}) — tap to continue or start fresh</div>`;
 }
 
 
@@ -995,6 +973,7 @@ async function openPastPaperCollege(collegeKey) {
           <button class="btn btn-secondary btn-sm" onclick="startTest('browse',null,'${escJs(p.title)}',null,${p.id},'${escJs(p.title)}')">👁 Review</button>
           <button class="btn btn-primary btn-sm" onclick="startTest('attempt',null,'${escJs(p.title)}',null,${p.id},'${escJs(p.title)}')">📝 Solve</button>`}
         </div>
+        ${_pausedReviewNoteHtml(saved, 'paperId', p.id)}
       </div>`;
   }
 
@@ -1048,6 +1027,7 @@ async function openModuleTestGroup(moduleId, moduleName) {
           <button class="btn btn-secondary btn-sm" onclick="${isOwnYear ? `startTest('browse',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,null,null,${t.id},'${t.title.replace(/'/g,"\\'")}')` : lockedClick}">👁 Review</button>
           <button class="btn btn-primary btn-sm" onclick="${isOwnYear ? `startTest('attempt',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,null,null,${t.id},'${t.title.replace(/'/g,"\\'")}')` : lockedClick}">📝 Attempt</button>`}
         </div>
+        ${isOwnYear ? _pausedReviewNoteHtml(saved, 'testId', t.id) : ''}
       </div>`;
   }
 
@@ -1101,6 +1081,7 @@ async function openSubjectTestGroup(moduleId, moduleName, subjectId, subjectName
           <button class="btn btn-secondary btn-sm" onclick="${isOwnYear ? `startTest('browse',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,null,null,${t.id},'${t.title.replace(/'/g,"\\'")}')` : lockedClick}">👁 Review</button>
           <button class="btn btn-primary btn-sm" onclick="${isOwnYear ? `startTest('attempt',${moduleId},'${moduleName.replace(/'/g,"\\'")}',null,null,null,${t.id},'${t.title.replace(/'/g,"\\'")}')` : lockedClick}">📝 Attempt</button>`}
         </div>
+        ${isOwnYear ? _pausedReviewNoteHtml(saved, 'testId', t.id) : ''}
       </div>`;
   }
 
@@ -1181,7 +1162,8 @@ async function openCustomTestBuilder() {
           <div class="flex-between" style="padding:6px 0">
             <div class="text-sm">${esc(t.name)} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
             <div style="display:flex;gap:4px">
-              <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id})">▶ Start</button>
+              <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id},'browse')">👁 Review</button>
+              <button class="btn btn-primary btn-xs" onclick="startSavedCustomTest(${t.id},'attempt')">📝 Attempt</button>
               <button class="btn btn-ghost btn-xs" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
             </div>
           </div>`).join('')}
@@ -1232,7 +1214,8 @@ async function openCustomTestBuilder() {
 
       <div class="btn-row mt-3">
         <button class="btn btn-secondary" onclick="buildCustomTest(true)">💾 Save Only</button>
-        <button class="btn btn-primary" onclick="buildCustomTest(false)">Start Test</button>
+        <button class="btn btn-secondary" onclick="buildCustomTest(false,'browse')">👁 Start as Review</button>
+        <button class="btn btn-primary" onclick="buildCustomTest(false,'attempt')">📝 Start as Attempt</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -1285,7 +1268,7 @@ window.ctbModulesChanged = ctbModulesChanged;
 
 
 
-async function buildCustomTest(saveOnly) {
+async function buildCustomTest(saveOnly, mode) {
   const moduleIds = [...document.querySelectorAll('.ctb-module:checked')].map(c => parseInt(c.value));
   const subjectIds = [...document.querySelectorAll('.ctb-subject:checked')].map(c => parseInt(c.value));
   const paperIds = [...document.querySelectorAll('.ctb-paper:checked')].map(c => parseInt(c.value));
@@ -1305,17 +1288,17 @@ async function buildCustomTest(saveOnly) {
     if (saveOnly) { document.getElementById('ctbOverlay')?.remove(); return; }
   }
   document.getElementById('ctbOverlay')?.remove();
-  startCustomTest(moduleIds, subjectIds, count, timer, name, paperIds, testIds);
+  startCustomTest(moduleIds, subjectIds, count, timer, name, paperIds, testIds, mode);
 }
 window.buildCustomTest = buildCustomTest;
 
 
 
-async function startSavedCustomTest(id) {
+async function startSavedCustomTest(id, mode) {
   const { data: t } = await db(sb.from('custom_tests').select('*').eq('id', id).single(), 'Load failed');
   if (!t) return;
   document.getElementById('ctbOverlay')?.remove();
-  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name, t.paper_ids || [], t.test_ids || []);
+  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name, t.paper_ids || [], t.test_ids || [], mode);
 }
 window.startSavedCustomTest = startSavedCustomTest;
 
@@ -2354,6 +2337,14 @@ ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS archived_years JSONB DEFAULT '{}
 -- Saving a custom test with either of those selected needs these two columns:
 ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS paper_ids INTEGER[] DEFAULT '{}';
 ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS test_ids INTEGER[] DEFAULT '{}';
+
+-- MIGRATION (safe to re-run): leaderboard ranking now requires at least 100
+-- questions answered in Attempt mode (any mix of practice tests, Build Your
+-- Own Test, or past papers) and ranks by attempt-mode accuracy specifically
+-- — see computeLeaderboardCohort() in leaderboard.js and submitTest() in
+-- quiz.js, which is what writes these two running totals:
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_questions INTEGER DEFAULT 0;
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_correct INTEGER DEFAULT 0;
 
 -- MIGRATION (safe to re-run, run once in Supabase SQL Editor): leaderboard
 -- eligibility now requires fully completing at least one timed Attempt test
