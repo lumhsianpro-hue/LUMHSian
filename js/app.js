@@ -579,7 +579,7 @@ export async function renderHome() {
 
     ${announceHtml}
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:8px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:5px;margin-bottom:16px">
       <div class="quick-tile" onclick="navGo('modules')"><span class="quick-tile-icon">${ICON_BOOK}</span><span class="quick-tile-label">Modules</span></div>
       <div class="quick-tile" onclick="openPastPapersRoot()"><span class="quick-tile-icon">${ICON_BUILDING}</span><span class="quick-tile-label">Past Papers</span></div>
       <div class="quick-tile" onclick="openCustomTestBuilder()"><span class="quick-tile-icon">🛠️</span><span class="quick-tile-label">Own Test</span></div>
@@ -591,11 +591,19 @@ export async function renderHome() {
 
     ${(() => {
       const saved = getResumableSnapshot();
-      if (!saved) return '';
+      // Only a skipped/backgrounded Attempt belongs on this prominent bar,
+      // and only while time genuinely remains — Review and Practice pauses
+      // are intentionally never shown here (or on Profile); they only ever
+      // appear as a small note directly on their own test/paper/saved-test
+      // card (see _pausedReviewNoteHtml below).
+      if (!saved || saved.mode !== 'attempt') return '';
+      const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
+      const remaining = (saved.timeLimit || 0) - elapsed;
+      if (remaining <= 0) return '';
       const name = saved.testTitle || saved.paperTitle || saved.moduleName || 'your test';
-      const verb = saved.mode === 'browse' ? 'Resume Review' : (saved.mode === 'practice' ? 'Resume Practice' : 'Resume Test');
+      const mins = Math.floor(remaining / 60), secs = remaining % 60;
       return `<div id="resumeTestBar" style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
-      <button class="btn btn-secondary btn-sm" style="flex:1;text-align:left" onclick="checkResumableTest()">▶ ${verb}: ${esc(name)}</button>
+      <button class="btn btn-secondary btn-sm" style="flex:1;text-align:left" onclick="checkResumableTest()">▶ Resume: ${esc(name)} (${mins}m ${secs}s left)</button>
       <button class="btn-icon" title="Dismiss" onclick="dismissResumableTest()">✕</button>
     </div>`;
     })()}
@@ -896,37 +904,32 @@ window.filterPastPaperColleges = filterPastPaperColleges;
 
 
 
-// Shows "Resume" in place of the usual Review/Attempt row on whichever exact
-// test/paper card matches the one paused session the app keeps at a time (see
-// getResumableSnapshot() in quiz.js) — so a paused test is easy to spot and
-// continue right from its own card, not just from the generic bar on Home or
-// the card on Profile. Every other card keeps its normal Review/Attempt row,
-// since only one test can ever be paused/resumable at once.
-// Practice/Attempt: replaces the normal Review/Attempt row entirely with a
-// prominent Resume button on whichever exact card matches the one paused
-// session (see getResumableSnapshot() in quiz.js).
+// Attempt only — the one time-sensitive case, so it's the only one that
+// replaces the normal Review/Attempt row with a prominent Resume button, on
+// whichever exact card matches the one paused session the app keeps at a
+// time (see getResumableSnapshot() in quiz.js).
 function _resumeRowHtml(saved, idField, idValue) {
-  if (!saved || idValue == null || saved[idField] !== idValue || saved.mode === 'browse') return null;
+  if (!saved || idValue == null || saved[idField] !== idValue || saved.mode !== 'attempt') return null;
   const answered = (saved.answers || []).filter(a => a !== null).length;
   const total = (saved.questions || []).length;
-  const label = saved.mode === 'practice' ? 'Resume Practice' : 'Resume Test';
   return `<div style="width:100%">
     <div class="text-xs fw-700" style="color:var(--gold-700);margin-bottom:6px">⏸ Paused — ${answered}/${total} answered</div>
-    <button class="btn btn-primary btn-sm" style="width:100%;background:linear-gradient(105deg,#0d7a4f,#22c55e)" onclick="checkResumableTest()">▶ ${label}</button>
+    <button class="btn btn-primary btn-sm" style="width:100%;background:linear-gradient(105deg,#0d7a4f,#22c55e)" onclick="checkResumableTest()">▶ Resume Test</button>
   </div>`;
 }
 
 
 
-// Review: deliberately NOT a replacement — just a small line underneath the
-// normal Review/Attempt buttons, since a paused review should barely
-// intrude. Tapping it opens the usual Continue-from-here vs Start Fresh
-// choice (checkResumableTest()).
+// Review and Practice: neither is time-pressured, so neither should
+// interrupt — just a small line underneath the normal Review/Attempt
+// buttons on whichever exact card is paused. Tapping it still opens the
+// usual Continue-from-here vs Start Fresh choice (checkResumableTest()).
 function _pausedReviewNoteHtml(saved, idField, idValue) {
-  if (!saved || saved.mode !== 'browse' || idValue == null || saved[idField] !== idValue) return '';
+  if (!saved || saved.mode === 'attempt' || idValue == null || saved[idField] !== idValue) return '';
   const answered = (saved.answers || []).filter(a => a !== null).length;
   const total = (saved.questions || []).length;
-  return `<div class="text-xs mt-1" style="color:var(--gold-700);cursor:pointer" onclick="checkResumableTest()">⏸ Review paused here (${answered}/${total}) — tap to continue or start fresh</div>`;
+  const label = saved.mode === 'practice' ? 'Practice' : 'Review';
+  return `<div class="text-xs mt-1" style="color:var(--gold-700);cursor:pointer" onclick="checkResumableTest()">⏸ ${label} paused here (${answered}/${total}) — tap to continue or start fresh</div>`;
 }
 
 
@@ -1142,6 +1145,7 @@ async function openCustomTestBuilder() {
     db(sb.from('past_papers').select('id,title').eq('is_active', true).eq('year_id', myYear.id).order('display_order'), 'Past papers error'),
     db(sb.from('custom_tests').select('*').eq('user_email', window.currentUser.email).order('created_at', { ascending: false }), 'Saved tests error')
   ]);
+  const saved = getResumableSnapshot();
   showLoading(false);
 
   const overlay = document.createElement('div');
@@ -1159,13 +1163,16 @@ async function openCustomTestBuilder() {
       <div class="card" style="margin-bottom:14px">
         <div class="fw-700 mb-2 text-sm">📁 My Saved Tests</div>
         ${savedTests.map(t => `
-          <div class="flex-between" style="padding:6px 0">
-            <div class="text-sm">${esc(t.name)} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id},'browse')">👁 Review</button>
-              <button class="btn btn-primary btn-xs" onclick="startSavedCustomTest(${t.id},'attempt')">📝 Attempt</button>
-              <button class="btn btn-ghost btn-xs" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
+          <div style="padding:6px 0">
+            <div class="flex-between">
+              <div class="text-sm">${esc(t.name)} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
+              <div style="display:flex;gap:4px">
+                <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id},'browse')">👁 Review</button>
+                <button class="btn btn-primary btn-xs" onclick="startSavedCustomTest(${t.id},'attempt')">📝 Attempt</button>
+                <button class="btn btn-ghost btn-xs" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
+              </div>
             </div>
+            ${_pausedReviewNoteHtml(saved, 'customTestId', t.id)}
           </div>`).join('')}
       </div>` : ''}
 
@@ -1213,10 +1220,10 @@ async function openCustomTestBuilder() {
       <input id="ctb_name" class="input-field" placeholder="e.g. My Anatomy + Past Paper Mix">
 
       <div class="btn-row mt-3">
-        <button class="btn btn-secondary" onclick="buildCustomTest(true)">💾 Save Only</button>
         <button class="btn btn-secondary" onclick="buildCustomTest(false,'browse')">👁 Start as Review</button>
         <button class="btn btn-primary" onclick="buildCustomTest(false,'attempt')">📝 Start as Attempt</button>
       </div>
+      <button class="btn btn-ghost btn-sm mt-2" style="width:100%" onclick="buildCustomTest(true)">💾 Save for later (don't start yet)</button>
     </div>`;
   document.body.appendChild(overlay);
 }
@@ -1298,7 +1305,7 @@ async function startSavedCustomTest(id, mode) {
   const { data: t } = await db(sb.from('custom_tests').select('*').eq('id', id).single(), 'Load failed');
   if (!t) return;
   document.getElementById('ctbOverlay')?.remove();
-  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name, t.paper_ids || [], t.test_ids || [], mode);
+  startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name, t.paper_ids || [], t.test_ids || [], mode, t.id);
 }
 window.startSavedCustomTest = startSavedCustomTest;
 
