@@ -520,13 +520,20 @@ export async function renderProfile() {
 
     ${(() => {
       const saved = getResumableSnapshot();
-      if (!saved) return '';
+      // Only a skipped/backgrounded Attempt belongs here, and only while its
+      // timer genuinely still has time left — a paused Review or Practice
+      // session is intentionally never shown on Profile at all; those only
+      // ever appear as a small note directly on their own test's card (see
+      // _resumeRowHtml in app.js).
+      if (!saved || saved.mode !== 'attempt') return '';
+      const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
+      const remaining = (saved.timeLimit || 0) - elapsed;
+      if (remaining <= 0) return '';
       const name = saved.testTitle || saved.paperTitle || saved.moduleName || 'a test';
-      const icon = saved.mode === 'browse' ? '📖' : (saved.mode === 'practice' ? '📝' : '⏳');
-      const label = saved.mode === 'browse' ? 'Unfinished review' : (saved.mode === 'practice' ? 'Unfinished practice' : 'Unfinished test');
+      const mins = Math.floor(remaining / 60), secs = remaining % 60;
       return `
     <div class="card" style="margin-bottom:12px;background:var(--gold-50);border-color:var(--gold-300);display:flex;align-items:center;justify-content:space-between;gap:10px" onclick="checkResumableTest()">
-      <div style="display:flex;align-items:center;gap:10px;min-width:0"><span style="font-size:20px;flex-shrink:0">${icon}</span><div style="min-width:0"><div class="fw-700 text-sm">${label}</div><div class="text-xs text-muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div></div></div>
+      <div style="display:flex;align-items:center;gap:10px;min-width:0"><span style="font-size:20px;flex-shrink:0">⏳</span><div style="min-width:0"><div class="fw-700 text-sm">Unfinished test — ${mins}m ${secs}s left</div><div class="text-xs text-muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div></div></div>
       <button class="btn btn-secondary btn-xs" style="width:auto;flex-shrink:0" onclick="event.stopPropagation();checkResumableTest()">▶ Resume</button>
     </div>`;
     })()}
