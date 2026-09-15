@@ -111,7 +111,8 @@ export function _showResumeDialog(saved, elapsed) {
 
 
 
-export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds) {
+export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode) {
+  mode = mode === 'browse' ? 'browse' : 'attempt';
   showLoading(true, 'Building your test...');
   const queries = [];
   if (moduleIds?.length) {
@@ -145,12 +146,14 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
     subjectId: q.subject_id, moduleId: q.module_id
   }));
 
-  // Build Your Own Test now always behaves like a real Attempt — no instant
-  // per-option feedback, review only at the end — regardless of whether a timer
-  // was set. isCustom is what keeps it OUT of stats/history/leaderboard and
-  // out of Wrong Attempts tracking (both in submitTest()).
-  // The timer itself stays optional: set one and it counts down like a normal
-  // attempt; leave it blank and it's simply untimed.
+  // Build Your Own Test can now start as either a real Attempt (no instant
+  // per-option feedback, review only at the end) or a Review (instant
+  // feedback, browse freely) — same isCustom flag either way, which is what
+  // keeps it OUT of stats/history/leaderboard and Wrong Attempts tracking
+  // (both in submitTest()) regardless of which mode it's started in.
+  // The timer stays optional in Attempt mode: set one and it counts down
+  // like a normal attempt; leave it blank and it's simply untimed. Review
+  // mode never has a timer, same as browsing anywhere else in the app.
   if (window.activeTest?.timerInterval) clearInterval(window.activeTest.timerInterval);
   clearPersistedTest();
   const bookmarked = await loadBookmarkedIndexSet(mapped);
@@ -158,8 +161,8 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
     questions: mapped, answers: new Array(mapped.length).fill(null),
     explanationShown: new Array(mapped.length).fill(false),
     bookmarked,
-    currentIndex: 0, mode: 'attempt', isCustom: true, moduleId: moduleIds[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
-    startTime: Date.now(), timeLimit: timerMinutes > 0 ? timerMinutes * 60 : null,
+    currentIndex: 0, mode, isCustom: true, moduleId: moduleIds[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
+    startTime: Date.now(), timeLimit: mode === 'attempt' && timerMinutes > 0 ? timerMinutes * 60 : null,
     timerInterval: null, submitted: false
   };
   showLoading(false);
@@ -171,34 +174,13 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
 
 
 
+// Starting any test/paper here freely replaces whatever was previously
+// paused (see clearPersistedTest() a few lines down) — deliberately with NO
+// confirmation step in the way. Pausing one review must never create friction
+// against starting a different one; each test/paper's own card independently
+// shows whether IT is the currently-paused one (see _resumeRowHtml in
+// app.js), which is enough — a blocking "are you sure?" here isn't wanted.
 async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
-  // If a DIFFERENT session is already paused, jumping straight into this one
-  // would otherwise silently wipe it out a few lines down (clearPersistedTest()
-  // inside _startTestNow) with no warning at all. Asking first makes starting
-  // a different test/paper while one is paused a deliberate choice, not an
-  // accident that quietly costs unsaved progress. The SAME test/paper being
-  // resumed (e.g. via the "Resume" button rendered on its own card, which
-  // calls checkResumableTest() instead of this function) never reaches this
-  // check at all.
-  const existing = getResumableSnapshot();
-  const isSameSession = existing && (
-    (testId && existing.testId === testId) ||
-    (paperId && existing.paperId === paperId) ||
-    (!testId && !paperId && !existing.testId && !existing.paperId && existing.moduleId === moduleId && existing.subjectId === subjectId && existing.mode === mode)
-  );
-  if (existing && !isSameSession) {
-    const name = existing.testTitle || existing.paperTitle || existing.moduleName || 'a test';
-    const verb = existing.mode === 'browse' ? 'review' : (existing.mode === 'practice' ? 'practice session' : 'test');
-    showConfirm(`You have an unfinished ${verb} paused for "${esc(name)}". Starting this instead will discard that progress. Continue anyway?`, () => _startTestNow(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle), 'Start New Instead', true);
-    return;
-  }
-  _startTestNow(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle);
-}
-window.startTest = startTest;
-
-
-
-async function _startTestNow(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
   // Remember where the student tapped in from (e.g. a module's paper list) so
   // finishing or exiting the test can return them there instead of always
   // dropping them back at Home.
@@ -267,6 +249,7 @@ async function _startTestNow(mode, moduleId, moduleName, subjectId, paperId, pap
   renderTestScreen();
   showScreen('test');
 }
+window.startTest = startTest;
 
 
 
@@ -878,13 +861,17 @@ async function submitTest() {
     stats.total_correct = (stats.total_correct || 0) + correct;
     stats.best_score = Math.max(stats.best_score || 0, percent);
 
-    // Leaderboard eligibility: a student must fully complete (every question
-    // answered, nothing skipped) at least one timed Attempt-mode test — a
-    // partial attempt or an untimed Practice run doesn't count. Tracked as its
-    // own counter rather than scanning history, so checking eligibility for
-    // the whole leaderboard stays a single cheap column read.
-    if (window.activeTest.mode === 'attempt' && skipped === 0) {
-      stats.completed_attempt_tests = (stats.completed_attempt_tests || 0) + 1;
+    // Leaderboard ranking now needs attempt-mode performance specifically —
+    // tracked as its own running total (attempt_questions/attempt_correct)
+    // rather than the old "must fully complete one entire test" rule, so a
+    // partial Attempt (skipped some questions) still contributes toward the
+    // 100-question threshold, cumulative across as many Attempts as it takes.
+    // completed_attempt_tests is kept alongside it (unused for ranking now,
+    // but other code may still read it).
+    if (window.activeTest.mode === 'attempt') {
+      stats.attempt_questions = (stats.attempt_questions || 0) + total;
+      stats.attempt_correct = (stats.attempt_correct || 0) + correct;
+      if (skipped === 0) stats.completed_attempt_tests = (stats.completed_attempt_tests || 0) + 1;
     }
 
     // Module/subject-level stats — computed per-question so this works correctly
@@ -957,6 +944,16 @@ async function submitTest() {
     // Rank celebration — checked last since it depends on the stats upsert
     // above already being committed. Not awaited: it pops in over the results
     // screen a moment later rather than delaying it.
+    checkRankCelebration();
+  } else if (window.activeTest.isCustom && window.activeTest.mode === 'attempt' && attempted > 0) {
+    // Custom (Build Your Own Test) attempts skip every other stat above —
+    // they're not tied to one module/subject for progress-tracking purposes
+    // — but they still count toward the leaderboard's attempt-question total,
+    // same as any other Attempt.
+    const stats = await getUserStats();
+    stats.attempt_questions = (stats.attempt_questions || 0) + total;
+    stats.attempt_correct = (stats.attempt_correct || 0) + correct;
+    await saveUserStats(stats);
     checkRankCelebration();
   }
 
