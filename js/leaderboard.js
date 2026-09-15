@@ -12,12 +12,22 @@ async function computeLeaderboardCohort(year) {
   const { data: users } = await db(query, 'Leaderboard error');
   if (!users) return { combined: [], myRank: 0, me: null };
   const emails = users.map(u => u.email);
-  const { data: stats } = await db(sb.from('user_stats').select('email,total_correct,total_questions,total_tests,best_score,completed_attempt_tests').in('email', emails), 'Stats error');
+  const { data: stats } = await db(sb.from('user_stats').select('email,attempt_correct,attempt_questions,total_tests').in('email', emails), 'Stats error');
+  // Ranking is purely on Attempt-mode performance — practice/review answers
+  // never factor in, since those aren't a single committed, graded pass the
+  // way a real Attempt is. A student needs at least 100 questions answered
+  // in Attempt mode (cumulative — any mix of practice tests, Build Your Own
+  // Test, or past papers, not necessarily from one single test) before they
+  // qualify at all; past that threshold, ranking is by their attempt-mode
+  // accuracy, and every additional Attempt afterward keeps shifting that
+  // accuracy (and so their rank) as it comes in.
+  const MIN_QUESTIONS = 100;
   const combined = users.map(u => {
     const s = stats?.find(ss => ss.email === u.email) || {};
-    const acc = s.total_questions ? Math.round((s.total_correct / s.total_questions) * 100) : 0;
-    return { ...u, acc, total_tests: s.total_tests || 0, best_score: s.best_score || 0, total_questions: s.total_questions || 0, completed_attempt_tests: s.completed_attempt_tests || 0 };
-  }).filter(u => u.completed_attempt_tests > 0 && u.email !== 'lumhsianpro@gmail.com').sort((a, b) => b.acc - a.acc || b.total_questions - a.total_questions);
+    const attemptQ = s.attempt_questions || 0;
+    const acc = attemptQ ? Math.round((s.attempt_correct / attemptQ) * 100) : 0;
+    return { ...u, acc, total_tests: s.total_tests || 0, attempt_questions: attemptQ };
+  }).filter(u => u.attempt_questions >= MIN_QUESTIONS && u.email !== 'lumhsianpro@gmail.com').sort((a, b) => b.acc - a.acc || b.attempt_questions - a.attempt_questions);
   const myRank = combined.findIndex(u => u.email === window.currentUser.email) + 1;
   const me = combined.find(u => u.email === window.currentUser.email);
   return { combined, myRank, me };
@@ -60,7 +70,7 @@ export async function renderRanking() {
       <div style="font-family:var(--font-display);font-size:22px;font-weight:800">Top Rankers</div>
       <div style="font-size:13px;opacity:.7;margin-top:4px">${myYear ? `${myYear} · ` : ''}${combined.length} students · Ranked by accuracy</div>
     </div>
-    <div class="text-xs text-muted" style="text-align:center;margin-bottom:16px;line-height:1.5">🔒 To appear here, fully complete at least one timed Attempt test: every question answered, none skipped.</div>
+    <div class="text-xs text-muted" style="text-align:center;margin-bottom:16px;line-height:1.5">🔒 To appear here, answer at least 100 questions in Attempt mode — any mix of practice tests, Build Your Own Test, or past papers. Ranked by your accuracy on those.</div>
 
     ${me ? `<div style="background:var(--gold-50);border:2px solid var(--gold-400);border-radius:var(--radius-lg);padding:16px;margin-bottom:16px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold-600);margin-bottom:8px">Your Position</div>
@@ -69,7 +79,7 @@ export async function renderRanking() {
           ${renderAvatar(me.name, 40)}
           <div>
             <div class="fw-700">Dr. ${esc(me.name)}</div>
-            <div class="text-xs text-muted">${esc(me.college)||''} · ${me.total_tests} tests</div>
+            <div class="text-xs text-muted">${esc(me.college)||''} · ${me.attempt_questions} questions</div>
           </div>
         </div>
         <div style="text-align:right">
@@ -77,7 +87,7 @@ export async function renderRanking() {
           <div class="text-xs text-muted">Rank #${myRank}</div>
         </div>
       </div>
-    </div>` : myYear ? `<div class="card" style="margin-bottom:16px;text-align:center"><p>Fully complete at least one timed Attempt test (every question, none skipped) to appear on the leaderboard!</p></div>` : `<div class="card" style="margin-bottom:16px;text-align:center"><p>Set your year in Profile to see your ranking among peers.</p></div>`}
+    </div>` : myYear ? `<div class="card" style="margin-bottom:16px;text-align:center"><p>Answer at least 100 questions in Attempt mode (practice tests, Build Your Own Test, or past papers) to appear on the leaderboard!</p></div>` : `<div class="card" style="margin-bottom:16px;text-align:center"><p>Set your year in Profile to see your ranking among peers.</p></div>`}
 
     <div class="section-label">Top 10 · ${myYear || 'All Students'}</div>
     ${top10.map((u, i) => {
@@ -90,11 +100,11 @@ export async function renderRanking() {
         <div style="margin:0 4px">${rankAvatarHtml(u, 36)}</div>
         <div style="flex:1;min-width:0">
           <div class="fw-700 text-sm">${showName ? 'Dr. '+esc(u.name) : 'Anonymous 🎭'}${isMe ? ' · You' : ''}</div>
-          <div class="text-xs text-muted">${showName ? (esc(u.college)||'Unknown College') : '—'} · ${u.total_tests} tests</div>
+          <div class="text-xs text-muted">${esc(u.college)||'Unknown College'} · ${u.attempt_questions} Qs</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div class="fw-700" style="color:var(--gold-700);font-size:18px">${u.acc}%</div>
-          <div class="text-xs text-muted">${u.total_questions} Qs</div>
+          <div class="text-xs text-muted">accuracy</div>
         </div>
       </div>`;
     }).join('')}
