@@ -4495,7 +4495,7 @@ async function adminMonetization(token = window._adminRenderToken) {
     db(sb.from('donation_campaigns').select('*').order('created_at', { ascending: false }), 'Donations error')
   ]);
   const { data: settings } = await db(
-    sb.from('system_settings').select('*').in('key', ['payment_enabled','free_trial_days','currency','payment_gateway','razorpay_key','stripe_key']),
+    sb.from('system_settings').select('*').in('key', ['payment_enabled','free_trial_days','currency','payment_gateway','razorpay_key','stripe_key','donation_enabled','donation_jazzcash','donation_easypaisa','donation_bank','donation_message']),
     'Settings error'
   );
   const getSetting = (key, def = '') => settings?.find(s => s.key === key)?.value || def;
@@ -4598,7 +4598,7 @@ async function adminMonetization(token = window._adminRenderToken) {
     <!-- Donation Campaigns -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-2">💛 Donation Campaigns</div>
-      <p class="text-xs text-muted mb-3">Shows as a compact card on the student dashboard, below stats — stays visible until you pause or delete it (no auto-expiry, unlike announcements).</p>
+      <p class="text-xs text-muted mb-3">Shown on the student's dedicated Donations page (Profile → Support Us) — stays visible until you pause or delete it (no auto-expiry, unlike announcements). That page only appears to students at all when "Donations Feature" below is switched on.</p>
       ${(donations || []).map(d => `
         <div class="admin-row">
           <div class="admin-row-left">
@@ -4630,6 +4630,25 @@ async function adminMonetization(token = window._adminRenderToken) {
       <label class="input-label">Donation Link / Payment Details</label>
       <input id="dn_link" class="input-field" placeholder="Payment link, or EasyPaisa/JazzCash number">
       <button class="btn btn-primary mt-2" onclick="adminAddDonation()">Create Campaign</button>
+      <hr class="divider">
+      <div class="fw-700 mb-2">⚙️ Donations Page Settings</div>
+      <p class="text-xs text-muted mb-2">Controls the "Support Us" entry in Profile and the page it opens — campaign(s) above, plus whatever payment details you enter below.</p>
+      <div class="flex-between mb-2">
+        <div><div class="fw-600 text-sm">Donations Feature</div><div class="text-xs text-muted">Show "Support Us" to students</div></div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="set_don_enabled" ${getSetting('donation_enabled') === 'true' ? 'checked' : ''}>
+          <span class="toggle-knob"></span>
+        </label>
+      </div>
+      <label class="input-label">JazzCash Number</label>
+      <input id="set_don_jazzcash" class="input-field" value="${esc(getSetting('donation_jazzcash'))}" placeholder="e.g. 0300-1234567 (Name)">
+      <label class="input-label">Easypaisa Number</label>
+      <input id="set_don_easypaisa" class="input-field" value="${esc(getSetting('donation_easypaisa'))}" placeholder="e.g. 0345-1234567 (Name)">
+      <label class="input-label">Bank Account Details</label>
+      <textarea id="set_don_bank" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Meezan Bank, Account Title, Account No.">${esc(getSetting('donation_bank'))}</textarea>
+      <label class="input-label">Message to Students</label>
+      <textarea id="set_don_message" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian free for everyone!">${esc(getSetting('donation_message') || 'Help us keep this app free and growing for every student. Any contribution helps!')}</textarea>
+      <button class="btn btn-secondary mt-2" style="width:100%" onclick="saveDonationSettings()">💾 Save Donation Settings</button>
     </div>
 
     <!-- Active Subscriptions -->
@@ -5080,30 +5099,6 @@ async function adminAppSettings(token = window._adminRenderToken) {
       <div id="aiTestResult" style="margin-top:10px"></div>
     </div>
 
-    <!-- Donations Settings -->
-    <div class="card" style="margin-bottom:20px">
-      <div class="fw-700 mb-3">💛 Donations Settings</div>
-      <p class="text-xs text-muted mb-2">Shows a "Support Us" option to students in their Profile, with whatever payment details you enter below. Toggle off any time to hide it completely.</p>
-      <div class="flex-between mb-2">
-        <div><div class="fw-600 text-sm">Donations Feature</div><div class="text-xs text-muted">Show "Support Us" to students</div></div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set_don_enabled" ${S('donation_enabled') === 'true' ? 'checked' : ''}>
-          <span class="toggle-knob"></span>
-        </label>
-      </div>
-      <label class="input-label">JazzCash Number</label>
-      <input id="set_don_jazzcash" class="input-field" value="${S('donation_jazzcash')}" placeholder="e.g. 0300-1234567 (Name)">
-      <label class="input-label">Easypaisa Number</label>
-      <input id="set_don_easypaisa" class="input-field" value="${S('donation_easypaisa')}" placeholder="e.g. 0345-1234567 (Name)">
-      <label class="input-label">Bank Account Details</label>
-      <textarea id="set_don_bank" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Meezan Bank, Account Title, Account No.">${S('donation_bank')}</textarea>
-      <label class="input-label">Message to Students</label>
-      <textarea id="set_don_message" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian free for everyone!">${S('donation_message') || 'Help us keep this app free and growing for every student. Any contribution helps!'}</textarea>
-      <div class="btn-row mt-2">
-        <button class="btn btn-secondary" onclick="saveDonationSettings()">💾 Save Donation Settings</button>
-      </div>
-    </div>
-
     <!-- Audit Log -->
     <div class="card">
       <div class="fw-700 mb-2">📋 Recent Admin Actions</div>
@@ -5133,6 +5128,7 @@ async function saveDonationSettings() {
   await loadAppSettings();
   showToast('Donation settings saved ✓');
   logAdminAction('Updated Donation settings');
+  adminMonetization();
 }
 window.saveDonationSettings = saveDonationSettings;
 
