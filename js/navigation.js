@@ -1,4 +1,4 @@
-import { getRankInfo, getUserStats, isFeatureEnabled, renderHome, renderModulesScreen, renderSearch, saveAppState, saveAppStateDebounced } from './app.js';
+import { getRankInfo, getUserStats, isFeatureEnabled, openModule, openPastPapersRoot, renderHome, renderModulesScreen, renderSearch, saveAppState, saveAppStateDebounced } from './app.js';
 import { renderRanking } from './leaderboard.js';
 import { renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
 import { requestExitTest } from './quiz.js';
@@ -73,7 +73,20 @@ export function _returnToScreen(id) {
   // functions live in a later <script> block than this one, so building this
   // map at parse time (before that block has run) would throw. Evaluating it
   // lazily, only when _returnToScreen() is actually called, is safe.
-  const renderers = { home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, ranking: renderRanking, search: renderSearch, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner };
+  const renderers = {
+    home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, ranking: renderRanking, search: renderSearch, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner,
+    module: () => {
+      if (window._moduleScreenMode === 'pastpapers') {
+        // Deliberately always back to the college list (root), never deep into
+        // a specific college — re-resolves "my year" fresh every time, so this
+        // is always correct even if that changed since.
+        openPastPapersRoot();
+      } else if (window._lastOpenedModule) {
+        const m = window._lastOpenedModule;
+        openModule(m.moduleId, m.moduleName, m.iconUrl || '', m.color || '', m.fromYearId || null, m.fromYearName || null);
+      }
+    }
+  };
   if (renderers[target]) renderers[target]();
   showScreen(target, false);
 }

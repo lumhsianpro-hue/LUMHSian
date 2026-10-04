@@ -4,7 +4,7 @@ import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
 import { checkExpiredAttemptOnRender, getResumableSnapshot } from './quiz.js';
 import { db, sb } from './supabase.js';
-import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, renderAvatar, renderMd, showConfirm, showToast, skeletonList } from './utils.js';
+import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, renderAvatar, renderMd, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
 
 
@@ -114,12 +114,27 @@ async function openMyReports() {
       </div>
       ${q?.text ? `<div class="text-xs text-muted mb-1">Re: ${esc(q.text.substring(0,70))}...</div>` : ''}
       <div class="text-sm mb-1">${renderMd(r.message)}</div>
-      <div class="text-xs text-muted">${timeAgo(new Date(r.created_at).getTime())}</div>
+      <div class="flex-between" style="align-items:flex-end">
+        <div class="text-xs text-muted">${timeAgo(new Date(r.created_at).getTime())}</div>
+        <button class="btn btn-ghost btn-xs" onclick="deleteMyReport(${r.id})">🗑 Delete</button>
+      </div>
       ${r.admin_reply ? `<div style="background:var(--gold-50);border-radius:10px;padding:8px 10px;margin-top:8px"><div class="text-xs fw-700" style="color:var(--gold-700)">Admin reply:</div><div class="text-sm">${renderMd(r.admin_reply)}</div></div>` : ''}
     </div>`;
   }).join('');
 }
 window.openMyReports = openMyReports;
+
+
+
+async function deleteMyReport(id) {
+  showConfirm('Delete this report? This cannot be undone.', async () => {
+    const { error } = await db(sb.from('reports_feedback').delete().eq('id', id).eq('user_email', window.currentUser.email), 'Delete failed');
+    if (error) return; // db() already showed the specific error
+    showToast('Report deleted');
+    openMyReports();
+  }, 'Delete', true);
+}
+window.deleteMyReport = deleteMyReport;
 
 
 

@@ -649,7 +649,7 @@ function _isYearContentUnlocked(fromYearName) {
 }
 
 
-async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, fromYearName) {
+export async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, fromYearName) {
   showLoading(true, 'Loading module...');
   const [moduleRes, subjectsRes, qCountRes, moduleTestsRes] = await Promise.all([
     db(sb.from('modules').select('name,icon_url,color').eq('id', moduleId).single(), 'Module error'),
@@ -784,7 +784,7 @@ window.backToModule = backToModule;
 // independent of which Academic Year the paper itself belongs to.
 let _pastPapersData = null; // { colleges, yearId, yearName } — cached per visit so drilling down/back never re-fetches
 
-async function openPastPapersRoot() {
+export async function openPastPapersRoot() {
   showLoading(true, 'Loading past papers...');
   // Plain selects + separate lookups, NOT embedded joins — PostgREST can't
   // always resolve those relationships for past_papers, and this sidesteps
