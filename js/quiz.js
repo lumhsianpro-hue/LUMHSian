@@ -513,9 +513,11 @@ async function _insertCustomTest(cfg, name) {
     user_email: window.currentUser.email,
     name: (name || cfg.name || '').trim() || `Custom Test ${new Date().toLocaleDateString()}`,
     module_ids: cfg.moduleIds || [], subject_ids: cfg.subjectIds || [],
-    paper_ids: cfg.paperIds || [], test_ids: cfg.testIds || [],
     question_count: cfg.count || 20, time_limit_minutes: cfg.timerMinutes || 0
   };
+  // Only send these when used, so a plain module/subject test still saves even if their columns aren't migrated yet
+  if ((cfg.paperIds || []).length) row.paper_ids = cfg.paperIds;
+  if ((cfg.testIds || []).length) row.test_ids = cfg.testIds;
   const res = await db(sb.from('custom_tests').insert(row).select('id').single(), 'Save failed');
   return res.data || null;
 }
@@ -1018,11 +1020,15 @@ async function submitTest() {
     // tracked as its own running total (attempt_questions/attempt_correct)
     // rather than the old "must fully complete one entire test" rule, so a
     // partial Attempt (skipped some questions) still contributes toward the
-    // 100-question threshold, cumulative across as many Attempts as it takes.
+    // 200-attempted-question threshold, cumulative across as many Attempts as it takes.
     // completed_attempt_tests is kept alongside it (unused for ranking now,
     // but other code may still read it).
     if (window.activeTest.mode === 'attempt') {
-      stats.attempt_questions = (stats.attempt_questions || 0) + total;
+      // attempt_answered counts only questions actually attempted (leaderboard eligibility). Older rows that predate
+      // it start from attempt_questions so nobody loses the progress they already had.
+      const prevAnswered = (stats.attempt_answered || 0) > 0 ? stats.attempt_answered : (stats.attempt_questions || 0);
+      stats.attempt_answered = prevAnswered + attempted;
+      stats.attempt_questions = (stats.attempt_questions || 0) + total;   // accuracy denominator: skipped count as wrong
       stats.attempt_correct = (stats.attempt_correct || 0) + correct;
       if (skipped === 0) stats.completed_attempt_tests = (stats.completed_attempt_tests || 0) + 1;
     }
@@ -1105,6 +1111,8 @@ async function submitTest() {
     // — but they still count toward the leaderboard's attempt-question total,
     // same as any other Attempt.
     const stats = await getUserStats();
+    const prevAnswered = (stats.attempt_answered || 0) > 0 ? stats.attempt_answered : (stats.attempt_questions || 0);
+    stats.attempt_answered = prevAnswered + attempted;
     stats.attempt_questions = (stats.attempt_questions || 0) + total;
     stats.attempt_correct = (stats.attempt_correct || 0) + correct;
     await saveUserStats(stats);
@@ -1363,15 +1371,15 @@ window.openReportModal = openReportModal;
 
 
 
-async function submitReport(btn, questionId) {
+async function submitReport(btn, questionId, context) {
   const overlay = btn.closest('[style*="fixed"]');
   const card = overlay.querySelector('div');
   const textarea = overlay.querySelector('#_rpt_msg');
   const message = textarea.value.trim();
-  if (!message) return showToast('Please describe the issue first');
+  if (!message) return showToast(questionId ? 'Please describe the issue first' : 'Please write your feedback first');
   if (message.length > 2000) return showToast('That message is too long (max 2000 characters).');
   const rl = rateLimited('submit_report', 5, 15 * 60 * 1000);
-  if (!rl.allowed) return showToast(`Too many reports sent. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
+  if (!rl.allowed) return showToast(`Too many messages sent. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
   const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Sending...';
@@ -1380,8 +1388,8 @@ async function submitReport(btn, questionId) {
     question_id: questionId || null,
     user_email: window.currentUser.email,
     user_name: window.currentUser.name,
-    message
-  }), 'Report failed');
+    message: context === 'support' ? '[Support] ' + message : message
+  }), questionId ? 'Report failed' : 'Could not send feedback');
   if (error) { btn.disabled = false; btn.textContent = originalLabel; return; }
   // Wipe the written text and show a clear "Sent" state in place of the form,
   // instead of silently destroying the modal — makes it obvious it went through.
@@ -1389,7 +1397,7 @@ async function submitReport(btn, questionId) {
     <div style="text-align:center;padding:8px 0">
       <div style="font-size:40px;margin-bottom:8px">✅</div>
       <div class="fw-700 mb-1">Sent!</div>
-      <p class="text-sm text-muted">The admin will review this and may reply in your Profile → My Reports.</p>
+      <p class="text-sm text-muted">${questionId ? 'The admin will review this and may reply in your Profile → My Reports.' : 'Thank you! The admin reads every message and may reply in your Profile → My Reports.'}</p>
     </div>`;
   setTimeout(() => overlay.remove(), 1600);
 }

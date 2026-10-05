@@ -1,6 +1,6 @@
 import { adminContentTab, adminShowTab, applyWallpaper, renderAdminPanel, timeAgo } from './admin.js';
 import { handleAuthedSession } from './auth.js';
-import { renderRanking } from './leaderboard.js';
+import { computeLeaderboardCohort, renderRanking } from './leaderboard.js';
 import { goBack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
 import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
@@ -110,7 +110,7 @@ export async function loadYearScreen() {
   }
   for (const y of years) {
     const active = y.is_active;
-    html += `<div class="module-card ${!active ? 'locked' : ''}" onclick="${active ? `selectYear(${y.id},'${y.name.replace(/'/g,"\\'")}')` : `showToast('${y.coming_soon_text || 'Coming soon'}') `}">
+    html += `<div class="module-card ${!active ? 'locked' : ''}" onclick="${active ? `selectYear(${y.id},'${y.name.replace(/'/g,"\\'")}')` : `showToast('${String(y.coming_soon_text || 'Coming soon').replace(/'/g, "\\'").replace(/"/g, '&quot;')}') `}">
       <div class="list-item-icon">${active ? '📘' : '🔒'}</div>
       <div class="module-info">
         <div class="module-title">${y.name}</div>
@@ -213,27 +213,11 @@ export async function getRankInfo() {
     return window._rankInfoCache;
   }
   try {
-    const myYear = window.currentUser?.year_of_study;
+    // Same cohort + same rules as the Ranking screen (200 attempted questions in Attempt mode, ranked by accuracy with
+    // skipped counted as wrong). This used to apply an older rule, so the rank on Home could disagree with Ranking.
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Rank info timed out')), 8000));
-    const work = (async () => {
-      let emailsInYear = null;
-      if (myYear) {
-        const { data: peers } = await sb.from('users').select('email').eq('year_of_study', myYear);
-        emailsInYear = (peers || []).map(p => p.email);
-      }
-      let query = sb.from('user_stats').select('email,total_correct,total_questions,completed_attempt_tests');
-      if (emailsInYear) query = query.in('email', emailsInYear);
-      const { data } = await query;
-      return data;
-    })();
-    const allStats = await Promise.race([work, timeout]);
-    if (!allStats) return { rank: null, total: 0 };
-    const ranked = allStats.filter(s => (s.completed_attempt_tests || 0) > 0 && s.email !== 'lumhsianpro@gmail.com').map(s => ({
-      email: s.email,
-      acc: s.total_questions ? Math.round((s.total_correct / s.total_questions) * 100) : 0
-    })).sort((a, b) => b.acc - a.acc);
-    const rank = ranked.findIndex(r => r.email === window.currentUser.email) + 1;
-    const result = { rank: rank || null, total: ranked.length };
+    const { combined, myRank } = await Promise.race([computeLeaderboardCohort(window.currentUser?.year_of_study), timeout]);
+    const result = { rank: myRank || null, total: combined.length };
     window._rankInfoCache = result;
     window._rankInfoFetchedAt = Date.now();
     return result;
@@ -535,7 +519,7 @@ export async function renderHome() {
     <div style="background:linear-gradient(150deg,#5e4600 0%,#c9980a 55%,#e0ac1e 100%);border-radius:var(--radius-xl);padding:11px 15px 12px;margin-bottom:10px;color:white;position:relative;overflow:hidden;box-shadow:0 10px 28px -10px rgba(122,92,0,.55)">
       <div style="position:absolute;top:-24px;right:-16px;font-size:88px;opacity:.07;line-height:1;transform:rotate(-8deg)">${ICON_STETHOSCOPE}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;position:relative">
-        ${getSetting('donation_enabled','false') === 'true' ? `<div class="home-support-chip" onclick="showDonationPage()">💛 Support</div>` : '<span></span>'}
+        ${getSetting('donation_enabled','false') === 'true' ? `<div class="home-support-chip" onclick="showDonationPage()">💛 Support Us</div>` : '<span></span>'}
         <div onclick="openNotificationBell()" style="cursor:pointer;font-size:19px;width:36px;height:36px;background:rgba(255,255,255,.16);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative">
           ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:18px;height:18px;align-items:center;justify-content:center;padding:0 4px;border:2px solid #7a5c00">0</span>
         </div>
@@ -587,7 +571,7 @@ export async function renderHome() {
       ${isAIEnabled() ? `<div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">${ICON_ROBOT}</span><span class="quick-tile-label">AI Tutor</span></div>` : ''}
       <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">${ICON_BOOKMARK}</span><span class="quick-tile-label">Bookmark</span></div>
       <div class="quick-tile" onclick="navGo('wrongattempts')"><span class="quick-tile-icon">${ICON_X_CIRCLE}</span><span class="quick-tile-label">Wrong Qs</span></div>
-      <div class="quick-tile" onclick="navGo('savedtests')"><span class="quick-tile-icon">📁</span><span class="quick-tile-label">Saved Tests</span></div>
+      <div class="quick-tile" onclick="openSavedTests()"><span class="quick-tile-icon">📁</span><span class="quick-tile-label">Saved Tests</span></div>
       <div class="quick-tile" onclick="navGo('planner')"><span class="quick-tile-icon">${ICON_CALENDAR}</span><span class="quick-tile-label">Planner</span></div>
     </div>
 
@@ -1162,7 +1146,7 @@ async function openCustomTestBuilder() {
       </div>
       <p class="text-xs text-muted mb-3">Mix and match — pick any combination of modules, past papers, and practice tests below. Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your stats or the leaderboard.</p>
 
-      <div class="card" style="margin-bottom:14px;padding:12px 14px;cursor:pointer" onclick="document.getElementById('ctbOverlay')?.remove();navGo('savedtests')">
+      <div class="card" style="margin-bottom:14px;padding:12px 14px;cursor:pointer" onclick="document.getElementById('ctbOverlay')?.remove();openSavedTests()">
         <div class="flex-between"><span class="fw-700 text-sm">📁 Saved Tests${savedTests?.length ? ` (${savedTests.length})` : ''}</span><span class="text-xs fw-600" style="color:var(--gold-600)">Open →</span></div>
       </div>
 
@@ -1313,10 +1297,11 @@ async function buildCustomTest(saveOnly, mode) {
 
   let savedId = null;
   if (saveOnly || document.getElementById('ctb_name').value.trim()) {
-    const res = await db(sb.from('custom_tests').insert({
-      user_email: window.currentUser.email, name, module_ids: moduleIds, subject_ids: subjectIds,
-      paper_ids: paperIds, test_ids: testIds, question_count: count, time_limit_minutes: timer
-    }).select('id').single(), 'Save failed');
+    const row = { user_email: window.currentUser.email, name, module_ids: moduleIds, subject_ids: subjectIds, question_count: count, time_limit_minutes: timer };
+    // Only send these when used, so a plain module/subject test still saves even if their columns aren't migrated yet
+    if (paperIds.length) row.paper_ids = paperIds;
+    if (testIds.length) row.test_ids = testIds;
+    const res = await db(sb.from('custom_tests').insert(row).select('id').single(), 'Save failed');
     if (res.error || !res.data) return; // db() already showed the specific error (e.g. paper_ids/test_ids not migrated yet — see schema note)
     savedId = res.data.id;
     showToast('Test saved ✓');
@@ -1367,6 +1352,15 @@ export async function renderSavedTests() {
     <div style="height:16px"></div>`;
 }
 window.renderSavedTests = renderSavedTests;
+
+// The entry point for every "Saved Tests" button. It renders AND shows the screen itself, so it never depends on the
+// navigation module's screen→renderer table (an out-of-date navigation.js that doesn't know this screen yet used to
+// leave a blank page with no Back button).
+async function openSavedTests() {
+  showScreen('savedtests');
+  await renderSavedTests();
+}
+window.openSavedTests = openSavedTests;
 
 
 
@@ -1425,24 +1419,27 @@ export async function getUserStats(forceRefresh = false) {
 export async function saveUserStats(stats) {
   window._lastStats = stats;
   window._lastStatsFetchedAt = Date.now();
-  // completed_attempt_tests is saved as its own separate call, not mixed into
-  // this upsert. That column needs a one-time migration in Supabase (see the
-  // note in the SQL reference near the end of this file) — bundling it in
-  // meant that until the migration was run, Supabase rejected the ENTIRE
-  // upsert over that one unrecognized column, silently failing to save
-  // total_tests/total_correct/history/streak too, for every single
-  // submission. Splitting it out means core stats always save regardless of
-  // whether that migration has been run yet.
-  const { completed_attempt_tests, ...coreStats } = stats;
+  // Columns that needed a one-time migration in Supabase (see the SQL notes at the end of this file) are saved
+  // separately from the core stats. Bundled into one upsert, a single missing column made Supabase reject the ENTIRE
+  // save — total_tests / total_correct / history / streak included — for every submission until the migration was run.
+  const OPTIONAL_COLS = ['completed_attempt_tests', 'attempt_answered', 'attempt_questions', 'attempt_correct', 'archived_years'];
+  const coreStats = {}, optional = {};
+  for (const [k, v] of Object.entries(stats)) (OPTIONAL_COLS.includes(k) ? optional : coreStats)[k] = v;
   const { error } = await sb.from('user_stats').upsert({ email: window.currentUser.email, ...coreStats });
   if (error) {
     console.warn('Stats save failed', error);
     showToast('⚠️ Could not save your stats. Check your connection', 4000);
     return;
   }
-  if (typeof completed_attempt_tests === 'number') {
-    const { error: e2 } = await sb.from('user_stats').update({ completed_attempt_tests }).eq('email', window.currentUser.email);
-    if (e2) console.warn('completed_attempt_tests not saved — run the migration in Supabase SQL Editor (see SQL reference section)', e2);
+  if (Object.keys(optional).length) {
+    const { error: eo } = await sb.from('user_stats').update(optional).eq('email', window.currentUser.email);
+    if (eo) {
+      // One of these columns isn't in the database yet — save them one by one so only that one is skipped.
+      for (const [k, v] of Object.entries(optional)) {
+        const { error: e1 } = await sb.from('user_stats').update({ [k]: v }).eq('email', window.currentUser.email);
+        if (e1) console.warn(k + ' not saved — run the migration in Supabase SQL Editor (see SQL reference section)', e1);
+      }
+    }
   }
 }
 
@@ -2423,6 +2420,13 @@ ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS test_ids INTEGER[] DEFAULT '{}
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_questions INTEGER DEFAULT 0;
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_correct INTEGER DEFAULT 0;
 
+-- MIGRATION (safe to re-run): the leaderboard now needs 200 ATTEMPTED questions (skipped ones
+-- don't count toward the 200, but still count as wrong when accuracy is measured). This running
+-- total of attempted questions is written by submitTest() in quiz.js. The UPDATE gives existing
+-- students a starting value so nobody loses progress:
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_answered INTEGER DEFAULT 0;
+UPDATE user_stats SET attempt_answered = attempt_questions WHERE COALESCE(attempt_answered, 0) = 0 AND COALESCE(attempt_questions, 0) > 0;
+
 -- MIGRATION (safe to re-run, run once in Supabase SQL Editor): leaderboard
 -- eligibility now requires fully completing at least one timed Attempt test
 -- (every question answered, none skipped) — this counter tracks that. The app
@@ -3347,3 +3351,13 @@ function _showGuide(device, steps) {
     </div>`;
   document.body.appendChild(overlay);
 }
+
+
+// ==================== HALF-UPDATED DEPLOYMENT CHECK ====================
+// Reaching this line means app.js itself loaded. If one of the other files is still an older cached copy, some of the
+// functions below won't exist — show the "App updated · Refresh" prompt from index.html instead of leaving broken buttons.
+window.__lumBooted = true;
+setTimeout(() => {
+  const needed = ['leaveFinishedTest', 'waOpen', 'showDonationPage', '_closeLegalPage', 'adminGoBack', 'openSavedTests'];
+  if ((needed.some(n => typeof window[n] !== 'function') || !window.__lumNavReady) && typeof window.__lumShowUpdate === 'function') window.__lumShowUpdate();
+}, 5000);
