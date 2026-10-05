@@ -5,10 +5,20 @@ import { ADMIN_EMAIL, USERS_SAFE_COLS, adminRPC, db, sb } from './supabase.js';
 import { _debounce, cacheClear, esc, escJs, renderMd, showConfirm, showLoading, showToast } from './utils.js';
 
 // ==================== ADMIN PANEL MAIN ====================
+// Leaves the admin panel: back to wherever it was opened from, or Home if the app was reopened straight onto it
+function adminGoBack() {
+  if (window.navStack.length > 1) { window.goBack(); return; }
+  renderHome(); showScreen('home');
+}
+window.adminGoBack = adminGoBack;
+
+
+
 export async function renderAdminPanel(initialTab = 'overview') {
   const wrap = document.getElementById('adminPageWrap');
   wrap.innerHTML = `
     <div class="admin-header" style="margin:-16px -14px 20px;padding:20px 16px 16px">
+      <button class="back-btn" style="margin:-6px 0 12px" onclick="adminGoBack()">← Back</button>
       <div class="flex-between" style="margin-bottom:18px">
         <div>
           <div style="font-family:var(--font-display);font-size:22px;font-weight:800;letter-spacing:-0.5px">LUMHSian <span style="color:var(--gold-300)">Admin</span></div>
@@ -199,25 +209,6 @@ async function adminOverview(token = window._adminRenderToken) {
   });
 
   document.getElementById('adminContent').innerHTML = `
-    <!-- Quick Start Guide -->
-    <div class="card-teal" style="margin-bottom:16px">
-      <div class="fw-700 mb-2" style="font-size:16px">🚀 How to add content (in order)</div>
-      <div style="font-size:13px;line-height:1.7;opacity:.95">
-        1️⃣ <strong>Courses → Years</strong>: add/activate a year (e.g. 2nd Year MBBS)<br>
-        2️⃣ <strong>Courses → Modules</strong>: add a module (e.g. Anatomy)<br>
-        3️⃣ <strong>Courses → Year↔Module</strong>: link that module to the year<br>
-        4️⃣ <strong>Content → Subjects</strong>: add subjects inside the module (optional)<br>
-        5️⃣ <strong>Content → Past Papers</strong>: name a paper (college + year)<br>
-        6️⃣ <strong>Content → Questions</strong>: add MCQs, pick the module/subject/paper<br>
-      </div>
-      <div class="text-xs mt-2" style="opacity:.85">💡 You can add modules/subjects/questions to a "Coming Soon" year too. Students just won't see it until you switch it to Active in Years.</div>
-      <div class="btn-row mt-3">
-        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:white" onclick="adminShowTab('courses')">🎓 Go to Courses</button>
-        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:white" onclick="adminShowTab('content')">📚 Go to Content</button>
-        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:white" onclick="adminShowTab('settings')">⚙️ AI / Settings</button>
-      </div>
-    </div>
-
     <!-- Key Metrics -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px">
       ${[
@@ -872,7 +863,7 @@ window.adminDeleteYear = adminDeleteYear;
 // --- MODULES CRUD ---
 async function adminModules() {
   const { data: modules } = await db(sb.from('modules').select('*').order('name'), 'Modules error');
-  const list = (modules || []).map(m => `
+  const rowHtmlOf = (m) => `
     <div class="admin-row">
       <div class="admin-row-left" style="display:flex;align-items:center;gap:10px">
         <img src="${m.icon_url || 'https://placehold.co/44x44/fdf3c0/c9980a?text=📚'}" style="width:44px;height:44px;border-radius:var(--radius-md);object-fit:cover;flex-shrink:0" onerror="this.src='https://placehold.co/44x44/fdf3c0/c9980a?text=📚'">
@@ -886,7 +877,11 @@ async function adminModules() {
         <button class="btn btn-secondary btn-xs" onclick="adminEditModule(${m.id})">✏️ Edit</button>
         <button class="btn btn-danger btn-xs" onclick="adminDeleteModule(${m.id})">🗑</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  const fullById = {};
+  (modules || []).forEach(m => { fullById[m.id] = m; });
+  const yearTree = await _adminYearTree();
+  const list = (modules || []).length ? _yearModuleFolds(yearTree, 'mod', (m) => ({ count: 1, body: rowHtmlOf(fullById[m.id] || m) }), { flat: true }) : '';
 
   document.getElementById('contentTabBody').innerHTML = `
     <div class="card" style="margin-bottom:20px">
@@ -917,7 +912,6 @@ async function adminModules() {
     </div>
     <div class="card" style="margin-bottom:20px;border:1.5px solid var(--gold-400)">
       <div class="fw-700 mb-2">📥 Bulk Upload Modules</div>
-      <p class="text-xs text-muted mb-3">Add many modules at once from an Excel/CSV file. The "Years" column is optional — list any of your existing Academic Year names, comma-separated (e.g. "First Year, Second Year"), to link the module to those years immediately instead of doing it separately in Courses → Year↔Module Mapping.</p>
       <input type="file" id="modBulkFile" accept=".xlsx,.xls,.csv" class="input-field" title="Choose Excel/CSV file" aria-label="Choose Excel or CSV file" onchange="previewModuleBulk()">
       <div id="modBulkPreview" style="margin-top:12px"></div>
       <button class="btn btn-primary mt-3" id="modBulkUploadBtn" style="display:none" onclick="executeModuleBulkUpload()">Upload All Modules</button>
@@ -925,7 +919,7 @@ async function adminModules() {
       <div class="fw-700 mb-2">📥 Download Template</div>
       <button class="btn btn-secondary" onclick="downloadModuleTemplate()">Download Excel Template</button>
     </div>
-    <div class="fw-700 mb-2">📦 Existing Modules</div>
+    <div class="fw-700 mb-2">📦 Modules by Year</div>
     ${list || '<div class="card"><p class="text-muted">No modules yet.</p></div>'}`;
 }
 window.adminModules = adminModules;
@@ -1323,15 +1317,70 @@ window.adminRemoveMapping = adminRemoveMapping;
 
 
 
+// ==================== YEAR → MODULE GROUPING (shared by Modules, Subjects, Practice Tests, selects) ====================
+window._adminOpen = window._adminOpen || {};
+function adminFoldToggle(el) { window._adminOpen[el.dataset.k] = el.open; }
+window.adminFoldToggle = adminFoldToggle;
+
+// Every year in order (First → Final) with the modules linked to it (Courses → Year↔Module), plus any module
+// that is not linked to a year yet — so nothing is ever listed in one flat, mixed pile.
+async function _adminYearTree() {
+  const [{ data: years }, { data: maps }, { data: modules }] = await Promise.all([
+    db(sb.from('years').select('id,name,display_order').order('display_order'), 'Years error'),
+    db(sb.from('year_modules').select('year_id,module_id,display_order').order('display_order'), 'Mappings error'),
+    db(sb.from('modules').select('id,name').order('name'), 'Modules error')
+  ]);
+  const mById = {};
+  (modules || []).forEach(m => { mById[m.id] = m; });
+  const linked = new Set();
+  const groups = (years || []).map(y => {
+    const mods = (maps || []).filter(x => x.year_id === y.id).sort((a, b) => (a.display_order || 0) - (b.display_order || 0)).map(x => mById[x.module_id]).filter(Boolean);
+    mods.forEach(m => linked.add(m.id));
+    return { year: y, modules: mods };
+  });
+  return { groups, unassigned: (modules || []).filter(m => !linked.has(m.id)), modules: modules || [] };
+}
+
+function _fold(key, titleHtml, metaHtml, bodyHtml, level) {
+  return `<details class="admin-fold admin-fold-${level}" data-k="${key}" ${window._adminOpen[key] ? 'open' : ''} ontoggle="adminFoldToggle(this)">
+    <summary><span>${titleHtml}</span>${metaHtml ? `<span class="admin-fold-meta">${metaHtml}</span>` : ''}</summary>
+    <div class="admin-fold-body">${bodyHtml}</div>
+  </details>`;
+}
+
+// moduleFn(m) → { count, meta, body }.  opts.flat renders each module's body directly under its year (no module fold).
+function _yearModuleFolds(tree, prefix, moduleFn, opts = {}) {
+  const unit = opts.unit || 'item';
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const section = (key, title, mods) => {
+    let total = 0;
+    const inner = mods.map(m => {
+      const r = moduleFn(m);
+      total += r.count || 0;
+      return opts.flat ? r.body : _fold(`${key}-m${m.id}`, `📦 ${esc(m.name)}`, r.meta || '', r.body, 'module');
+    }).join('');
+    return _fold(key, title, opts.flat ? plural(mods.length, 'module') : plural(total, unit), inner || '<p class="text-xs text-muted" style="padding:6px 2px">No modules linked to this year yet.</p>', 'year');
+  };
+  let html = tree.groups.map(g => section(`${prefix}-y${g.year.id}`, `🎓 ${esc(g.year.name)}`, g.modules)).join('');
+  if (tree.unassigned.length) html += section(`${prefix}-yx`, '📂 Not linked to any year', tree.unassigned);
+  return html || '<div class="card"><p class="text-muted">Add a year and link modules to it first (Courses tab).</p></div>';
+}
+
+// <option>s for a module <select>: one group per year instead of one long mixed list
+function _moduleOptgroups(tree, placeholder) {
+  const opt = m => `<option value="${m.id}">${esc(m.name)}</option>`;
+  let h = placeholder ? `<option value="">${placeholder}</option>` : '';
+  h += tree.groups.filter(g => g.modules.length).map(g => `<optgroup label="${esc(g.year.name)}">${g.modules.map(opt).join('')}</optgroup>`).join('');
+  if (tree.unassigned.length) h += `<optgroup label="Not linked to a year">${tree.unassigned.map(opt).join('')}</optgroup>`;
+  return h;
+}
+
 // --- SUBJECTS CRUD ---
 async function adminSubjects() {
-  const { data: modules } = await db(sb.from('modules').select('id,name').order('name'), 'Modules error');
-  const mList = modules || [];
+  const tree = await _adminYearTree();
+  const mList = tree.modules;
   const moduleIds = mList.map(m => m.id);
-  // Subjects and question counts for every module used to be fetched with 2
-  // separate queries PER module (sequentially, in a loop). Now it's 2 queries
-  // total, grouped client-side — this screen used to get slower the more
-  // modules the app had.
+  // 2 queries total (not 2 per module), grouped client-side
   const [{ data: allSubs }, qCounts] = await Promise.all([
     moduleIds.length ? db(sb.from('subjects').select('*').in('module_id', moduleIds).order('display_order'), 'Subs error') : Promise.resolve({ data: [] }),
     getQuestionCountsBy('module_id', moduleIds)
@@ -1342,32 +1391,25 @@ async function adminSubjects() {
     subsByModule[s.module_id].push(s);
   }
 
-  let subHtml = '';
-  for (const m of mList) {
+  const moduleFn = (m) => {
     const subs = subsByModule[m.id] || [];
-    const qCount = qCounts[m.id] || 0;
-    subHtml += `<div class="card" style="margin-bottom:10px">
-      <div class="flex-between mb-2">
-        <div class="fw-700">📦 ${m.name}</div>
-        <span class="badge badge-teal">${qCount} questions</span>
-      </div>
-      ${subs.map(s => `
+    const body = subs.length ? subs.map(s => `
         <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
-          <span class="text-sm fw-600">${s.name} <span class="text-xs text-muted">(order ${s.display_order || '?'})</span></span>
+          <span class="text-sm fw-600">${esc(s.name)} <span class="text-xs text-muted">(order ${s.display_order || '?'})</span></span>
           <div style="display:flex;gap:6px">
-            <button class="btn btn-secondary btn-xs" onclick="adminEditSubject(${s.id},'${s.name.replace(/'/g,"\\'")}',${s.display_order||1})">✏️</button>
+            <button class="btn btn-secondary btn-xs" onclick="adminEditSubject(${s.id},'${escJs(s.name)}',${s.display_order||1})">✏️</button>
             <button class="btn btn-danger btn-xs" onclick="adminDeleteSubject(${s.id})">🗑</button>
           </div>
-        </div>`).join('')}
-    </div>`;
-  }
+        </div>`).join('') : '<p class="text-xs text-muted" style="padding:6px 2px">No subjects yet.</p>';
+    return { count: subs.length, meta: `${subs.length} subject${subs.length === 1 ? '' : 's'} · ${qCounts[m.id] || 0} questions`, body };
+  };
 
   document.getElementById('contentTabBody').innerHTML = `
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">➕ Add Subject</div>
       <label class="input-label">Module</label>
       <select id="sub_module" class="input-field" title="Select module for subject" aria-label="Select module for subject">
-        ${mList.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+        ${_moduleOptgroups(tree, '')}
       </select>
       <label class="input-label">Subject Name</label>
       <input id="sub_name" class="input-field" placeholder="e.g., Upper Limb">
@@ -1375,8 +1417,8 @@ async function adminSubjects() {
       <input id="sub_order" type="number" class="input-field" title="Display order" aria-label="Display order" placeholder="1" value="1">
       <button class="btn btn-primary" onclick="adminAddSubject()">Add Subject</button>
     </div>
-    <div class="fw-700 mb-2">📖 Subjects by Module</div>
-    ${subHtml || '<div class="card"><p class="text-muted">Add modules first.</p></div>'}`;
+    <div class="fw-700 mb-2">📖 Subjects by Year → Module</div>
+    ${mList.length ? _yearModuleFolds(tree, 'sub', moduleFn, { unit: 'subject' }) : '<div class="card"><p class="text-muted">Add modules first.</p></div>'}`;
 }
 window.adminSubjects = adminSubjects;
 
@@ -1531,7 +1573,6 @@ async function adminPastPapers() {
     </div>
     <div class="card" style="margin-bottom:20px;border:1.5px solid var(--gold-400)">
       <div class="fw-700 mb-2">📥 Bulk Upload Past Papers</div>
-      <p class="text-xs text-muted mb-3">Create many paper entries at once from an Excel/CSV file — this only creates the papers themselves (title, academic year, college, exam year, module tags). Add each paper's questions afterward from Content → Questions → Bulk Upload, picking the paper there.</p>
       <input type="file" id="ppBulkFile" accept=".xlsx,.xls,.csv" class="input-field" title="Choose Excel/CSV file" aria-label="Choose Excel or CSV file" onchange="previewPaperBulk()">
       <div id="ppBulkPreview" style="margin-top:12px"></div>
       <button class="btn btn-primary mt-3" id="ppBulkUploadBtn" style="display:none" onclick="executePaperBulkUpload()">Upload All Papers</button>
@@ -2119,15 +2160,10 @@ window.adminDeletePastPaper = adminDeletePastPaper;
 // it to that subject's own practice-test list instead. Mirrors Past Papers above —
 // same shape, just grouped by Module+Subject instead of Module+College.
 async function adminPracticeTests() {
-  const { data: modules } = await db(sb.from('modules').select('id,name').order('name'), 'Modules error');
-  const mList = modules || [];
-
-  // Every module's tests, every module's subjects, and every test's question
-  // count, in 3 requests total — then grouped client-side into Module →
-  // Subject → Tests (whole-module tests shown in their own section per
-  // module) instead of one flat list per module with the subject as just a
-  // small text label on each row.
-  const [{ data: allTests }, { data: allSubjects }] = await Promise.all([
+  // Everything is loaded in a handful of requests, then grouped client-side:
+  // Year → Module → Subject → Practice Tests (whole-module tests get their own section inside each module).
+  const [tree, { data: allTests }, { data: allSubjects }] = await Promise.all([
+    _adminYearTree(),
     db(sb.from('practice_tests').select('*, subjects(name)').order('display_order'), 'Tests error'),
     db(sb.from('subjects').select('id,name,module_id').order('display_order'), 'Subjects error')
   ]);
@@ -2146,7 +2182,7 @@ async function adminPracticeTests() {
   const testRowHtml = (t) => `
         <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
           <div>
-            <div class="text-sm fw-600">${t.title} ${t.is_active ? '' : '<span class="badge badge-amber" style="font-size:9px">Hidden</span>'}</div>
+            <div class="text-sm fw-600">${esc(t.title)} ${t.is_active ? '' : '<span class="badge badge-amber" style="font-size:9px">Hidden</span>'}</div>
             <div class="text-xs text-muted">${qCounts[t.id] || 0} questions</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
@@ -2155,53 +2191,41 @@ async function adminPracticeTests() {
             <button class="btn btn-danger btn-xs" onclick="adminDeletePracticeTest(${t.id})">🗑</button>
           </div>
         </div>`;
+  const sectionHead = (label, n, danger) => `<div class="admin-sub-head"${danger ? ' style="color:var(--red)"' : ''}><span>${label}</span><span>${n}</span></div>`;
 
-  let testHtml = '';
-  for (const m of mList) {
-    const tests = testsByModule[m.id];
-    if (!tests?.length) continue;
-    const wholeModuleTests = tests.filter(t => !t.subject_id);
+  const moduleFn = (m) => {
+    const tests = testsByModule[m.id] || [];
+    if (!tests.length) return { count: 0, meta: '0 tests', body: '<p class="text-xs text-muted" style="padding:6px 2px">No practice tests yet.</p>' };
+    const whole = tests.filter(t => !t.subject_id);
     const bySubject = {};
     for (const t of tests) {
       if (!t.subject_id) continue;
       if (!bySubject[t.subject_id]) bySubject[t.subject_id] = [];
       bySubject[t.subject_id].push(t);
     }
-    const moduleSubjects = (subjectsByModule[m.id] || []).filter(s => bySubject[s.id]?.length);
-    // A test whose subject_id points at a subject that's since been deleted/moved
-    // to another module would otherwise silently vanish from this screen even
-    // though it's still very much in the database — surfaced here instead under
-    // its own "Unmatched" group so it's never just mixed in or lost from view.
-    const matchedSubjectIds = new Set(moduleSubjects.map(s => s.id));
-    const unmatched = Object.keys(bySubject).filter(sid => !matchedSubjectIds.has(parseInt(sid))).flatMap(sid => bySubject[sid]);
-
-    testHtml += `<div class="card" style="margin-bottom:10px">
-      <div class="fw-700 mb-2">📦 ${m.name}</div>
-      ${wholeModuleTests.length ? `
-      <div class="text-xs fw-700 text-muted mb-1" style="text-transform:uppercase;letter-spacing:.4px">🎯 Whole-Module Tests</div>
-      ${wholeModuleTests.map(testRowHtml).join('')}` : ''}
-      ${moduleSubjects.map(s => `
-      <div class="text-xs fw-700 text-muted mb-1" style="text-transform:uppercase;letter-spacing:.4px;margin-top:10px">📖 ${s.name}</div>
-      ${bySubject[s.id].map(testRowHtml).join('')}`).join('')}
-      ${unmatched.length ? `
-      <div class="text-xs fw-700 mb-1" style="text-transform:uppercase;letter-spacing:.4px;margin-top:10px;color:var(--red)">⚠️ Unmatched Subject</div>
-      ${unmatched.map(testRowHtml).join('')}` : ''}
-    </div>`;
-  }
+    const subjects = (subjectsByModule[m.id] || []).filter(s => bySubject[s.id]?.length);
+    // A test pointing at a subject that has since been deleted/moved would otherwise vanish from this screen
+    // although it is still in the database — shown in its own "Unmatched" group instead of being lost.
+    const matched = new Set(subjects.map(s => s.id));
+    const unmatched = Object.keys(bySubject).filter(sid => !matched.has(parseInt(sid))).flatMap(sid => bySubject[sid]);
+    const body = (whole.length ? sectionHead('🎯 Whole-Module Tests', whole.length) + whole.map(testRowHtml).join('') : '')
+      + subjects.map(s => sectionHead(`📖 ${esc(s.name)}`, bySubject[s.id].length) + bySubject[s.id].map(testRowHtml).join('')).join('')
+      + (unmatched.length ? sectionHead('⚠️ Unmatched Subject', unmatched.length, true) + unmatched.map(testRowHtml).join('') : '');
+    return { count: tests.length, meta: `${tests.length} test${tests.length === 1 ? '' : 's'}`, body };
+  };
 
   document.getElementById('contentTabBody').innerHTML = `
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">➕ Add Practice Test</div>
       <label class="input-label">Module</label>
       <select id="pt_module" class="input-field" title="Select module" aria-label="Select module" onchange="loadSubjectsForPT()">
-        <option value="">Select module</option>
-        ${mList.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+        ${_moduleOptgroups(tree, 'Select module')}
       </select>
-      <label class="input-label">Subject <span class="text-xs text-muted">(leave blank for a whole-module test spanning all subjects)</span></label>
+      <label class="input-label">Subject <span class="text-xs text-muted">(blank = whole-module test)</span></label>
       <select id="pt_subject" class="input-field" title="Select subject" aria-label="Select subject">
         <option value="">Whole Module Test</option>
       </select>
-      <label class="input-label">Test Title <span class="text-xs text-muted">(shown to students, e.g. "Practice Test 1")</span></label>
+      <label class="input-label">Test Title</label>
       <input id="pt_title" class="input-field" placeholder="e.g., Head &amp; Neck Practice Test 1">
       <label class="input-label">Display Order</label>
       <input id="pt_order" type="number" class="input-field" title="Display order" aria-label="Display order" placeholder="1" value="1">
@@ -2212,8 +2236,8 @@ async function adminPracticeTests() {
       </select>
       <button class="btn btn-primary" onclick="adminAddPracticeTest()">Add Practice Test</button>
     </div>
-    <div class="fw-700 mb-2">🎯 Practice Tests by Module → Subject</div>
-    ${testHtml || '<div class="card"><p class="text-muted">No practice tests added yet. Pick a module above, give the test a name (e.g. "Practice Test 1"), then add its questions from the Questions tab.</p></div>'}`;
+    <div class="fw-700 mb-2">🎯 Practice Tests by Year → Module → Subject</div>
+    ${tree.modules.length ? _yearModuleFolds(tree, 'pt', moduleFn, { unit: 'test' }) : '<div class="card"><p class="text-muted">Add a module first.</p></div>'}`;
 }
 window.adminPracticeTests = adminPracticeTests;
 
@@ -2409,12 +2433,11 @@ function bulkStep1Html() {
         </label>
       </div>`;
   }
-  const mOpts = (window._adminModules || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+  const mOpts = window._adminModuleOpts || (window._adminModules || []).map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
   const mode = window._qxMode === 'paper' ? 'paper' : 'module';
   return `
     <div class="card" style="margin-bottom:20px">
       ${qModePaperToggleHtml('qx')}
-      <p class="text-xs text-muted mb-3">This selection is shared by all three upload methods below (AI Text, Excel, JSON).</p>
       <div id="qx_moduleFields" style="display:${mode==='paper'?'none':'block'}">
         <label class="input-label">Module <span class="text-xs text-muted">(required)</span></label>
         <select id="qx_module" class="input-field" title="Select module" aria-label="Select module" onchange="loadSubjectsForQX()">
@@ -2528,6 +2551,7 @@ async function adminQuestions() {
     <div id="qTabBody"></div>`;
 
   window._adminModules = modules || [];
+  try { window._adminModuleOpts = _moduleOptgroups(await _adminYearTree(), ''); } catch (e) { window._adminModuleOpts = ''; }
   // Resume onto whatever inner sub-tab (Add/Browse/Bulk) was open before, else default to Add
   const subTabToOpen = window._currentQSubTab || 'add';
   const subBtn = [...document.querySelectorAll('#contentTabBody .tab-bar .tab-btn')]
@@ -2542,7 +2566,7 @@ function qSubTab(tab, btn) {
   if (tab !== 'bulk') window._bulkLockedTarget = null;
   document.querySelectorAll('#contentTabBody .tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
-  const mOpts = (window._adminModules || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+  const mOpts = window._adminModuleOpts || (window._adminModules || []).map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
 
   if (tab === 'add') {
     document.getElementById('qTabBody').innerHTML = `
@@ -2634,72 +2658,51 @@ function qSubTab(tab, btn) {
       ${bulkStep1Html()}
 
       <div class="card" style="margin-bottom:20px;border:1.5px solid var(--gold-400)">
-        <div class="fw-700 mb-2">🤖 Bulk Upload via AI-Generated Text (Claude / ChatGPT, Recommended)</div>
-        <p class="text-sm mb-3">Copy the full Q&amp;A text from your Claude or ChatGPT chat and paste it below, or upload a <code>.md</code>/<code>.txt</code> file directly. No need to convert it to Excel first. The app will automatically pull out the question, options, correct answer, and explanation, and <b>the explanation's line-breaks/list formatting will stay exactly as it was in the original text</b>, nothing gets squeezed onto one line. The format is flexible: numbered questions, "Q1:", or "## Question 1" headings all work, and options can be "a)", "A.", "(A)", or bolded. No need to match one exact template.</p>
-        <div class="text-xs text-muted mb-3">Typical format: a heading before each question (e.g. <code>## Q1: ...</code>), optionally <code>**Question:**</code>, then <code>a) ... b) ... c) ...</code> options, optionally <code>**Subject:**</code>, then <code>**Correct Answer: (x) ...**</code>, followed by the explanation.</div>
-        <label class="input-label">Step A: Paste the text, or upload a .md/.txt file</label>
+        <div class="fw-700 mb-3">📄 Bulk Upload from Text</div>
         <div class="upload-area" onclick="document.getElementById('qaiFile').click()">
           <div style="font-size:32px">📄</div>
-          <div class="text-sm mt-1">Click to select a .md or .txt file</div>
+          <div class="text-sm mt-1">Select a .md or .txt file</div>
         </div>
         <input type="file" id="qaiFile" accept=".md,.txt,text/markdown,text/plain" style="display:none" onchange="onAIQuestionFilePicked()">
         <div id="qaiFileSummary" class="text-xs text-muted mt-1 mb-2"></div>
-        <textarea id="qai_text" class="input-field" rows="8" style="font-family:monospace;font-size:12px;white-space:pre" placeholder="...or paste the full Claude/ChatGPT text directly here"></textarea>
+        <textarea id="qai_text" class="input-field" rows="8" style="font-family:monospace;font-size:12px;white-space:pre" placeholder="Or paste the questions here"></textarea>
         <button class="btn btn-primary mt-3" onclick="previewAIQuestions()">🔍 Parse &amp; Preview</button>
         <div id="qaiPreview" style="margin-top:12px"></div>
         <button class="btn btn-primary mt-3" id="qaiUploadBtn" style="display:none" onclick="executeAIQuestionUpload()">Upload All Questions</button>
       </div>
 
-      <div class="card" style="margin-bottom:20px;background:var(--surface-2,#f8f9fa);border:1px solid var(--border)">
-        <div class="fw-700 mb-2">📖 How to do it, step by step (for the Excel method)</div>
-        <ol style="padding-left:18px;font-size:13px;line-height:1.9;margin:0">
-          <li><b>Download the template</b> (button below) and open it in Excel.</li>
-          <li>Each row = one question. Add as many rows as you need.</li>
-          <li>If a question <b>has a photo</b>, put just the image's <b>filename</b> in its <code>ImageURL</code> column, e.g. <code>q5.jpg</code> (no full link needed).</li>
-          <li>If a question's <b>explanation has a photo</b>, put its filename in the <code>ExplanationImageURL</code> column, e.g. <code>q5_exp.jpg</code>.</li>
-          <li>If a row has no photo, <b>leave that column blank</b>.</li>
-          <li>Use the "🖼 select multiple images" button below to <b>select all the photos at once</b>, whichever row/column they belong to, all together.</li>
-          <li>Upload the filled Excel file → a preview will appear → tap <b>"Upload All Questions"</b>. Done.</li>
-        </ol>
-        <div class="text-xs text-muted mt-2">⚠️ The filename must match exactly (whatever's written in Excel must match the photo you select). A spelling difference will cause that photo to be missed.</div>
-      </div>
       <div class="card" style="margin-bottom:20px">
-        <div class="fw-700 mb-2">📊 Bulk Upload via Excel / CSV</div>
-        <p class="text-sm mb-3">Select Module/Subject/Paper/Test in Step 1 above. Best for uploading one subject/paper's worth of MCQs at once.</p>
-        <label class="input-label mt-2">Step A: Select all image files (question + explanation photos, all together)</label>
+        <div class="fw-700 mb-3">📊 Bulk Upload from Excel / CSV</div>
+        <label class="input-label">Images (optional)</label>
         <div class="upload-area" onclick="document.getElementById('bulkImageFiles').click()">
           <div style="font-size:32px">🖼</div>
-          <div class="text-sm mt-1">Click to select multiple images</div>
+          <div class="text-sm mt-1">Select multiple images</div>
         </div>
         <input type="file" id="bulkImageFiles" accept="image/*" multiple style="display:none" onchange="onBulkImageFilesPicked()">
         <div id="bulkImageFilesSummary" class="text-xs text-muted mt-1"></div>
-        <label class="input-label mt-2">Step B: Select the filled Excel/CSV file</label>
+        <label class="input-label mt-2">Excel / CSV file</label>
         <div class="upload-area" onclick="document.getElementById('bulkExcelFile').click()">
           <div style="font-size:32px">📊</div>
-          <div class="text-sm mt-1">Click to select Excel (.xlsx) or CSV file</div>
+          <div class="text-sm mt-1">Select an Excel (.xlsx) or CSV file</div>
         </div>
         <input type="file" id="bulkExcelFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="previewBulkExcel()">
         <div id="bulkExcelPreview" style="margin-top:12px"></div>
         <button class="btn btn-primary mt-3" id="bulkExcelUploadBtn" style="display:none" onclick="executeBulkExcelUpload()">Upload All Questions</button>
         <hr class="divider">
-        <div class="fw-700 mb-2">📥 Download Template</div>
-        <p class="text-xs text-muted mb-2">The template already includes 3 example rows (one with an image, one with an explanation-image, one with no image); just look through them and it'll make sense. Columns: Question, OptionA-D (OptionE/F optional), CorrectAnswer (A/B/C/D), Explanation, ImageURL (filename only), ExplanationImageURL (filename only), Tags (comma-separated).</p>
-        <button class="btn btn-secondary" onclick="downloadExcelTemplate()">Download CSV Template</button>
+        <button class="btn btn-secondary" onclick="downloadExcelTemplate()">📥 Download CSV Template</button>
       </div>
 
       <div class="card">
-        <div class="fw-700 mb-2">📂 Bulk Upload via JSON (advanced)</div>
-        <p class="text-sm mb-3">Upload a JSON file with an array of questions. Each must have: <code>module_id, text, options (array), correct_answer (0-3), explanation</code></p>
+        <div class="fw-700 mb-3">📂 Bulk Upload from JSON</div>
         <div class="upload-area" onclick="document.getElementById('bulkFile').click()">
           <div style="font-size:32px">📄</div>
-          <div class="text-sm mt-1">Click to select JSON file</div>
+          <div class="text-sm mt-1">Select a JSON file</div>
         </div>
         <input type="file" id="bulkFile" accept=".json" style="display:none" onchange="previewBulkJSON()">
         <div id="bulkPreview" style="margin-top:12px"></div>
         <button class="btn btn-primary mt-3" id="bulkUploadBtn" style="display:none" onclick="executeBulkUpload()">Upload All Questions</button>
         <hr class="divider">
-        <div class="fw-700 mb-2">📥 Download Template</div>
-        <button class="btn btn-secondary" onclick="downloadJSONTemplate()">Download JSON Template</button>
+        <button class="btn btn-secondary" onclick="downloadJSONTemplate()">📥 Download JSON Template</button>
       </div>`;
     // populates the Past Paper dropdown right away — it no longer depends on a module
     // being picked first. Skipped while a Replace-All target is locked, since those
@@ -3585,7 +3588,7 @@ async function browseQuestions(page) {
   window._qbSelected = new Set(); // reset selection — the list below is rebuilt fresh
   const from = _qbPage * QB_PAGE_SIZE;
   const to = from + QB_PAGE_SIZE - 1;
-  let query = sb.from('questions').select('id,text,correct_answer,options,difficulty,module_id,paper_id,practice_test_id,modules(name),past_papers(title,college_name,paper_year),practice_tests(title)', { count: 'exact' }).order('id', { ascending: false }).range(from, to);
+  let query = sb.from('questions').select('id,text,correct_answer,options,difficulty,module_id,subject_id,paper_id,practice_test_id,modules(name),past_papers(title,college_name,paper_year),practice_tests(title)', { count: 'exact' }).order('module_id', { ascending: true }).order('subject_id', { ascending: true }).order('practice_test_id', { ascending: true }).order('paper_id', { ascending: true }).order('id', { ascending: false }).range(from, to);
   if (moduleId) query = query.eq('module_id', moduleId);
   if (paperId) query = query.eq('paper_id', paperId);
   if (testId) query = query.eq('practice_test_id', testId);
@@ -3594,6 +3597,14 @@ async function browseQuestions(page) {
   if (error) { list.innerHTML = '<div class="card"><p class="text-muted">Couldn\'t load questions. Pull down or retry.</p></div>'; return; }
   if (!qs?.length) { list.innerHTML = `<div class="card"><p class="text-muted">${_qbPage > 0 ? 'No more questions.' : 'No questions found.'}</p></div>`; return; }
   const totalPages = count ? Math.max(1, Math.ceil(count / QB_PAGE_SIZE)) : 1;
+  // Questions are listed folder by folder (Module › Subject › Practice Test, or Past Paper) — never mixed together
+  const subIds = [...new Set(qs.map(q => q.subject_id).filter(Boolean))];
+  const subNames = {};
+  if (subIds.length) {
+    const { data: subRows } = await db(sb.from('subjects').select('id,name').in('id', subIds), 'Subjects error');
+    (subRows || []).forEach(s => { subNames[s.id] = s.name; });
+  }
+  let _lastGroup = null;
   list.innerHTML = `
     <div class="flex-between" style="background:var(--surface-3);border:1px solid var(--border);border-radius:var(--radius-md);padding:9px 12px;margin-bottom:10px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-3)">
@@ -3604,9 +3615,18 @@ async function browseQuestions(page) {
       <button class="btn btn-secondary btn-xs" id="_qbMoveBtn" style="width:auto;opacity:.45;pointer-events:none" onclick="openMoveSelectedModal()" disabled>🔀 Move Selected</button>
     </div>` +
     qs.map(q => {
+      const _gKey = q.paper_id ? `P${q.paper_id}` : `M${q.module_id}/S${q.subject_id || 0}/T${q.practice_test_id || 0}`;
+      let _head = '';
+      if (_gKey !== _lastGroup) {
+        _lastGroup = _gKey;
+        const _pb = [q.past_papers?.college_name, q.past_papers?.paper_year].filter(Boolean).map(esc).join(' ');
+        _head = `<div class="admin-group-head">${q.paper_id
+          ? `📜 ${_pb ? _pb + ' — ' : ''}${esc(q.past_papers?.title) || 'Past paper'}`
+          : `📦 ${esc(q.modules?.name) || 'No module'} › 📖 ${esc(subNames[q.subject_id]) || 'No subject'} › 🎯 ${esc(q.practice_tests?.title) || 'Not in a practice test'}`}</div>`;
+      }
       const paperBits = [q.past_papers?.college_name, q.past_papers?.paper_year].filter(Boolean).map(esc);
       const paperTag = q.past_papers?.title ? ` · 📜 ${paperBits.length ? paperBits.join(' ') + ' — ' : ''}${esc(q.past_papers.title)}` : '';
-      return `
+      return _head + `
     <div class="admin-row">
       <input type="checkbox" class="qb-select" data-id="${q.id}" onchange="_qbSelectionChanged()" style="width:17px;height:17px;accent-color:var(--gold-600);flex-shrink:0;align-self:flex-start;margin-top:2px">
       <div class="admin-row-left">
@@ -4051,7 +4071,6 @@ async function adminErrorLogs(token = window._adminRenderToken, page) {
       <div class="fw-700">🐞 Error Logs</div>
       <span class="badge ${count ? 'badge-amber' : 'badge-green'}">${count || 0} total</span>
     </div>
-    <p class="text-xs text-muted mb-3">Auto-captured from students' devices, newest first. Safe to delete once a fix is confirmed live.</p>
     ${data?.length ? `
     <div class="flex-between" style="background:var(--surface-3);border:1px solid var(--border);border-radius:var(--radius-md);padding:9px 12px;margin-bottom:10px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-3)">
@@ -4202,7 +4221,7 @@ async function adminAnnouncements(token = window._adminRenderToken) {
   document.getElementById('adminContent').innerHTML = `
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-2">🔔 Send Notification</div>
-      <p class="text-xs text-muted mb-2">Goes to every student's notification bell (🔔 icon on Home) and auto-removes itself after 48 hours — no cleanup needed. Different from the banner below: this is for things students should be specifically alerted to, like exam dates or new features.</p>
+      <p class="text-xs text-muted mb-2">Sent to every student's 🔔 bell · removed automatically after 48 hours.</p>
       <label class="input-label">Title</label>
       <input id="ntf_title" class="input-field" placeholder="e.g. 📅 2nd Year Module Exam, June 30">
       <label class="input-label">Message (optional)</label>
@@ -4344,10 +4363,6 @@ async function adminColleges(token = window._adminRenderToken) {
   const { data: colleges } = await db(sb.from('colleges').select('*').order('name'), 'Colleges error');
   if (_renderStale(token)) return;
   document.getElementById('adminContent').innerHTML = `
-    <div class="card" style="margin-bottom:20px">
-      <div class="fw-700 mb-2">ℹ️ About Colleges</div>
-      <p class="text-sm">Colleges control which institutions students can select during signup. Add a college and mark it Active to make it selectable. Students whose college isn't listed yet can choose "Others" instead, and you can still target announcements/notifications at "Others" specifically. Deactivate a college to hide it from new signups without affecting its existing students.</p>
-    </div>
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">➕ Add College</div>
       <label class="input-label">College Full Name</label>
@@ -4595,10 +4610,29 @@ async function adminMonetization(token = window._adminRenderToken) {
       <button class="btn btn-primary mt-3" onclick="createPlan()">Create Plan</button>
     </div>
 
-    <!-- Donation Campaigns -->
+    <!-- Donations -->
     <div class="card" style="margin-bottom:20px">
-      <div class="fw-700 mb-2">💛 Donation Campaigns</div>
-      <p class="text-xs text-muted mb-3">Shown on the student's dedicated Donations page (Profile → Support Us) — stays visible until you pause or delete it (no auto-expiry, unlike announcements). That page only appears to students at all when "Donations Feature" below is switched on.</p>
+      <div class="flex-between mb-1">
+        <div class="fw-700">💛 Donations</div>
+        <label class="toggle-switch" title="Show Support to students">
+          <input type="checkbox" id="set_don_enabled" ${getSetting('donation_enabled') === 'true' ? 'checked' : ''} onchange="toggleDonationFeature(this.checked)">
+          <span class="toggle-knob"></span>
+        </label>
+      </div>
+      <div class="text-xs text-muted mb-3">${getSetting('donation_enabled') === 'true' ? 'On · students see 💛 Support on Home and in Profile' : 'Off · hidden from students'}</div>
+      <label class="input-label">Message to Students</label>
+      <textarea id="set_don_message" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian free for everyone!">${esc(getSetting('donation_message') || 'Help us keep this app free and growing for every student. Any contribution helps!')}</textarea>
+      <label class="input-label">JazzCash</label>
+      <input id="set_don_jazzcash" class="input-field" value="${esc(getSetting('donation_jazzcash'))}" placeholder="e.g. 0300-1234567 (Account Title)">
+      <label class="input-label">Easypaisa</label>
+      <input id="set_don_easypaisa" class="input-field" value="${esc(getSetting('donation_easypaisa'))}" placeholder="e.g. 0345-1234567 (Account Title)">
+      <label class="input-label">Bank Account</label>
+      <textarea id="set_don_bank" class="input-field" rows="2" style="resize:vertical" placeholder="Bank name, account title, account number / IBAN">${esc(getSetting('donation_bank'))}</textarea>
+      <button class="btn btn-primary mt-2" style="width:100%" onclick="saveDonationSettings()">💾 Save</button>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <div class="fw-700 mb-3">🎯 Donation Campaigns</div>
       ${(donations || []).map(d => `
         <div class="admin-row">
           <div class="admin-row-left">
@@ -4606,20 +4640,20 @@ async function adminMonetization(token = window._adminRenderToken) {
             <div class="text-sm text-muted">${esc(d.description) || ''}</div>
             ${d.purpose ? `<div class="text-xs text-muted mt-1">🎯 ${esc(d.purpose)}</div>` : ''}
             ${d.image_url ? `<img src="${esc(d.image_url)}" style="max-width:160px;border-radius:var(--radius-md);margin-top:6px">` : ''}
-            ${d.donation_link ? `<div class="text-xs mt-1"><a href="${esc(d.donation_link)}" target="_blank" style="color:var(--gold-600)">${esc(d.donation_link)}</a></div>` : ''}
+            ${d.donation_link ? `<div class="text-xs mt-1" style="color:var(--gold-700);word-break:break-word">💳 ${esc(d.donation_link)}</div>` : ''}
           </div>
           <div class="admin-row-actions">
             <button class="btn btn-secondary btn-xs" onclick="adminEditDonation(${d.id})">✏️</button>
             <button class="btn btn-secondary btn-xs" onclick="toggleDonation(${d.id},${d.is_active})">${d.is_active ? '⏸ Pause' : '▶ Activate'}</button>
             <button class="btn btn-danger btn-xs" onclick="deleteDonation(${d.id})">🗑</button>
           </div>
-        </div>`).join('') || '<p class="text-muted mb-3">No donation campaigns yet.</p>'}
+        </div>`).join('') || '<p class="text-muted mb-3">No campaigns yet.</p>'}
       <hr class="divider">
-      <div class="fw-700 mb-2">➕ Create Campaign</div>
+      <div class="fw-700 mb-2">➕ New Campaign</div>
       <label class="input-label">Title</label>
       <input id="dn_title" class="input-field" placeholder="e.g., Help Keep LUMHSian Free">
       <label class="input-label">Description</label>
-      <textarea id="dn_desc" class="input-field" rows="2" placeholder="Short, honest explanation of why you're asking"></textarea>
+      <textarea id="dn_desc" class="input-field" rows="2" placeholder="Why you're asking"></textarea>
       <label class="input-label">Purpose (optional)</label>
       <input id="dn_purpose" class="input-field" placeholder="e.g., Server & AI costs">
       <label class="input-label">Image (optional)</label>
@@ -4627,28 +4661,9 @@ async function adminMonetization(token = window._adminRenderToken) {
       <input type="file" id="dn_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('dn_img_file','dn_img_url','dn_img_preview')">
       <img id="dn_img_preview" style="display:none;max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
       <input id="dn_img_url" class="input-field" placeholder="Image URL" readonly>
-      <label class="input-label">Donation Link / Payment Details</label>
-      <input id="dn_link" class="input-field" placeholder="Payment link, or EasyPaisa/JazzCash number">
+      <label class="input-label">Payment details (optional)</label>
+      <input id="dn_link" class="input-field" placeholder="e.g. JazzCash 0300-1234567 (Account Title)">
       <button class="btn btn-primary mt-2" onclick="adminAddDonation()">Create Campaign</button>
-      <hr class="divider">
-      <div class="fw-700 mb-2">⚙️ Donations Page Settings</div>
-      <p class="text-xs text-muted mb-2">Controls the "Support Us" entry in Profile and the page it opens — campaign(s) above, plus whatever payment details you enter below.</p>
-      <div class="flex-between mb-2">
-        <div><div class="fw-600 text-sm">Donations Feature</div><div class="text-xs text-muted">Show "Support Us" to students</div></div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set_don_enabled" ${getSetting('donation_enabled') === 'true' ? 'checked' : ''}>
-          <span class="toggle-knob"></span>
-        </label>
-      </div>
-      <label class="input-label">JazzCash Number</label>
-      <input id="set_don_jazzcash" class="input-field" value="${esc(getSetting('donation_jazzcash'))}" placeholder="e.g. 0300-1234567 (Name)">
-      <label class="input-label">Easypaisa Number</label>
-      <input id="set_don_easypaisa" class="input-field" value="${esc(getSetting('donation_easypaisa'))}" placeholder="e.g. 0345-1234567 (Name)">
-      <label class="input-label">Bank Account Details</label>
-      <textarea id="set_don_bank" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Meezan Bank, Account Title, Account No.">${esc(getSetting('donation_bank'))}</textarea>
-      <label class="input-label">Message to Students</label>
-      <textarea id="set_don_message" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian free for everyone!">${esc(getSetting('donation_message') || 'Help us keep this app free and growing for every student. Any contribution helps!')}</textarea>
-      <button class="btn btn-secondary mt-2" style="width:100%" onclick="saveDonationSettings()">💾 Save Donation Settings</button>
     </div>
 
     <!-- Active Subscriptions -->
@@ -4727,7 +4742,7 @@ async function adminEditDonation(id) {
       <input type="file" id="_ed_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('_ed_img_file','_ed_img_url','_ed_img_preview')">
       <img id="_ed_img_preview" src="${esc(d.image_url||'')}" style="display:${d.image_url?'block':'none'};max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
       <input id="_ed_img_url" class="input-field" value="${esc(d.image_url||'')}" placeholder="Image URL" readonly>
-      <label class="input-label">Donation Link / Payment Details</label>
+      <label class="input-label">Payment details</label>
       <input id="_ed_link" class="input-field" value="${esc(d.donation_link||'')}">
       <div class="btn-row mt-3">
         <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
@@ -4934,7 +4949,6 @@ async function adminAppSettings(token = window._adminRenderToken) {
     <!-- About This App (shown in Profile → About) -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-1">ℹ️ About This App</div>
-      <p class="text-xs text-muted mb-2">Pics + text about the app, shown to every student in Profile → About. Good for a feature highlight, a "how to use" tip, or anything you want students to know.</p>
       <label class="input-label">Image (optional)</label>
       <div class="upload-area" onclick="document.getElementById('ab_img_file').click()">📸 Upload image</div>
       <input type="file" id="ab_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('ab_img_file','ab_img_url','ab_img_preview')">
@@ -4951,7 +4965,6 @@ async function adminAppSettings(token = window._adminRenderToken) {
     <!-- App Wallpaper -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">🖼️ App Background Wallpaper</div>
-      <p class="text-xs text-muted mb-2">Optional subtle background for the whole app. Leave empty for the default clean look.</p>
       <div class="upload-area" onclick="document.getElementById('wallpaper_file').click()">
         ${S('app_wallpaper_url') ? `<img src="${S('app_wallpaper_url')}" style="height:60px;border-radius:8px">` : '📸 Upload Wallpaper'}
       </div>
@@ -4967,7 +4980,7 @@ async function adminAppSettings(token = window._adminRenderToken) {
     <!-- What's New -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">🆕 "What's New" Popup</div>
-      <p class="text-xs text-muted mb-2">Shows once to every student after you publish an update. Bump the version to show it again.</p>
+      <p class="text-xs text-muted mb-2">Bump the version to show it again.</p>
       <label class="input-label">Version Tag</label>
       <input id="set_wn_version" class="input-field" value="${S('whats_new_version') || '1.0'}" placeholder="e.g. 1.1">
       <label class="input-label">What's New Text</label>
@@ -4978,14 +4991,12 @@ async function adminAppSettings(token = window._adminRenderToken) {
     <!-- Backup -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">📦 Database Backup</div>
-      <p class="text-xs text-muted mb-2">Downloads a full JSON snapshot of your data (questions, users, settings, etc.) for safekeeping.</p>
       <button class="btn btn-secondary" onclick="exportFullBackup()">📥 Download Full Backup</button>
     </div>
 
     <!-- Privacy & Legal Text -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">🔒 Privacy & Legal Messages</div>
-      <p class="text-xs text-muted mb-2">Privacy Policy and Terms of Service already have full pages in-app (Profile → About & Legal). The fields below are optional extras.</p>
       <label class="input-label">Privacy Banner Message</label>
       <textarea id="set_privacy" class="input-field" rows="2" placeholder="e.g., Your data is safe with us and never shared with third parties.">${S('privacy_message') || 'Your data is safe with us and is never shared with third parties.'}</textarea>
       <label class="input-label">Terms of Service URL (optional, adds a "view full terms" link)</label>
@@ -5049,7 +5060,6 @@ async function adminAppSettings(token = window._adminRenderToken) {
     <!-- Feature Flags -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">🚩 Feature Flags (Turn Features ON/OFF)</div>
-      <p class="text-xs text-muted mb-3">Control which features are available to students without changing code.</p>
       ${(flags||[]).map(f => `
         <div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border)">
           <div>
@@ -5068,7 +5078,6 @@ async function adminAppSettings(token = window._adminRenderToken) {
     <!-- AI Settings -->
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-3">🤖 AI Tutor Settings</div>
-      <p class="text-xs text-muted mb-2">This powers the "🤖 Explain with AI" button students see during practice/review. Works with any OpenAI-compatible API (DeepSeek, OpenAI) or Google Gemini.</p>
       <label class="input-label">AI Provider</label>
       <select id="ai_provider" class="input-field" title="AI provider" aria-label="AI provider">
         <option value="deepseek" ${S('ai_provider') === 'deepseek' || !S('ai_provider') ? 'selected' : ''}>DeepSeek</option>
@@ -5077,12 +5086,11 @@ async function adminAppSettings(token = window._adminRenderToken) {
       </select>
       <label class="input-label">AI API URL</label>
       <input id="set_ai_url" class="input-field" value="${S('ai_api_url') || 'https://api.deepseek.com/v1'}" placeholder="e.g. https://api.deepseek.com/v1">
-      <div class="text-xs text-muted mb-2">DeepSeek: <code>https://api.deepseek.com/v1</code> · OpenAI: <code>https://api.openai.com/v1</code> · Gemini: <code>https://generativelanguage.googleapis.com/v1beta</code></div>
       <label class="input-label">AI Model Name</label>
       <input id="set_ai_model" class="input-field" value="${S('ai_model') || 'deepseek-chat'}" placeholder="e.g. deepseek-chat, gpt-4o-mini, gemini-1.5-flash">
       <label class="input-label">Global AI API Key (shared for all students)</label>
       <input id="set_ai_key" class="input-field" type="password" value="" maxlength="300" placeholder="${S('ai_key_set') === 'true' ? '🔒 Key already saved, leave blank to keep it' : 'Enter your API key...'}">
-      <div class="text-xs text-muted mb-2">Students never see or need their own key. This one key powers AI Tutor for everyone. For security, a saved key is never shown back here, so leave this field blank when saving other settings to keep it unchanged.</div>
+      <div class="text-xs text-muted mb-2">Leave blank to keep the saved key.</div>
       <label class="input-label">AI Tutor Personality / Instructions</label>
       <textarea id="set_ai_prompt" class="input-field" rows="3" style="resize:vertical">${S('ai_system_prompt') || 'You are an expert MBBS tutor for Pakistani medical students. Explain concepts clearly in simple English. Be concise, accurate, and encouraging.'}</textarea>
       <div class="flex-between mb-2">
@@ -5109,6 +5117,19 @@ async function adminAppSettings(token = window._adminRenderToken) {
   loadAboutCardsList();
 }
 window.adminAppSettings = adminAppSettings;
+
+
+
+// The on/off switch saves immediately (it used to need the separate Save button, so it was easy to flip it and
+// forget — leaving Support hidden from students).
+async function toggleDonationFeature(on) {
+  await saveSetting('donation_enabled', on);
+  await loadAppSettings();
+  showToast(on ? 'Support is now visible to students ✓' : 'Support hidden from students');
+  logAdminAction(on ? 'Enabled Donations' : 'Disabled Donations');
+  adminMonetization();
+}
+window.toggleDonationFeature = toggleDonationFeature;
 
 
 

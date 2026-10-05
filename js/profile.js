@@ -8,55 +8,59 @@ import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, 
 
 
 
-// ==================== AI TUTOR ====================
-// Proper dedicated page (not a small popup) — combines whatever campaign
-// banner the admin has set up (donation_campaigns, e.g. a specific fundraiser
-// with its own title/description/image/link) with the standing payment
-// details (JazzCash/Easypaisa/bank), same pattern as showSubscriptionPlans().
-// Its Profile menu entry is gated by donation_enabled (see renderProfile
-// below) — turning that off makes this page disappear from Profile entirely,
-// same as payment_enabled does for the Subscriptions page.
+// ==================== SUPPORT / DONATIONS ====================
+// Opened from the 💛 Support chip on Home (when the admin turns Donations on) and from Profile → Support Us.
+// Shows the admin's message, any live campaigns (informational — they carry their own payment details with a
+// Copy button, never a link, because a payment number is not a URL) and the standing JazzCash / Easypaisa / bank
+// details. Back always returns to wherever it was opened from.
 async function showDonationPage() {
+  if (getSetting('donation_enabled', 'false') !== 'true') { showToast('Support is not available right now.'); return; }
   showLoading(true, 'Loading...');
   const { data: campaigns } = await db(sb.from('donation_campaigns').select('*').eq('is_active', true).order('created_at', { ascending: false }), 'Donation error');
   showLoading(false);
-  const jazzcash = getSetting('donation_jazzcash','');
-  const easypaisa = getSetting('donation_easypaisa','');
-  const bank = getSetting('donation_bank','');
-  const message = getSetting('donation_message','Help us keep this app free and growing for every student. Any contribution helps!');
+  const jazzcash = getSetting('donation_jazzcash', '');
+  const easypaisa = getSetting('donation_easypaisa', '');
+  const bank = getSetting('donation_bank', '');
+  const message = getSetting('donation_message', 'Help us keep this app free and growing for every student. Any contribution helps!');
 
-  const row = (label, value, icon) => value ? `
+  const copyBtn = value => `<button class="btn btn-secondary btn-xs" style="flex-shrink:0" onclick="navigator.clipboard?.writeText('${escJs(value)}');showToast('Copied ✓')">📋 Copy</button>`;
+  const payRow = (icon, label, value) => value ? `
     <div class="card" style="margin-bottom:10px;padding:14px">
       <div class="text-xs text-muted mb-1">${icon} ${label}</div>
-      <div class="flex-between">
-        <div class="fw-700">${esc(value)}</div>
-        <button class="btn btn-secondary btn-xs" onclick="navigator.clipboard?.writeText('${escJs(value)}');showToast('Copied ✓')">📋 Copy</button>
+      <div class="flex-between" style="gap:10px;align-items:flex-start">
+        <div class="fw-700" style="word-break:break-word;white-space:pre-line;min-width:0">${esc(value)}</div>
+        ${copyBtn(value)}
       </div>
     </div>` : '';
 
-  const campaignHtml = (campaigns||[]).map(c => `
+  const campaignHtml = (campaigns || []).map(c => `
     <div class="card" style="margin-bottom:14px;overflow:hidden;padding:0">
-      ${c.image_url ? `<img src="${esc(c.image_url)}" style="width:100%;max-height:160px;object-fit:cover">` : ''}
+      ${c.image_url ? `<img src="${esc(c.image_url)}" style="width:100%;max-height:160px;object-fit:cover" onerror="this.style.display='none'">` : ''}
       <div style="padding:14px">
         <div class="fw-700" style="font-size:16px">${esc(c.title)}</div>
         ${c.description ? `<p class="text-sm text-muted" style="margin-top:4px">${esc(c.description)}</p>` : ''}
-        ${c.donation_link ? `<a href="${esc(c.donation_link)}" target="_blank" rel="noopener" class="btn btn-primary mt-2" style="width:100%">Support This Campaign</a>` : ''}
+        ${c.purpose ? `<div class="text-xs mt-2" style="color:var(--gold-700)">🎯 ${esc(c.purpose)}</div>` : ''}
+        ${c.donation_link ? `<div class="flex-between mt-2" style="gap:10px;padding:10px 12px;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:var(--radius-md)">
+          <div class="text-sm fw-600" style="word-break:break-word;min-width:0">${esc(c.donation_link)}</div>${copyBtn(c.donation_link)}
+        </div>` : ''}
       </div>
     </div>`).join('');
 
-  const wrap = document.getElementById('profilePageWrap');
+  const hasMethods = jazzcash || easypaisa || bank;
+  const wrap = document.getElementById('supportPageWrap');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="renderProfile()">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin-bottom:16px;text-align:center">
       <div style="font-size:36px;margin-bottom:4px">💛</div>
       <h2>Support LUMHSian</h2>
       <p>${esc(message)}</p>
     </div>
     ${campaignHtml}
-    ${row('JazzCash', jazzcash, '📱')}
-    ${row('Easypaisa', easypaisa, '📱')}
-    ${row('Bank Account', bank, '🏦')}
-    ${!campaigns?.length && !jazzcash && !easypaisa && !bank ? '<div class="card text-center"><p class="text-muted">Payment details coming soon.</p></div>' : ''}`;
+    ${hasMethods ? `<div class="section-label">Ways to donate</div>${payRow('📱', 'JazzCash', jazzcash)}${payRow('📱', 'Easypaisa', easypaisa)}${payRow('🏦', 'Bank Account', bank)}` : ''}
+    ${!campaigns?.length && !hasMethods ? '<div class="card text-center"><p class="text-muted">Payment details coming soon.</p></div>' : ''}
+    ${hasMethods || campaigns?.length ? `<button class="btn btn-secondary mt-2" style="width:100%" onclick="openFeedbackModal()">💬 Donated? Let us know</button>` : ''}
+    <div style="height:16px"></div>`;
+  showScreen('support');
 }
 window.showDonationPage = showDonationPage;
 
@@ -329,6 +333,9 @@ function _closeLegalPage() {
   if (window.currentUser) { renderHome(); showScreen('home'); }
   else showScreen('splash', false);
 }
+// Called from an inline onclick, so it must live on window — without this the Back button on the Privacy Policy /
+// Terms / About pages opened from the login screen threw "not defined" and did nothing.
+window._closeLegalPage = _closeLegalPage;
 
 
 
@@ -370,7 +377,7 @@ async function showAboutPage(standalone = false) {
       </div>
       <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="font-size:20px;flex-shrink:0">🔖</div>
-        <div><div class="fw-700 text-sm">Bookmarks & Wrong Attempts</div><div class="text-xs text-muted" style="line-height:1.5">Save tough questions and revisit everything you have gotten wrong until it sticks</div></div>
+        <div><div class="fw-700 text-sm">Bookmarks & Wrong Questions</div><div class="text-xs text-muted" style="line-height:1.5">Save tough questions and revisit everything you have gotten wrong until it sticks</div></div>
       </div>
       <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="font-size:20px;flex-shrink:0">📅</div>
@@ -605,7 +612,11 @@ export async function renderProfile() {
       <span style="color:var(--ink-4)">›</span>
     </div>
     <div class="list-item" onclick="navGo('wrongattempts')">
-      <div class="list-item-left"><div class="list-item-icon">❌</div><div><div class="list-item-title">Wrong Attempts</div><div class="list-item-sub">Questions you got wrong, revise & clear</div></div></div>
+      <div class="list-item-left"><div class="list-item-icon">❌</div><div><div class="list-item-title">Wrong Questions</div><div class="list-item-sub">Sorted by module, subject & test</div></div></div>
+      <span style="color:var(--ink-4)">›</span>
+    </div>
+    <div class="list-item" onclick="navGo('savedtests')">
+      <div class="list-item-left"><div class="list-item-icon">📁</div><div><div class="list-item-title">Saved Tests</div><div class="list-item-sub">Your Make Your Own tests</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
     <div class="list-item" onclick="navGo('planner')">
@@ -779,7 +790,7 @@ export async function renderBookmarks() {
   );
 
   if (!bookmarks?.length) {
-    wrap.innerHTML = `<div class="card text-center" style="padding:40px 20px">
+    wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card text-center" style="padding:40px 20px">
       <div style="font-size:48px">📖</div>
       <h3 style="margin-top:12px">No Bookmarks Yet</h3>
       <p class="mt-2">Tap the Bookmark button during a test to save questions here.</p>
@@ -817,6 +828,7 @@ export async function renderBookmarks() {
   };
 
   wrap.innerHTML = `
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin-bottom:16px">
       <h2>📖 Bookmarks</h2>
       <p>${bookmarks.length} saved questions</p>
@@ -878,50 +890,209 @@ async function removeBookmarkById(qid) {
 
 
 
-// ==================== WRONG ATTEMPTS ====================
-export async function renderWrongAttempts() {
-  const wrap = document.getElementById('wrongAttemptsPageWrap');
-  wrap.innerHTML = `${skeletonList(3)}`;
-  const { data: wrongs } = await db(
-    sb.from('wrong_attempts').select('*, questions(id,text,options,correct_answer,explanation,image_url,module_id,subject_id,paper_id,modules(name),subjects(name),past_papers(title))').eq('email', window.currentUser.email).order('last_wrong_at', { ascending: false }),
-    'Wrong attempts load failed'
+// ==================== WRONG QUESTIONS ====================
+// Only questions that were ATTEMPTED and answered wrong are kept here — skipped ones never are, and Review mode
+// never saves anything. They are filed by where they really belong, never mixed together:
+//   Module → Subject → Practice Test → questions      (Make Your Own Test questions go to their original test)
+//   Past Papers → Paper → questions
+// The folder being viewed lives in window._waPath (and the loaded data in window._waData) so Back, Remove and
+// "View Question" always return to the same folder.
+const WA_BATCH = 150;
+
+async function _waLoad() {
+  const email = window.currentUser.email;
+  const { data: rows } = await db(
+    sb.from('wrong_attempts').select('question_id,wrong_count,last_wrong_at').eq('email', email).order('last_wrong_at', { ascending: false }),
+    'Wrong questions load failed'
   );
+  const wrongs = rows || [];
+  const data = { items: [], modules: {}, subjects: {}, tests: {}, papers: {} };
+  if (!wrongs.length) return data;
 
-  if (!wrongs?.length) {
-    wrap.innerHTML = `<div class="card text-center" style="padding:40px 20px">
-      <div style="font-size:48px">✅</div>
-      <h3 style="margin-top:12px">No Wrong Attempts</h3>
-      <p class="mt-2">Questions you answer incorrectly during a test are saved here automatically, so you can come back and revise them.</p>
-    </div>`;
-    return;
+  // Plain selects + separate lookups (not embedded joins) so a missing relationship can never blank the whole screen
+  const qMap = {};
+  const ids = wrongs.map(w => w.question_id);
+  for (let i = 0; i < ids.length; i += WA_BATCH) {
+    const { data: qs } = await db(sb.from('questions').select('id,text,module_id,subject_id,paper_id,practice_test_id').in('id', ids.slice(i, i + WA_BATCH)), 'Questions load failed');
+    for (const q of (qs || [])) qMap[q.id] = q;
   }
+  const uniq = arr => [...new Set(arr.filter(Boolean))];
+  const qList = Object.values(qMap);
+  const testIds = uniq(qList.map(q => q.practice_test_id));
+  const paperIds = uniq(qList.map(q => q.paper_id));
+  const [tRes, pRes] = await Promise.all([
+    testIds.length ? db(sb.from('practice_tests').select('id,title,module_id,subject_id').in('id', testIds), 'Tests load failed') : Promise.resolve({ data: [] }),
+    paperIds.length ? db(sb.from('past_papers').select('*').in('id', paperIds), 'Papers load failed') : Promise.resolve({ data: [] })
+  ]);
+  for (const t of (tRes.data || [])) data.tests[t.id] = t;
+  for (const p of (pRes.data || [])) data.papers[p.id] = p;
 
-  const rows = wrongs.map(w => {
-    const q = w.questions;
-    // Build context line: Module › Subject or Paper — same convention as Bookmarks
-    const contextParts = [];
-    if (q?.modules?.name) contextParts.push(q.modules.name);
-    if (q?.past_papers?.title) contextParts.push(q.past_papers.title);
-    else if (q?.subjects?.name) contextParts.push(q.subjects.name);
-    const contextLine = contextParts.length ? `<div class="text-xs text-muted" style="margin-bottom:6px;color:var(--gold-600)">📍 ${contextParts.join(' › ')}</div>` : '';
-    const missedBadge = (w.wrong_count || 1) > 1 ? ` <span class="badge badge-red">Missed ${w.wrong_count}×</span>` : '';
+  const modIds = uniq([...qList.map(q => q.module_id), ...Object.values(data.tests).map(t => t.module_id)]);
+  const subIds = uniq([...qList.map(q => q.subject_id), ...Object.values(data.tests).map(t => t.subject_id)]);
+  const [mRes, sRes] = await Promise.all([
+    modIds.length ? db(sb.from('modules').select('id,name').in('id', modIds), 'Modules load failed') : Promise.resolve({ data: [] }),
+    subIds.length ? db(sb.from('subjects').select('id,name').in('id', subIds), 'Subjects load failed') : Promise.resolve({ data: [] })
+  ]);
+  for (const m of (mRes.data || [])) data.modules[m.id] = m;
+  for (const s of (sRes.data || [])) data.subjects[s.id] = s;
+
+  for (const w of wrongs) {
+    const q = qMap[w.question_id];
+    if (!q) continue; // the admin deleted this question
+    const item = { qid: q.id, text: q.text || '', count: w.wrong_count || 1 };
+    if (q.paper_id && data.papers[q.paper_id]) {
+      item.paperId = q.paper_id;
+    } else {
+      // A practice test row is the authority on where its questions live (a question's own module/subject can drift)
+      const t = q.practice_test_id ? data.tests[q.practice_test_id] : null;
+      item.moduleId = (t ? t.module_id : q.module_id) || 0;
+      item.subjectId = (t ? t.subject_id : q.subject_id) || 0;
+      item.testId = t ? t.id : 0;
+    }
+    data.items.push(item);
+  }
+  return data;
+}
+
+// Folder paths: '' (root) · 'M12' · 'M12/S5' · 'M12/S5/T9' (questions) · 'PP' (papers) · 'PP/P7' (questions)
+function _waParse(path) {
+  const o = { papers: false };
+  for (const part of String(path || '').split('/').filter(Boolean)) {
+    const m = /^(PP|M|S|T|P)(\d*)$/.exec(part);
+    if (!m) continue;
+    if (m[1] === 'PP') o.papers = true;
+    else o[m[1]] = parseInt(m[2] || '0', 10) || 0;
+  }
+  return o;
+}
+
+function _waItemsFor(P) {
+  return window._waData.items.filter(it => {
+    if (P.papers) return !!it.paperId && (!('P' in P) || it.paperId === P.P);
+    if (it.paperId) return false;
+    if ('M' in P && it.moduleId !== P.M) return false;
+    if ('S' in P && it.subjectId !== P.S) return false;
+    if ('T' in P && it.testId !== P.T) return false;
+    return true;
+  });
+}
+
+function _waGroup(items, keyFn) {
+  const map = new Map();
+  for (const it of items) {
+    const k = keyFn(it);
+    map.set(k, (map.get(k) || 0) + 1);
+  }
+  return [...map.entries()].map(([id, count]) => ({ id, count }));
+}
+
+function _waFolder(icon, name, sub, count, path) {
+  return `<div class="card" style="display:flex;align-items:center;gap:12px;padding:13px 14px;margin-bottom:8px;cursor:pointer" onclick="waOpen('${path}')">
+    <div style="font-size:22px;width:30px;text-align:center;flex-shrink:0">${icon}</div>
+    <div style="flex:1;min-width:0">
+      <div class="fw-700 text-sm" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div>
+      <div class="text-xs text-muted">${esc(sub)}</div>
+    </div>
+    <span class="badge badge-red">${count}</span>
+    <span style="color:var(--ink-4);font-size:18px">›</span>
+  </div>`;
+}
+
+function _waQuestionCards(items) {
+  return items.map(it => {
+    const missed = it.count > 1 ? ` <span class="badge badge-red">Missed ${it.count}×</span>` : '';
+    const txt = it.text.length > 120 ? esc(it.text.substring(0, 120)) + '...' : esc(it.text);
     return `<div class="card" style="margin-bottom:8px">
-      ${contextLine}
-      <div style="font-size:14px;font-weight:600;line-height:1.5;margin-bottom:10px">${q?.text?.substring(0, 120) || 'Question not found'}${(q?.text?.length || 0) > 120 ? '...' : ''}${missedBadge}</div>
+      <div style="font-size:14px;font-weight:600;line-height:1.5;margin-bottom:10px">${txt || 'Question'}${missed}</div>
       <div class="btn-row">
-        <button class="btn btn-secondary btn-xs" onclick="showWrongQ(${q?.id})">View Question</button>
-        <button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmRemoveWrongAttempt(${q?.id})">Remove</button>
+        <button class="btn btn-secondary btn-xs" onclick="showWrongQ(${it.qid})">View Question</button>
+        <button class="btn btn-ghost btn-xs" style="color:var(--red)" onclick="confirmRemoveWrongAttempt(${it.qid})">Remove</button>
       </div>
     </div>`;
   }).join('');
+}
 
-  wrap.innerHTML = `
-    <div class="card-teal" style="margin-bottom:16px">
-      <h2>❌ Wrong Attempts</h2>
-      <p>${wrongs.length} question${wrongs.length === 1 ? '' : 's'} to revise</p>
-    </div>
-    ${rows}
-    <div style="height:16px"></div>`;
+function waOpen(path) {
+  const D = window._waData;
+  const wrap = document.getElementById('wrongAttemptsPageWrap');
+  if (!D || !wrap) return renderWrongAttempts();
+
+  // If a folder just emptied (its last question was removed), climb to the nearest folder that still has questions
+  let cur = path || '';
+  while (cur && !_waItemsFor(_waParse(cur)).length) cur = cur.split('/').slice(0, -1).join('/');
+  window._waPath = cur;
+  const P = _waParse(cur);
+  // the root lists everything (module folders AND the Past Papers folder); deeper folders filter by their own path
+  const items = cur ? _waItemsFor(P) : D.items.slice();
+  const modName = id => id ? (D.modules[id]?.name || 'Module') : 'Other questions';
+  const subName = id => id ? (D.subjects[id]?.name || 'Subject') : 'Whole module';
+  const testName = id => id ? (D.tests[id]?.title || 'Practice test') : 'Other questions';
+  const parentPath = cur.split('/').slice(0, -1).join('/');
+  const back = (label, target) => `<button class="back-btn" onclick="${target}">← ${esc(label)}</button>`;
+  const header = (title, crumb, n) => `<div class="card-teal" style="margin-bottom:14px">
+      <h2 style="margin-bottom:2px">${esc(title)}</h2>
+      ${crumb ? `<div class="text-xs" style="opacity:.85;margin-bottom:2px">${esc(crumb)}</div>` : ''}
+      <p>Wrong attempt questions · ${n}</p>
+    </div>`;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const byName = (nameFn) => (a, b) => nameFn(a.id).localeCompare(nameFn(b.id));
+  let html = '';
+
+  if (!cur) {
+    if (!items.length) {
+      wrap.innerHTML = `${back('Back', 'goBack()')}<div class="card text-center" style="padding:40px 20px">
+        <div style="font-size:48px">✅</div>
+        <h3 style="margin-top:12px">No Wrong Questions</h3>
+        <p class="mt-2">Questions you answer incorrectly in an Attempt are saved here, sorted by module, subject and test, so you can revise them. Skipped questions and Review mode are never saved.</p>
+      </div>`;
+      return;
+    }
+    const moduleItems = items.filter(i => !i.paperId);
+    const paperItems = items.filter(i => i.paperId);
+    html = back('Back', 'goBack()') + `<div class="card-teal" style="margin-bottom:14px">
+        <h2>❌ Wrong Questions</h2>
+        <p>${plural(items.length, 'question')} you attempted and got wrong</p>
+      </div>`;
+    const mods = _waGroup(moduleItems, i => i.moduleId).sort(byName(modName));
+    if (mods.length) html += `<div class="section-label">Modules</div>` + mods.map(m => {
+      const subCount = new Set(moduleItems.filter(i => i.moduleId === m.id).map(i => i.subjectId)).size;
+      return _waFolder('📚', modName(m.id), plural(m.count, 'wrong question') + (m.id ? ` · ${plural(subCount, 'subject')}` : ''), m.count, 'M' + m.id);
+    }).join('');
+    if (paperItems.length) {
+      const nPapers = new Set(paperItems.map(i => i.paperId)).size;
+      html += `<div class="section-label">Past Papers</div>` + _waFolder('📜', 'Past Papers', `${plural(paperItems.length, 'wrong question')} · ${plural(nPapers, 'paper')}`, paperItems.length, 'PP');
+    }
+  } else if (P.papers && !('P' in P)) {
+    const papers = _waGroup(items, i => i.paperId).sort((a, b) => (D.papers[a.id]?.title || '').localeCompare(D.papers[b.id]?.title || ''));
+    html = back('Wrong Questions', "waOpen('')") + header('Past Papers', '', items.length)
+      + papers.map(p => _waFolder('📄', D.papers[p.id]?.title || 'Paper', plural(p.count, 'wrong question'), p.count, 'PP/P' + p.id)).join('');
+  } else if (P.papers) {
+    html = back('Past Papers', "waOpen('PP')") + header(D.papers[P.P]?.title || 'Paper', 'Past Papers', items.length) + _waQuestionCards(items);
+  } else if (!('S' in P)) {
+    const subs = _waGroup(items, i => i.subjectId).sort(byName(subName));
+    html = back('Wrong Questions', "waOpen('')") + header(modName(P.M), '', items.length)
+      + subs.map(s => {
+        const nTests = new Set(items.filter(i => i.subjectId === s.id).map(i => i.testId)).size;
+        return _waFolder('🧪', subName(s.id), `${plural(s.count, 'wrong question')} · ${plural(nTests, 'test')}`, s.count, `M${P.M}/S${s.id}`);
+      }).join('');
+  } else if (!('T' in P)) {
+    const tests = _waGroup(items, i => i.testId).sort(byName(testName));
+    html = back(modName(P.M), `waOpen('${parentPath}')`) + header(subName(P.S), modName(P.M), items.length)
+      + tests.map(t => _waFolder('📝', testName(t.id), plural(t.count, 'wrong question'), t.count, `M${P.M}/S${P.S}/T${t.id}`)).join('');
+  } else {
+    html = back(subName(P.S), `waOpen('${parentPath}')`) + header(testName(P.T), `${modName(P.M)} › ${subName(P.S)}`, items.length) + _waQuestionCards(items);
+  }
+  wrap.innerHTML = html + '<div style="height:16px"></div>';
+  window.scrollTo(0, 0);
+}
+window.waOpen = waOpen;
+
+export async function renderWrongAttempts() {
+  const wrap = document.getElementById('wrongAttemptsPageWrap');
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(3)}`;
+  window._waData = await _waLoad();
+  window._waPath = '';
+  waOpen('');
 }
 window.renderWrongAttempts = renderWrongAttempts;
 
@@ -939,7 +1110,7 @@ async function showWrongQ(qid) {
   const optHtml = opts.map((o, i) => `<div style="padding:10px 14px;border-radius:12px;margin-bottom:6px;font-size:14px;border:1.5px solid ${i === q.correct_answer ? 'var(--green)' : 'var(--border)'};background:${i === q.correct_answer ? 'var(--green-light)' : 'var(--surface)'}"><span style="font-weight:700;margin-right:8px">${letters[i]}.</span>${esc(o)}</div>`).join('');
   const wrap = document.getElementById('wrongAttemptsPageWrap');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="renderWrongAttempts()">← Back to Wrong Attempts</button>
+    <button class="back-btn" onclick="waOpen(window._waPath || '')">← Back</button>
     <div class="card-elevated" style="margin-bottom:20px">
       <div style="font-size:15px;font-weight:600;line-height:1.6">${esc(q.text)}</div>
       ${q.image_url ? `<img src="${esc(q.image_url)}" style="max-width:100%;border-radius:12px;margin-top:10px" onerror="this.style.display='none'">` : ''}
@@ -957,15 +1128,16 @@ async function showWrongQ(qid) {
       <button class="btn btn-ghost" onclick="openReportModal(${q.id})">🚩 Report</button>
       <button class="btn btn-secondary" onclick="quickBookmarkQuestion(${q.id}, this)">${existingBm ? '🔖 Saved ✓' : '📖 Save'}</button>
     </div>
-    <button class="btn btn-ghost mt-2" style="color:var(--red);width:100%" onclick="confirmRemoveWrongAttempt(${q.id})">🗑 Remove from Wrong Attempts</button>
+    <button class="btn btn-ghost mt-2" style="color:var(--red);width:100%" onclick="confirmRemoveWrongAttempt(${q.id})">🗑 Remove from Wrong Questions</button>
   `;
+  window.scrollTo(0, 0);
 }
 window.showWrongQ = showWrongQ;
 
 
 
 function confirmRemoveWrongAttempt(qid) {
-  showConfirm('Remove this question from Wrong Attempts?', () => removeWrongAttempt(qid), 'Remove', true);
+  showConfirm('Remove this question from Wrong Questions?', () => removeWrongAttempt(qid), 'Remove', true);
 }
 window.confirmRemoveWrongAttempt = confirmRemoveWrongAttempt;
 
@@ -973,8 +1145,13 @@ window.confirmRemoveWrongAttempt = confirmRemoveWrongAttempt;
 
 async function removeWrongAttempt(qid) {
   await db(sb.from('wrong_attempts').delete().eq('email', window.currentUser.email).eq('question_id', qid), 'Remove failed');
-  showToast('Removed from Wrong Attempts');
-  renderWrongAttempts();
+  showToast('Removed from Wrong Questions');
+  if (window._waData) {
+    window._waData.items = window._waData.items.filter(i => i.qid !== qid);
+    waOpen(window._waPath || '');   // stays in the same folder (or the nearest one that still has questions)
+  } else {
+    renderWrongAttempts();
+  }
 }
 
 
@@ -1033,6 +1210,7 @@ export async function renderPlanner() {
     }).join('') + '</div>';
 
   wrap.innerHTML = `
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin-bottom:16px">
       <h2>📅 Study Planner</h2>
       <p>Stay consistent, future doctor!</p>

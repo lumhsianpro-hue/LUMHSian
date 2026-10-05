@@ -532,60 +532,62 @@ export async function renderHome() {
         .lumhsian-pulse-line, .lumhsian-stat-num { animation: none !important; }
       }
     </style>
-    <div style="background:linear-gradient(150deg,#5e4600 0%,#c9980a 55%,#e0ac1e 100%);border-radius:var(--radius-xl);padding:16px 20px 18px;margin-bottom:12px;color:white;position:relative;overflow:hidden;box-shadow:0 10px 28px -10px rgba(122,92,0,.55)">
+    <div style="background:linear-gradient(150deg,#5e4600 0%,#c9980a 55%,#e0ac1e 100%);border-radius:var(--radius-xl);padding:11px 15px 12px;margin-bottom:10px;color:white;position:relative;overflow:hidden;box-shadow:0 10px 28px -10px rgba(122,92,0,.55)">
       <div style="position:absolute;top:-24px;right:-16px;font-size:88px;opacity:.07;line-height:1;transform:rotate(-8deg)">${ICON_STETHOSCOPE}</div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;position:relative">
-        <div onclick="openNotificationBell()" style="cursor:pointer;font-size:21px;width:40px;height:40px;background:rgba(255,255,255,.16);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;position:relative">
+        ${getSetting('donation_enabled','false') === 'true' ? `<div class="home-support-chip" onclick="showDonationPage()">💛 Support</div>` : '<span></span>'}
+        <div onclick="openNotificationBell()" style="cursor:pointer;font-size:19px;width:36px;height:36px;background:rgba(255,255,255,.16);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative">
           ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:18px;height:18px;align-items:center;justify-content:center;padding:0 4px;border:2px solid #7a5c00">0</span>
         </div>
       </div>
-      <div class="flex-between" style="margin-bottom:14px;position:relative">
+      <div class="flex-between" style="margin-bottom:8px;position:relative">
         <div>
           <div style="font-size:11px;opacity:.75;font-weight:600;text-transform:uppercase;letter-spacing:.8px">${greeting}</div>
-          <div style="font-family:var(--font-display);font-size:21px;font-weight:800;margin-top:3px;letter-spacing:-.2px">Dr. ${esc(window.currentUser.name)}</div>
+          <div style="font-family:var(--font-display);font-size:19px;font-weight:800;margin-top:2px;letter-spacing:-.2px">Dr. ${esc(window.currentUser.name)}</div>
           <div style="font-size:12px;opacity:.75;margin-top:2px">${esc(window.currentUser.college||'Student')}</div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:32px;width:52px;height:52px;background:rgba(255,255,255,.14);border-radius:16px;display:flex;align-items:center;justify-content:center;margin-left:auto">${avatarEmoji}</div>
+          <div style="font-size:26px;width:44px;height:44px;background:rgba(255,255,255,.14);border-radius:14px;display:flex;align-items:center;justify-content:center;margin-left:auto">${avatarEmoji}</div>
           <div onclick="changeYear()" style="font-size:11px;opacity:.9;margin-top:6px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${esc(myYearName||'Set Year')} ${ICON_EDIT}</div>
         </div>
       </div>
-      <svg class="lumhsian-pulse-line" width="100%" height="16" viewBox="0 0 300 16" preserveAspectRatio="none" style="display:block;opacity:.32;margin-bottom:10px" stroke-dasharray="300">
+      <svg class="lumhsian-pulse-line" width="100%" height="11" viewBox="0 0 300 16" preserveAspectRatio="none" style="display:block;opacity:.32;margin-bottom:7px" stroke-dasharray="300">
         <path d="M0,8 L36,8 L42,1 L49,15 L55,8 L106,8 L112,1 L119,15 L125,8 L176,8 L182,1 L189,15 L195,8 L246,8 L252,1 L259,15 L265,8 L300,8" stroke="white" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
-          <div style="font-size:13px;opacity:.85;margin-bottom:2px">🎯</div>
-          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display)" data-count="${acc}" data-suffix="%">0%</div>
-          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Accuracy</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:7px 4px 6px;text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:1px">🎯</div>
+          <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display)" data-count="${acc}" data-suffix="%">0%</div>
+          <div style="font-size:9.5px;opacity:.72;margin-top:1px;font-weight:500">Accuracy</div>
         </div>
-        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
-          <div style="font-size:13px;opacity:.85;margin-bottom:2px">📝</div>
-          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display);animation-delay:.05s" data-count="${stats.total_tests||0}" data-suffix="">0</div>
-          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Tests</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:7px 4px 6px;text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:1px">📝</div>
+          <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display);animation-delay:.05s" data-count="${stats.total_tests||0}" data-suffix="">0</div>
+          <div style="font-size:9.5px;opacity:.72;margin-top:1px;font-weight:500">Tests</div>
         </div>
-        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
-          <div style="font-size:13px;opacity:.85;margin-bottom:2px">${ICON_FIRE}</div>
-          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display);animation-delay:.1s" data-count="${stats.streak||0}" data-suffix="">0</div>
-          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Streak</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:7px 4px 6px;text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:1px">${ICON_FIRE}</div>
+          <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display);animation-delay:.1s" data-count="${stats.streak||0}" data-suffix="">0</div>
+          <div style="font-size:9.5px;opacity:.72;margin-top:1px;font-weight:500">Streak</div>
         </div>
-        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 6px 9px;text-align:center">
-          <div style="font-size:13px;opacity:.85;margin-bottom:2px">🏆</div>
-          <div class="lumhsian-stat-num" style="font-size:19px;font-weight:800;font-family:var(--font-display);animation-delay:.15s">${rankData.rank?'#'+rankData.rank:'—'}</div>
-          <div style="font-size:10px;opacity:.72;margin-top:2px;font-weight:500">Rank</div>
+        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:7px 4px 6px;text-align:center">
+          <div style="font-size:11px;opacity:.85;margin-bottom:1px">🏆</div>
+          <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display);animation-delay:.15s">${rankData.rank?'#'+rankData.rank:'—'}</div>
+          <div style="font-size:9.5px;opacity:.72;margin-top:1px;font-weight:500">Rank</div>
         </div>
       </div>
     </div>
 
     ${announceHtml}
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:5px;margin-bottom:16px">
+    <div class="quick-row">
       <div class="quick-tile" onclick="navGo('modules')"><span class="quick-tile-icon">${ICON_BOOK}</span><span class="quick-tile-label">Modules</span></div>
       <div class="quick-tile" onclick="openPastPapersRoot()"><span class="quick-tile-icon">${ICON_BUILDING}</span><span class="quick-tile-label">Past Papers</span></div>
       <div class="quick-tile" onclick="openCustomTestBuilder()"><span class="quick-tile-icon">🛠️</span><span class="quick-tile-label">Own Test</span></div>
       ${isAIEnabled() ? `<div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">${ICON_ROBOT}</span><span class="quick-tile-label">AI Tutor</span></div>` : ''}
       <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">${ICON_BOOKMARK}</span><span class="quick-tile-label">Bookmark</span></div>
-      <div class="quick-tile" onclick="navGo('wrongattempts')"><span class="quick-tile-icon">${ICON_X_CIRCLE}</span><span class="quick-tile-label">Wrong</span></div>
+      <div class="quick-tile" onclick="navGo('wrongattempts')"><span class="quick-tile-icon">${ICON_X_CIRCLE}</span><span class="quick-tile-label">Wrong Qs</span></div>
+      <div class="quick-tile" onclick="navGo('savedtests')"><span class="quick-tile-icon">📁</span><span class="quick-tile-label">Saved Tests</span></div>
       <div class="quick-tile" onclick="navGo('planner')"><span class="quick-tile-icon">${ICON_CALENDAR}</span><span class="quick-tile-label">Planner</span></div>
     </div>
 
@@ -922,14 +924,15 @@ function _resumeRowHtml(saved, idField, idValue) {
 
 // Review and Practice: neither is time-pressured, so neither should
 // interrupt — just a small line underneath the normal Review/Attempt
-// buttons on whichever exact card is paused. Tapping it still opens the
-// usual Continue-from-here vs Start Fresh choice (checkResumableTest()).
+// buttons on whichever exact card is paused. It is only a note (no separate
+// button): tapping that card's own Review button asks "continue from Qn" vs
+// "start fresh" (see startTest() in quiz.js).
 function _pausedReviewNoteHtml(saved, idField, idValue) {
   if (!saved || saved.mode === 'attempt' || idValue == null || saved[idField] !== idValue) return '';
-  const answered = (saved.answers || []).filter(a => a !== null).length;
   const total = (saved.questions || []).length;
+  const at = Math.min((saved.currentIndex || 0) + 1, Math.max(total, 1));
   const label = saved.mode === 'practice' ? 'Practice' : 'Review';
-  return `<div class="text-xs mt-1" style="color:var(--gold-700);cursor:pointer" onclick="checkResumableTest()">⏸ ${label} paused here (${answered}/${total}) — tap to continue or start fresh</div>`;
+  return `<div class="text-xs mt-1" style="color:var(--gold-700)">⏸ ${label} paused at Q${at} of ${total}</div>`;
 }
 
 
@@ -1159,22 +1162,9 @@ async function openCustomTestBuilder() {
       </div>
       <p class="text-xs text-muted mb-3">Mix and match — pick any combination of modules, past papers, and practice tests below. Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your stats or the leaderboard.</p>
 
-      ${savedTests?.length ? `
-      <div class="card" style="margin-bottom:14px">
-        <div class="fw-700 mb-2 text-sm">📁 My Saved Tests</div>
-        ${savedTests.map(t => `
-          <div style="padding:6px 0">
-            <div class="flex-between">
-              <div class="text-sm">${esc(t.name)} <span class="text-xs text-muted">(${t.question_count}q, ${t.time_limit_minutes||0}min)</span></div>
-              <div style="display:flex;gap:4px">
-                <button class="btn btn-secondary btn-xs" onclick="startSavedCustomTest(${t.id},'browse')">👁 Review</button>
-                <button class="btn btn-primary btn-xs" onclick="startSavedCustomTest(${t.id},'attempt')">📝 Attempt</button>
-                <button class="btn btn-ghost btn-xs" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
-              </div>
-            </div>
-            ${_pausedReviewNoteHtml(saved, 'customTestId', t.id)}
-          </div>`).join('')}
-      </div>` : ''}
+      <div class="card" style="margin-bottom:14px;padding:12px 14px;cursor:pointer" onclick="document.getElementById('ctbOverlay')?.remove();navGo('savedtests')">
+        <div class="flex-between"><span class="fw-700 text-sm">📁 Saved Tests${savedTests?.length ? ` (${savedTests.length})` : ''}</span><span class="text-xs fw-600" style="color:var(--gold-600)">Open →</span></div>
+      </div>
 
       <div class="tab-bar" id="ctbSourceTabs" style="margin-bottom:14px">
         <button class="tab-btn active" onclick="ctbShowSource('modules')">📚 Modules</button>
@@ -1245,6 +1235,9 @@ async function ctbModulesChanged() {
   const checked = [...document.querySelectorAll('.ctb-module:checked')];
   const subWrap = document.getElementById('ctbSubjects');
   const testWrap = document.getElementById('ctbTests');
+  // Re-rendering below would otherwise wipe ticks the student already made under other modules
+  const keepSubs = new Set([...document.querySelectorAll('.ctb-subject:checked')].map(c => c.value));
+  const keepTests = new Set([...document.querySelectorAll('.ctb-test:checked')].map(c => c.value));
   if (!checked.length) {
     subWrap.innerHTML = '<p class="text-xs text-muted">Select a module first</p>';
     testWrap.innerHTML = '<p class="text-xs text-muted">Pick a module in the Modules tab first — its practice tests will show up here.</p>';
@@ -1256,21 +1249,54 @@ async function ctbModulesChanged() {
 
   const [{ data: subs }, { data: tests }] = await Promise.all([
     db(sb.from('subjects').select('id,name,module_id').in('module_id', moduleIds).order('display_order'), 'Subjects error'),
-    db(sb.from('practice_tests').select('id,title,module_id').in('module_id', moduleIds).eq('is_active', true).order('display_order'), 'Tests error')
+    db(sb.from('practice_tests').select('id,title,module_id,subject_id').in('module_id', moduleIds).eq('is_active', true).order('display_order'), 'Tests error')
   ]);
 
-  subWrap.innerHTML = subs?.length ? subs.map(s => `
-    <label style="display:flex;align-items:center;gap:8px;padding:5px 0">
-      <input type="checkbox" class="ctb-subject" value="${s.id}">
-      <span class="text-sm">${esc(s.name)} <span class="text-xs text-muted">(${esc(moduleNameMap[s.module_id]||'')})</span></span>
-    </label>`).join('') : '<p class="text-xs text-muted">No subjects defined. All questions in the module(s) will be used.</p>';
+  const subsByModule = {};
+  (subs || []).forEach(s => { (subsByModule[s.module_id] = subsByModule[s.module_id] || []).push(s); });
+  const testsByModule = {};
+  (tests || []).forEach(t => {
+    const byMod = (testsByModule[t.module_id] = testsByModule[t.module_id] || {});
+    const key = t.subject_id || 0;
+    (byMod[key] = byMod[key] || []).push(t);
+  });
+  const moduleTitle = mid => `<div class="ctb-group-title">📚 ${esc(moduleNameMap[mid] || '')}</div>`;
+  const checkRow = (cls, id, label, on) => `<label class="ctb-check"><input type="checkbox" class="${cls}" value="${id}"${on ? ' checked' : ''}><span class="text-sm">${esc(label)}</span></label>`;
 
-  testWrap.innerHTML = tests?.length ? tests.map(t => `
-    <label style="display:flex;align-items:center;gap:8px;padding:5px 0">
-      <input type="checkbox" class="ctb-test" value="${t.id}">
-      <span class="text-sm">${esc(t.title)} <span class="text-xs text-muted">(${esc(moduleNameMap[t.module_id]||'')})</span></span>
-    </label>`).join('') : '<p class="text-xs text-muted">No practice tests in the selected module(s) yet.</p>';
+  // Subjects: grouped under their module so two modules' subjects never run together
+  subWrap.innerHTML = subs?.length ? moduleIds.map(mid => {
+    const list = subsByModule[mid] || [];
+    return list.length ? `<div style="margin-bottom:10px">${moduleTitle(mid)}${list.map(s => checkRow('ctb-subject', s.id, s.name, keepSubs.has(String(s.id)))).join('')}</div>` : '';
+  }).join('') : '<p class="text-xs text-muted">No subjects defined. All questions in the module(s) will be used.</p>';
+
+  // Practice tests: one box per subject (named after the subject) holding that subject's tests
+  const testBox = (name, list) => `<div class="ctb-box open">
+      <div class="ctb-box-head" onclick="this.parentElement.classList.toggle('open')">
+        <span class="fw-600 text-sm">${esc(name)}</span>
+        <span class="text-xs text-muted">${list.length} test${list.length === 1 ? '' : 's'}<button type="button" class="ctb-selall" onclick="event.stopPropagation();ctbToggleBox(this)">Select all</button></span>
+      </div>
+      <div class="ctb-box-body">${list.map(t => checkRow('ctb-test', t.id, t.title, keepTests.has(String(t.id)))).join('')}</div>
+    </div>`;
+  testWrap.innerHTML = tests?.length ? moduleIds.map(mid => {
+    const byMod = testsByModule[mid];
+    if (!byMod) return '';
+    const mySubs = subsByModule[mid] || [];
+    const known = new Set(mySubs.map(s => String(s.id)));
+    const subjectBoxes = mySubs.filter(s => byMod[s.id]).map(s => testBox(s.name, byMod[s.id])).join('');
+    const loose = [...(byMod[0] || []), ...Object.keys(byMod).filter(k => k !== '0' && !known.has(k)).flatMap(k => byMod[k])];
+    return `<div style="margin-bottom:12px">${moduleTitle(mid)}${subjectBoxes}${loose.length ? testBox('Whole-module tests', loose) : ''}</div>`;
+  }).join('') : '<p class="text-xs text-muted">No practice tests in the selected module(s) yet.</p>';
 }
+
+// "Select all" / "Clear" for one subject box in the practice-test picker
+function ctbToggleBox(btn) {
+  const boxEl = btn.closest('.ctb-box');
+  const inputs = [...boxEl.querySelectorAll('input[type=checkbox]')];
+  const allOn = inputs.every(i => i.checked);
+  inputs.forEach(i => { i.checked = !allOn; });
+  btn.textContent = allOn ? 'Select all' : 'Clear';
+}
+window.ctbToggleBox = ctbToggleBox;
 window.ctbModulesChanged = ctbModulesChanged;
 
 
@@ -1285,19 +1311,62 @@ async function buildCustomTest(saveOnly, mode) {
   const name = document.getElementById('ctb_name').value.trim() || `Custom Test ${new Date().toLocaleDateString()}`;
   if (!moduleIds.length && !paperIds.length && !testIds.length) return showToast('Pick at least one module, past paper, or practice test');
 
+  let savedId = null;
   if (saveOnly || document.getElementById('ctb_name').value.trim()) {
-    const { error } = await db(sb.from('custom_tests').insert({
+    const res = await db(sb.from('custom_tests').insert({
       user_email: window.currentUser.email, name, module_ids: moduleIds, subject_ids: subjectIds,
       paper_ids: paperIds, test_ids: testIds, question_count: count, time_limit_minutes: timer
-    }), 'Save failed');
-    if (error) return; // db() already showed the specific error (e.g. paper_ids/test_ids not migrated yet — see schema note)
+    }).select('id').single(), 'Save failed');
+    if (res.error || !res.data) return; // db() already showed the specific error (e.g. paper_ids/test_ids not migrated yet — see schema note)
+    savedId = res.data.id;
     showToast('Test saved ✓');
     if (saveOnly) { document.getElementById('ctbOverlay')?.remove(); return; }
   }
   document.getElementById('ctbOverlay')?.remove();
-  startCustomTest(moduleIds, subjectIds, count, timer, name, paperIds, testIds, mode);
+  // savedId marks it as already saved, so the results/end-of-review "Save this test?" prompts don't ask again
+  startCustomTest(moduleIds, subjectIds, count, timer, name, paperIds, testIds, mode, savedId);
 }
 window.buildCustomTest = buildCustomTest;
+
+
+
+// Home → Saved Tests: every Make Your Own test the student saved, with Review / Attempt / Delete
+export async function renderSavedTests() {
+  const wrap = document.getElementById('savedTestsPageWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(3)}`;
+  const { data: tests } = await db(sb.from('custom_tests').select('*').eq('user_email', window.currentUser.email).order('created_at', { ascending: false }), 'Saved tests error');
+  const saved = getResumableSnapshot();
+  const list = tests || [];
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const cards = list.map(t => {
+    const bits = [];
+    if ((t.module_ids || []).length) bits.push(plural(t.module_ids.length, 'module'));
+    if ((t.paper_ids || []).length) bits.push(plural(t.paper_ids.length, 'past paper'));
+    if ((t.test_ids || []).length) bits.push(plural(t.test_ids.length, 'practice test'));
+    const resumeRow = _resumeRowHtml(saved, 'customTestId', t.id);
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="fw-700">${esc(t.name)}</div>
+      <div class="text-xs text-muted" style="margin:2px 0 10px">${plural(t.question_count || 0, 'question')} · ${t.time_limit_minutes ? t.time_limit_minutes + ' min' : 'no timer'}${bits.length ? ' · ' + bits.join(', ') : ''}</div>
+      ${resumeRow || `<div class="btn-row">
+        <button class="btn btn-secondary btn-sm" onclick="startSavedCustomTest(${t.id},'browse')">👁 Review</button>
+        <button class="btn btn-primary btn-sm" onclick="startSavedCustomTest(${t.id},'attempt')">📝 Attempt</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteSavedCustomTest(${t.id})">🗑</button>
+      </div>`}
+      ${_pausedReviewNoteHtml(saved, 'customTestId', t.id)}
+    </div>`;
+  }).join('');
+  wrap.innerHTML = `
+    <button class="back-btn" onclick="goBack()">← Back</button>
+    <div class="card-teal" style="margin-bottom:14px">
+      <h2>📁 Saved Tests</h2>
+      <p>${list.length ? plural(list.length, 'saved test') : 'Your Make Your Own tests live here'}</p>
+    </div>
+    ${cards || `<div class="card text-center" style="padding:32px 20px"><div style="font-size:42px">📁</div><h3 style="margin-top:10px">No saved tests yet</h3><p class="mt-2 text-sm">Build a test and tick Save, or save it right after you attempt or review it.</p></div>`}
+    <button class="btn btn-primary mt-2" style="width:100%" onclick="openCustomTestBuilder()">🛠️ Build a New Test</button>
+    <div style="height:16px"></div>`;
+}
+window.renderSavedTests = renderSavedTests;
 
 
 
@@ -1312,10 +1381,11 @@ window.startSavedCustomTest = startSavedCustomTest;
 
 
 async function deleteSavedCustomTest(id) {
-  await db(sb.from('custom_tests').delete().eq('id', id), 'Delete failed');
-  showToast('Deleted');
-  document.getElementById('ctbOverlay')?.remove();
-  openCustomTestBuilder();
+  showConfirm('Delete this saved test? This can\'t be undone.', async () => {
+    await db(sb.from('custom_tests').delete().eq('id', id), 'Delete failed');
+    showToast('Deleted');
+    renderSavedTests();
+  }, 'Delete', true);
 }
 window.deleteSavedCustomTest = deleteSavedCustomTest;
 
@@ -1820,7 +1890,7 @@ const APP_STATE_KEY = 'lum_app_state';
 const APP_STATE_MAX_AGE = 24 * 3600 * 1000;
 
  // treat anything older than this as a fresh session
-const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','ranking','profile','bookmarks','wrongattempts','planner','admin','module','results','review'];
+const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','ranking','profile','bookmarks','wrongattempts','planner','savedtests','admin','module','results','review'];
 
 
 
@@ -1938,7 +2008,7 @@ export async function restoreAppState() {
 
     const renders = {
       home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
-      ranking: renderRanking, profile: renderProfile, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner,
+      ranking: renderRanking, profile: renderProfile, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests,
       admin: () => renderAdminPanel(state.adminTab || 'overview')
     };
     if (renders[state.screenId]) await renders[state.screenId]();

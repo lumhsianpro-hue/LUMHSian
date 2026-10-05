@@ -227,7 +227,10 @@ async function _handleAuthedSessionInner(session) {
           }
         } else if (saved.mode === 'browse') {
           const tooOld = elapsed > 7 * 24 * 3600; // no time pressure in Review, so kept much longer than Attempt
-          if (!tooOld) {
+          if (!tooOld && saved.paused) {
+            // Paused on purpose: stay low-key — only the small "paused at Qn" note on that test's own card, and its
+            // Review button offers continue / start fresh. No pop-up at launch.
+          } else if (!tooOld) {
             const savedYear = localStorage.getItem('lum_year');
             if (savedYear) window.selectedYear = JSON.parse(savedYear);
             _showResumeDialog(saved, elapsed);
@@ -237,7 +240,9 @@ async function _handleAuthedSessionInner(session) {
           }
         } else if (saved.mode === 'practice') {
           const tooOld = elapsed > 48 * 3600; // untimed like Review, but still a real graded session, so not kept as long
-          if (!tooOld) {
+          if (!tooOld && saved.paused) {
+            // Paused on purpose — see the Review case above.
+          } else if (!tooOld) {
             const savedYear = localStorage.getItem('lum_year');
             if (savedYear) window.selectedYear = JSON.parse(savedYear);
             _showResumeDialog(saved, elapsed);

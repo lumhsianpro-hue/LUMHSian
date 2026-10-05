@@ -9,6 +9,7 @@ import { ICON_CHART, ICON_CHECK_CIRCLE, ICON_CLOCK, ICON_TARGET, ICON_X_CIRCLE, 
 // Shown when student returns AFTER timed test clock ran out — submits and shows full results screen
 export async function _showTimeExpiredResult() {
   const notice = document.createElement('div');
+  notice.setAttribute('data-no-back-close', '1');
   notice.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.92);z-index:10012;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(8px)';
   notice.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:28px 24px;width:100%;max-width:380px;text-align:center">
@@ -113,6 +114,19 @@ export function _showResumeDialog(saved, elapsed) {
 
 export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId) {
   mode = mode === 'browse' ? 'browse' : 'attempt';
+  // Same "continue from Qn / start fresh" choice as every other Review, for a saved test that is paused
+  if (mode === 'browse' && customTestId) {
+    const saved = getResumableSnapshot();
+    if (saved && saved.mode === 'browse' && saved.isCustom && saved.customTestId === customTestId) {
+      _showPausedChoice(saved, () => _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId));
+      return;
+    }
+  }
+  return _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId);
+}
+
+async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId) {
+  const returnScreen = _currentReturnScreen();
   showLoading(true, 'Building your test...');
   const queries = [];
   if (moduleIds?.length) {
@@ -149,8 +163,8 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
   // Build Your Own Test can now start as either a real Attempt (no instant
   // per-option feedback, review only at the end) or a Review (instant
   // feedback, browse freely) — same isCustom flag either way, which is what
-  // keeps it OUT of stats/history/leaderboard and Wrong Attempts tracking
-  // (both in submitTest()) regardless of which mode it's started in.
+  // keeps it OUT of stats/history (submitTest()) regardless of which mode it's
+  // started in. An Attempt still files its wrong answers under Wrong Questions.
   // The timer stays optional in Attempt mode: set one and it counts down
   // like a normal attempt; leave it blank and it's simply untimed. Review
   // mode never has a timer, same as browsing anywhere else in the app.
@@ -161,12 +175,16 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
     questions: mapped, answers: new Array(mapped.length).fill(null),
     explanationShown: new Array(mapped.length).fill(false),
     bookmarked,
-    currentIndex: 0, mode, isCustom: true, customTestId: customTestId || null, moduleId: moduleIds[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
+    currentIndex: 0, mode, isCustom: true, customTestId: customTestId || null, moduleId: (moduleIds || [])[0], moduleName: name || 'Custom Test', subjectId: null, paperId: null, paperTitle: null,
+    // Kept so the test can be saved AFTER it was taken (results screen / end of Review), not only before starting
+    customConfig: { moduleIds: moduleIds || [], subjectIds: subjectIds || [], paperIds: paperIds || [], testIds: testIds || [], count, timerMinutes: timerMinutes || 0, name: name || '' },
     startTime: Date.now(), timeLimit: mode === 'attempt' && timerMinutes > 0 ? timerMinutes * 60 : null,
-    timerInterval: null, submitted: false
+    timerInterval: null, submitted: false, returnScreen
   };
   showLoading(false);
-  if (timerMinutes > 0) startTimer();
+  // Only a timed Attempt has a clock. Review never does — starting the timer here for Review (just because a timer
+  // value was saved with the test) is what made Review of a saved test auto-submit as "Time up!".
+  if (window.activeTest.timeLimit) startTimer();
   persistActiveTest();
   renderTestScreen();
   showScreen('test');
@@ -174,13 +192,13 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
 
 
 
-// Starting any test/paper here freely replaces whatever was previously
+// Starting a DIFFERENT test/paper still freely replaces whatever was previously
 // paused (see clearPersistedTest() a few lines down) — deliberately with NO
-// confirmation step in the way. Pausing one review must never create friction
-// against starting a different one; each test/paper's own card independently
-// shows whether IT is the currently-paused one (see _resumeRowHtml in
-// app.js), which is enough — a blocking "are you sure?" here isn't wanted.
-async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
+// confirmation step in the way, so pausing one review never creates friction
+// against starting another. The one exception is tapping Review/Practice on the
+// exact test that IS paused: that asks "continue from Qn" vs "start fresh"
+// (see startTest() just below this function).
+async function _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
   // Remember where the student tapped in from (e.g. a module's paper list) so
   // finishing or exiting the test can return them there instead of always
   // dropping them back at Home.
@@ -249,6 +267,16 @@ async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTi
   renderTestScreen();
   showScreen('test');
 }
+async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
+  if (mode === 'browse' || mode === 'practice') {
+    const saved = getResumableSnapshot();
+    if (saved && saved.mode === mode && _snapshotMatchesTarget(saved, { moduleId, subjectId, paperId, testId })) {
+      _showPausedChoice(saved, () => _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle));
+      return;
+    }
+  }
+  return _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle);
+}
 window.startTest = startTest;
 
 
@@ -264,6 +292,9 @@ function shuffleArray(arr) {
 
 
 function startTimer() {
+  // Untimed sessions (Review, or a custom test with no timer) have nothing to count down. Without this guard a
+  // null timeLimit made "remaining" negative on the very first tick and instantly fired the "Time up!" auto-submit.
+  if (!window.activeTest || !window.activeTest.timeLimit) return;
   if (window.activeTest.timerInterval) clearInterval(window.activeTest.timerInterval);
   window.activeTest.timerInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - window.activeTest.startTime) / 1000);
@@ -291,11 +322,15 @@ function startTimer() {
 export const RESUME_KEY = 'lum_active_attempt';
 
 
-export function persistActiveTest() {
+export function persistActiveTest(extra) {
   if (!window.activeTest || window.activeTest.submitted) return;
   if (!['attempt', 'practice', 'browse'].includes(window.activeTest.mode)) return;
   try {
-    const snapshot = { ...window.activeTest, bookmarked: Array.from(window.activeTest.bookmarked), timerInterval: null };
+    // paused:true is only ever set by an explicit Pause/Exit tap (see requestExitTest/forceExitTest) — it lets the
+    // app tell "I paused on purpose" (stay low-key, small note on the card) apart from "the app was killed mid-session"
+    // (offer the resume prompt at launch).
+    const flags = (extra && typeof extra === 'object' && 'paused' in extra) ? { paused: !!extra.paused } : { paused: false };
+    const snapshot = { ...window.activeTest, bookmarked: Array.from(window.activeTest.bookmarked), timerInterval: null, ...flags };
     localStorage.setItem(RESUME_KEY, JSON.stringify(snapshot));
   } catch (e) { /* storage unavailable — fail silently, not critical */ }
 }
@@ -420,6 +455,111 @@ function resumeTest(btn) {
 window.resumeTest = resumeTest;
 
 
+
+// ==================== PAUSED REVIEW/PRACTICE: "continue from here" vs "start fresh" ====================
+// Tapping Review (or Practice) on the exact test/paper/saved test that was paused no longer needs a separate
+// Resume button — the same button just asks which way to go.
+function _currentReturnScreen() {
+  const cur = document.querySelector('.screen.active')?.id.replace('screen-', '') || 'home';
+  return ['test', 'results', 'review'].includes(cur) ? 'home' : cur;
+}
+
+function _snapshotMatchesTarget(saved, t) {
+  if (!saved || saved.isCustom) return false;
+  if (t.paperId) return saved.paperId === t.paperId;
+  if (t.testId) return saved.testId === t.testId;
+  return !saved.paperId && !saved.testId && saved.moduleId === t.moduleId && (saved.subjectId || null) === (t.subjectId || null);
+}
+
+function _resumeFromSnapshot(saved) {
+  window.activeTest = { ...saved, bookmarked: new Set(saved.bookmarked || []), timerInterval: null, submitted: false, paused: false, returnScreen: _currentReturnScreen() };
+  if (window.activeTest.timeLimit) startTimer(); // never true for Review/Practice, kept so Attempt could reuse this
+  persistActiveTest();
+  renderTestScreen();
+  showScreen('test');
+  showToast(saved.mode === 'practice' ? '📝 Practice resumed' : '📖 Review resumed');
+}
+
+function _showPausedChoice(saved, onFresh) {
+  if (document.getElementById('_pausedChoiceOverlay')) return;
+  const label = saved.mode === 'practice' ? 'Practice' : 'Review';
+  const total = (saved.questions || []).length;
+  const at = Math.min((saved.currentIndex || 0) + 1, Math.max(total, 1));
+  const name = saved.testTitle || saved.paperTitle || saved.moduleName || 'this test';
+  const overlay = document.createElement('div');
+  overlay.id = '_pausedChoiceOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.85);z-index:10010;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:26px 22px;width:100%;max-width:360px;text-align:center">
+      <div style="font-size:34px;margin-bottom:8px">${saved.mode === 'practice' ? '📝' : '📖'}</div>
+      <h3 style="margin-bottom:6px">Continue ${label}?</h3>
+      <p style="font-size:13px;color:var(--ink-3);margin-bottom:2px"><strong>${esc(name)}</strong></p>
+      <p style="font-size:13px;color:var(--ink-3);margin-bottom:18px">You paused at Q${at} of ${total}.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-primary" id="_pcContinue">▶ Continue from Q${at}</button>
+        <button class="btn btn-secondary" id="_pcFresh">↺ Start fresh</button>
+        <button class="btn btn-ghost btn-sm" id="_pcCancel">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#_pcContinue').onclick = () => { overlay.remove(); _resumeFromSnapshot(saved); };
+  overlay.querySelector('#_pcFresh').onclick = () => { overlay.remove(); onFresh(); };
+  overlay.querySelector('#_pcCancel').onclick = () => overlay.remove();
+}
+
+// ==================== SAVE A CUSTOM TEST (before / after Attempt / after Review) ====================
+async function _insertCustomTest(cfg, name) {
+  const row = {
+    user_email: window.currentUser.email,
+    name: (name || cfg.name || '').trim() || `Custom Test ${new Date().toLocaleDateString()}`,
+    module_ids: cfg.moduleIds || [], subject_ids: cfg.subjectIds || [],
+    paper_ids: cfg.paperIds || [], test_ids: cfg.testIds || [],
+    question_count: cfg.count || 20, time_limit_minutes: cfg.timerMinutes || 0
+  };
+  const res = await db(sb.from('custom_tests').insert(row).select('id').single(), 'Save failed');
+  return res.data || null;
+}
+
+// Results screen button
+async function saveActiveCustomTest(btn) {
+  const t = window.activeTest;
+  if (!t || !t.isCustom || !t.customConfig || t.customTestId || t.savedAsCustom) return;
+  const input = document.getElementById('rs_save_name');
+  if (btn) btn.disabled = true;
+  const saved = await _insertCustomTest(t.customConfig, input ? input.value : '');
+  if (!saved) { if (btn) btn.disabled = false; return; }
+  t.customTestId = saved.id; t.savedAsCustom = true;
+  showToast('Test saved ✓');
+  const box = document.getElementById('rsSaveBox');
+  if (box) box.innerHTML = '<div class="text-sm fw-600" style="color:var(--green)">✓ Saved. Find it in Home → Saved Tests</div>';
+}
+window.saveActiveCustomTest = saveActiveCustomTest;
+
+// Shown once when a custom Review is finished
+function _offerSaveCustomTest(cfg) {
+  if (!cfg || document.getElementById('_saveCtOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = '_saveCtOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.85);z-index:10011;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:380px">
+      <div style="font-size:30px;text-align:center;margin-bottom:6px">💾</div>
+      <h3 style="text-align:center;margin-bottom:4px">Save this test?</h3>
+      <p class="text-sm text-muted" style="text-align:center;margin-bottom:12px">Keep this setup so you can start it again anytime from Saved Tests.</p>
+      <input id="_saveCtName" class="input-field" maxlength="60" value="${esc(cfg.name || '')}" placeholder="Test name">
+      <div class="btn-row mt-3">
+        <button class="btn btn-ghost" id="_saveCtSkip">Not now</button>
+        <button class="btn btn-primary" id="_saveCtGo">💾 Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#_saveCtSkip').onclick = () => overlay.remove();
+  overlay.querySelector('#_saveCtGo').onclick = async (e) => {
+    e.target.disabled = true;
+    const saved = await _insertCustomTest(cfg, document.getElementById('_saveCtName').value);
+    if (saved) { showToast('Test saved ✓'); overlay.remove(); } else { e.target.disabled = false; }
+  };
+}
 
 function renderTestScreen() {
   const t = window.activeTest;
@@ -629,15 +769,15 @@ window.toggleExplanationView = toggleExplanationView;
 
 
 
-function testPrev() { if (window.activeTest.currentIndex > 0) { window.activeTest.currentIndex--; renderTestScreen(); } }
+function testPrev() { if (window.activeTest.currentIndex > 0) { window.activeTest.currentIndex--; persistActiveTest(); renderTestScreen(); } }
 window.testPrev = testPrev;
 
 
-function testNext() { if (window.activeTest.currentIndex < window.activeTest.questions.length - 1) { window.activeTest.currentIndex++; renderTestScreen(); } }
+function testNext() { if (window.activeTest.currentIndex < window.activeTest.questions.length - 1) { window.activeTest.currentIndex++; persistActiveTest(); renderTestScreen(); } }
 window.testNext = testNext;
 
 
-function jumpToQ(i) { window.activeTest.currentIndex = i; renderTestScreen(); }
+function jumpToQ(i) { window.activeTest.currentIndex = i; persistActiveTest(); renderTestScreen(); }
 window.jumpToQ = jumpToQ;
 
 
@@ -649,14 +789,14 @@ export function requestExitTest() {
   // triggered elsewhere (e.g. a stale nav-stack entry), just reveal whatever
   // screen is actually current instead of asking to confirm exiting a test
   // that isn't there.
-  if (!t || t.submitted) { _returnToScreen(window.navStack[window.navStack.length - 1]); return; }
+  if (!t || t.submitted) { leaveFinishedTest(); return; }
   const attempted = t?.answers.filter(a => a !== null).length || 0;
 
   if (t?.mode === 'browse') {
     // Review — nothing to lose (it's saved either way) and no time pressure,
     // so skip the confirmation entirely and just go, exactly where they'll
     // pick back up from when they return.
-    persistActiveTest();
+    persistActiveTest({ paused: true });
     const dest = t.returnScreen || 'home';
     window.activeTest = null;
     _returnToScreen(dest);
@@ -695,6 +835,17 @@ export function requestExitTest() {
   openModal('modalExitTest');
 }
 window.requestExitTest = requestExitTest;
+
+
+
+// Leaves a finished (or stale) test and goes back to wherever it was started from. Shared by the Results
+// "Done" buttons, the phone's back button on Results, and requestExitTest() for an already-submitted test.
+export function leaveFinishedTest() {
+  const dest = (window.activeTest && window.activeTest.returnScreen) || 'home';
+  window.activeTest = null;
+  _returnToScreen(dest);
+}
+window.leaveFinishedTest = leaveFinishedTest;
 
 
 
@@ -759,8 +910,10 @@ async function finishBrowseReview() {
     }
   }
   const dest = t.returnScreen || 'home';
+  const offerCfg = (t.isCustom && t.customConfig && !t.customTestId && !t.savedAsCustom) ? t.customConfig : null;
   window.activeTest = null;
   _returnToScreen(dest);
+  if (offerCfg) _offerSaveCustomTest(offerCfg);
 }
 window.finishBrowseReview = finishBrowseReview;
 
@@ -777,7 +930,7 @@ function forceExitTest() {
   // Only leave a resumable record behind when there's actually something to
   // resume — an Exit on zero answered questions must save nothing at all,
   // not even an empty placeholder attempt.
-  if (attempted > 0) persistActiveTest(); else clearPersistedTest();
+  if (attempted > 0) persistActiveTest(t && t.mode !== 'attempt' ? { paused: true } : undefined); else clearPersistedTest();
   const dest = t?.returnScreen || 'home';
   window.activeTest = null; closeModal('modalExitTest');
   _returnToScreen(dest);
@@ -939,7 +1092,8 @@ async function submitTest() {
       const a = window.activeTest.answers[i];
       if (a !== null && a !== window.activeTest.questions[i].answer) wrongIds.push(window.activeTest.questions[i].id);
     }
-    if (wrongIds.length) saveWrongAttempts(wrongIds);
+    // Review mode never saves anything to Wrong Questions — only a real Attempt (or Practice) does
+    if (wrongIds.length && window.activeTest.mode !== 'browse') saveWrongAttempts(wrongIds);
 
     // Rank celebration — checked last since it depends on the stats upsert
     // above already being committed. Not awaited: it pops in over the results
@@ -954,6 +1108,14 @@ async function submitTest() {
     stats.attempt_questions = (stats.attempt_questions || 0) + total;
     stats.attempt_correct = (stats.attempt_correct || 0) + correct;
     await saveUserStats(stats);
+    // Questions answered wrong (never skipped) in a Make Your Own Test attempt land in Wrong Questions too —
+    // filed under their real Module → Subject → Test (or Past Paper), see renderWrongAttempts() in profile.js.
+    const customWrongIds = [];
+    for (let i = 0; i < window.activeTest.questions.length; i++) {
+      const a = window.activeTest.answers[i];
+      if (a !== null && a !== window.activeTest.questions[i].answer) customWrongIds.push(window.activeTest.questions[i].id);
+    }
+    if (customWrongIds.length) saveWrongAttempts(customWrongIds);
     checkRankCelebration();
   }
 
@@ -991,6 +1153,7 @@ export function renderResults() {
   const subLabel = at.isCustom ? at.moduleName + ' · Custom Test' : (at.testTitle || at.paperTitle || (at.subjectId ? at.moduleName + ' · Subject Practice' : at.moduleName + ' · Mixed Practice'));
 
   document.getElementById('resultsPageWrap').innerHTML = `
+    <button class="back-btn" onclick="leaveFinishedTest()">← Done</button>
     <div class="card-teal text-center" style="padding:32px 24px">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.7;margin-bottom:6px">${headingText}</div>
       <div style="font-size:52px;margin-bottom:8px">${tier.emoji}</div>
@@ -1032,9 +1195,18 @@ export function renderResults() {
       </div>
     </div>
 
+    ${at.isCustom && at.customConfig ? ((at.customTestId || at.savedAsCustom)
+      ? `<div class="card mt-3" id="rsSaveBox"><div class="text-sm fw-600" style="color:var(--green)">✓ Saved. Find it in Home → Saved Tests</div></div>`
+      : `<div class="card mt-3" id="rsSaveBox">
+          <div class="fw-700 text-sm mb-1">💾 Save this test?</div>
+          <p class="text-xs text-muted mb-2">Keep this setup (sources, question count, timer) and start it again anytime from Saved Tests.</p>
+          <input id="rs_save_name" class="input-field" maxlength="60" value="${esc(at.customConfig.name || '')}" placeholder="Test name">
+          <button class="btn btn-secondary btn-sm mt-2" style="width:100%" onclick="saveActiveCustomTest(this)">💾 Save Test</button>
+        </div>`) : ''}
+
     <button class="btn btn-primary mt-3" onclick="startReview()">🔍 Review Your Test</button>
     ${wrong > 0 ? `<button class="btn btn-secondary mt-2" onclick="startReview(true)">❌ Review Wrong Only (${wrong})</button>` : ''}
-    <button class="btn btn-secondary mt-2" onclick="const d=activeTest?.returnScreen||'home';activeTest=null;_returnToScreen(d)">← Done</button>
+    <button class="btn btn-secondary mt-2" onclick="leaveFinishedTest()">← Done</button>
     ${isAIEnabled() ? `<button class="btn btn-ghost mt-1" onclick="openAITutor('Summarize my performance: ${correct} correct out of ${total} (${percent}% score, ${accuracy}% accuracy) in ${(at.testTitle || at.paperTitle || at.moduleName).replace(/'/g,"\\'")}','Provide tips to improve my weak areas')">🤖 AI Performance Tip</button>` : ''}
   `;
   showScreen('results');
@@ -1142,7 +1314,7 @@ export function renderReview() {
 
     <div class="flex-between" style="margin:16px 0">
       <button class="btn btn-secondary" style="width:auto" onclick="reviewPrev()" ${rs.currentIndex === 0 ? 'disabled' : ''}>← Prev</button>
-      <button class="btn btn-primary" style="width:auto" onclick="${rs.currentIndex < rs.questions.length - 1 ? 'reviewNext()' : "showScreen('results')"}">${rs.currentIndex < rs.questions.length - 1 ? 'Next →' : 'Finish'}</button>
+      <button class="btn btn-primary" style="width:auto" onclick="${rs.currentIndex < rs.questions.length - 1 ? 'reviewNext()' : 'goBack()'}">${rs.currentIndex < rs.questions.length - 1 ? 'Next →' : 'Finish'}</button>
     </div>
 
     <div class="card">
