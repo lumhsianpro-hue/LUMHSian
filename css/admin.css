@@ -15,3 +15,17 @@
 .admin-header{background:linear-gradient(135deg,#2e2000,#8a6600);color:white;padding:20px 16px;margin:-16px -14px 20px;position:relative;overflow:hidden}
 .admin-header::before{content:'⚕️';position:absolute;right:20px;top:50%;transform:translateY(-50%);font-size:60px;opacity:.08}
 .admin-stat-pill{background:rgba(255,255,255,.1);border-radius:var(--radius-lg);padding:12px;text-align:center;border:1px solid rgba(255,255,255,.08)}
+
+
+/* Year → Module → Subject folds (admin lists grouped instead of mixed) */
+.admin-fold{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:10px;overflow:hidden}
+.admin-fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;font-weight:700;font-size:14px}
+.admin-fold>summary::-webkit-details-marker{display:none}
+.admin-fold>summary::after{content:'\203A';font-size:20px;line-height:1;color:var(--ink-4);transition:transform .15s;margin-left:2px;flex-shrink:0}
+.admin-fold[open]>summary::after{transform:rotate(90deg)}
+.admin-fold-meta{font-size:11px;font-weight:600;color:var(--ink-4);margin-left:auto;text-align:right}
+.admin-fold-body{padding:2px 12px 12px}
+.admin-fold-year>summary{background:var(--gold-50);font-size:15px}
+.admin-fold-module{margin:8px 0 0;border-color:var(--border)}
+.admin-sub-head{display:flex;justify-content:space-between;gap:8px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--ink-3);margin:12px 0 2px}
+.admin-group-head{font-size:12px;font-weight:700;color:var(--gold-700);background:var(--gold-50);border-radius:var(--radius-md);padding:7px 10px;margin:14px 0 8px}

@@ -172,11 +172,26 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 
 /* Quick action tiles */
 
-.quick-tile{background:var(--surface);border:1px solid var(--gold-400);border-radius:var(--radius-md);padding:9px 3px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.quick-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(43px,1fr);gap:4px;margin:0 -1px 14px;padding:3px 1px 4px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.quick-row::-webkit-scrollbar{display:none}
+.quick-tile{background:var(--surface);border:1px solid var(--gold-400);border-radius:var(--radius-md);padding:8px 1px 6px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;min-width:0}
 .quick-tile:hover{border-color:var(--gold-400);background:var(--surface-3);transform:translateY(-2px);box-shadow:var(--shadow-md)}
 .quick-tile:active{transform:scale(.96)}
-.quick-tile-icon{font-size:19px;margin-bottom:3px;display:block}
-.quick-tile-label{font-size:8.5px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.quick-tile-icon{font-size:18px;margin-bottom:2px;display:block;line-height:1.2}
+.quick-tile-label{font-size:8.5px;font-weight:700;color:var(--ink-3);letter-spacing:0;line-height:1.15;display:flex;align-items:center;justify-content:center;min-height:2.3em;white-space:normal;text-align:center}
+
+/* Support chip in the Home header corner */
+.home-support-chip{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);color:#fff;font-size:12px;font-weight:700;padding:6px 12px;border-radius:999px;cursor:pointer;line-height:1;white-space:nowrap}
+.home-support-chip:active{transform:scale(.96)}
+
+/* Make Your Own Test: module headings and one box per subject */
+.ctb-group-title{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--ink-3);margin:2px 0 6px}
+.ctb-check{display:flex;align-items:center;gap:8px;padding:5px 0}
+.ctb-box{border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:8px;overflow:hidden;background:var(--surface)}
+.ctb-box-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;cursor:pointer;background:var(--gold-50)}
+.ctb-box-body{display:none;padding:4px 12px 8px}
+.ctb-box.open .ctb-box-body{display:block}
+.ctb-selall{margin-left:8px;background:none;border:none;color:var(--gold-600);font-weight:700;font-size:11px;cursor:pointer;padding:2px 4px}
 
 /* Announcement card styles */
 
