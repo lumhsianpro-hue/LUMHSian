@@ -4621,7 +4621,13 @@ async function adminMonetization(token = window._adminRenderToken) {
       </div>
       <div class="text-xs text-muted mb-3">${getSetting('donation_enabled') === 'true' ? 'On · students see 💛 Support on Home and in Profile' : 'Off · hidden from students'}</div>
       <label class="input-label">Message to Students</label>
-      <textarea id="set_don_message" class="input-field" rows="2" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian free for everyone!">${esc(getSetting('donation_message') || 'Help us keep this app free and growing for every student. Any contribution helps!')}</textarea>
+      <textarea id="set_don_message" class="input-field" rows="3" style="resize:vertical" placeholder="e.g. Help us keep LUMHSian free for everyone!">${esc(getSetting('donation_message') || 'Help us keep this app free and growing for every student. Any contribution helps!')}</textarea>
+      <label class="input-label">Picture (optional) <span class="text-xs text-muted">· shown under the message, e.g. a poster or QR code</span></label>
+      <div class="upload-area" onclick="document.getElementById('set_don_img_file').click()">📸 Upload picture</div>
+      <input type="file" id="set_don_img_file" accept="image/*" style="display:none" onchange="previewAndUpload('set_don_img_file','set_don_img_url','set_don_img_preview')">
+      <img id="set_don_img_preview" src="${esc(getSetting('donation_image_url'))}" style="display:${getSetting('donation_image_url') ? 'block' : 'none'};max-width:100%;border-radius:var(--radius-lg);margin:8px 0">
+      <input id="set_don_img_url" class="input-field" value="${esc(getSetting('donation_image_url'))}" placeholder="Picture URL (filled in after upload)" readonly>
+      ${getSetting('donation_image_url') ? `<button class="btn btn-ghost btn-xs" style="width:auto;color:var(--red)" onclick="document.getElementById('set_don_img_url').value='';document.getElementById('set_don_img_preview').style.display='none'">✕ Remove picture</button>` : ''}
       <label class="input-label">JazzCash</label>
       <input id="set_don_jazzcash" class="input-field" value="${esc(getSetting('donation_jazzcash'))}" placeholder="e.g. 0300-1234567 (Account Title)">
       <label class="input-label">Easypaisa</label>
@@ -5139,7 +5145,9 @@ async function saveDonationSettings() {
   const easypaisa = document.getElementById('set_don_easypaisa').value.trim();
   const bank = document.getElementById('set_don_bank').value.trim();
   const message = document.getElementById('set_don_message').value.trim();
+  const imageUrl = document.getElementById('set_don_img_url').value.trim();
   await Promise.all([
+    saveSetting('donation_image_url', imageUrl),
     saveSetting('donation_enabled', enabled),
     saveSetting('donation_jazzcash', jazzcash),
     saveSetting('donation_easypaisa', easypaisa),

@@ -9,74 +9,91 @@ import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, 
 
 
 // ==================== SUPPORT / DONATIONS ====================
-// Opened from the 💛 Support chip on Home (when the admin turns Donations on) and from Profile → Support Us.
-// Shows the admin's message, any live campaigns (informational — they carry their own payment details with a
-// Copy button, never a link, because a payment number is not a URL) and the standing JazzCash / Easypaisa / bank
-// details. Back always returns to wherever it was opened from.
+// Opened from the 💛 Support Us button on Home (when the admin turns Donations on) and from Profile → Support Us.
+// Layout, top to bottom: the admin's message · the admin's picture (only if one was uploaded) · live campaigns (only
+// if any) · payment details · a "let us know" button. Every value sits on its OWN full-width line with a Copy button
+// under it — never in a squeezed side-by-side row (that is what stacked account numbers one digit per line).
+// Back always returns to wherever it was opened from.
+function _splitPayment(value) {
+  const m = /^\s*([+\d][\d\s\-+()]{6,}?)\s*\((.+)\)\s*$/.exec(value || '');   // "0300-1234567 (Account Title)"
+  return m ? { main: m[1].trim(), sub: m[2].trim() } : { main: String(value || '').trim(), sub: '' };
+}
+
+function _payCardHtml(icon, label, value) {
+  if (!value) return '';
+  const { main, sub } = _splitPayment(value);
+  const copyText = sub ? main : value;           // an account number is what people copy; bank details are copied whole
+  return `<div class="card" style="margin-bottom:10px;padding:14px 16px">
+    <div class="text-xs text-muted" style="margin-bottom:6px">${icon} ${esc(label)}</div>
+    <div style="font-size:${sub ? 20 : 15}px;font-weight:800;line-height:1.45;letter-spacing:${sub ? '.4px' : '0'};white-space:pre-line;overflow-wrap:anywhere">${esc(main)}</div>
+    ${sub ? `<div class="text-sm text-muted" style="margin-top:2px;overflow-wrap:anywhere">${esc(sub)}</div>` : ''}
+    <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:12px" onclick="navigator.clipboard?.writeText('${escJs(copyText)}');showToast('Copied ✓')">📋 Copy ${sub ? 'number' : 'details'}</button>
+  </div>`;
+}
+
 async function showDonationPage() {
   if (getSetting('donation_enabled', 'false') !== 'true') { showToast('Support is not available right now.'); return; }
-  showLoading(true, 'Loading...');
+  showScreen('support');
+  const wrap = document.getElementById('supportPageWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(2, false)}`;
   const { data: campaigns } = await db(sb.from('donation_campaigns').select('*').eq('is_active', true).order('created_at', { ascending: false }), 'Donation error');
-  showLoading(false);
   const jazzcash = getSetting('donation_jazzcash', '');
   const easypaisa = getSetting('donation_easypaisa', '');
   const bank = getSetting('donation_bank', '');
+  const imageUrl = getSetting('donation_image_url', '');
   const message = getSetting('donation_message', 'Help us keep this app free and growing for every student. Any contribution helps!');
-
-  const copyBtn = value => `<button class="btn btn-secondary btn-xs" style="flex-shrink:0" onclick="navigator.clipboard?.writeText('${escJs(value)}');showToast('Copied ✓')">📋 Copy</button>`;
-  const payRow = (icon, label, value) => value ? `
-    <div class="card" style="margin-bottom:10px;padding:14px">
-      <div class="text-xs text-muted mb-1">${icon} ${label}</div>
-      <div class="flex-between" style="gap:10px;align-items:flex-start">
-        <div class="fw-700" style="word-break:break-word;white-space:pre-line;min-width:0">${esc(value)}</div>
-        ${copyBtn(value)}
-      </div>
-    </div>` : '';
 
   const campaignHtml = (campaigns || []).map(c => `
     <div class="card" style="margin-bottom:14px;overflow:hidden;padding:0">
-      ${c.image_url ? `<img src="${esc(c.image_url)}" style="width:100%;max-height:160px;object-fit:cover" onerror="this.style.display='none'">` : ''}
-      <div style="padding:14px">
+      ${c.image_url ? `<img src="${esc(c.image_url)}" style="width:100%;max-height:170px;object-fit:cover;display:block" onerror="this.style.display='none'">` : ''}
+      <div style="padding:14px 16px">
         <div class="fw-700" style="font-size:16px">${esc(c.title)}</div>
         ${c.description ? `<p class="text-sm text-muted" style="margin-top:4px">${esc(c.description)}</p>` : ''}
         ${c.purpose ? `<div class="text-xs mt-2" style="color:var(--gold-700)">🎯 ${esc(c.purpose)}</div>` : ''}
-        ${c.donation_link ? `<div class="flex-between mt-2" style="gap:10px;padding:10px 12px;background:var(--surface-2,var(--surface));border:1px solid var(--border);border-radius:var(--radius-md)">
-          <div class="text-sm fw-600" style="word-break:break-word;min-width:0">${esc(c.donation_link)}</div>${copyBtn(c.donation_link)}
+        ${c.donation_link ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <div class="fw-700" style="overflow-wrap:anywhere;white-space:pre-line">${esc(c.donation_link)}</div>
+          <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px" onclick="navigator.clipboard?.writeText('${escJs(c.donation_link)}');showToast('Copied ✓')">📋 Copy</button>
         </div>` : ''}
       </div>
     </div>`).join('');
 
-  const hasMethods = jazzcash || easypaisa || bank;
-  const wrap = document.getElementById('supportPageWrap');
+  const hasMethods = !!(jazzcash || easypaisa || bank);
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin-bottom:16px;text-align:center">
-      <div style="font-size:36px;margin-bottom:4px">💛</div>
-      <h2>Support LUMHSian</h2>
-      <p>${esc(message)}</p>
+      <div style="font-size:38px;margin-bottom:6px">💛</div>
+      <h2 style="margin-bottom:8px">Support LUMHSian</h2>
+      <p style="line-height:1.6;white-space:pre-line">${esc(message)}</p>
     </div>
+    ${imageUrl ? `<img src="${esc(imageUrl)}" alt="" style="width:100%;border-radius:var(--radius-lg);margin-bottom:16px;display:block" onerror="this.style.display='none'">` : ''}
     ${campaignHtml}
-    ${hasMethods ? `<div class="section-label">Ways to donate</div>${payRow('📱', 'JazzCash', jazzcash)}${payRow('📱', 'Easypaisa', easypaisa)}${payRow('🏦', 'Bank Account', bank)}` : ''}
-    ${!campaigns?.length && !hasMethods ? '<div class="card text-center"><p class="text-muted">Payment details coming soon.</p></div>' : ''}
-    ${hasMethods || campaigns?.length ? `<button class="btn btn-secondary mt-2" style="width:100%" onclick="openFeedbackModal()">💬 Donated? Let us know</button>` : ''}
-    <div style="height:16px"></div>`;
-  showScreen('support');
+    ${hasMethods ? `<div class="section-label">Payment details</div>${_payCardHtml('📱', 'JazzCash', jazzcash)}${_payCardHtml('📱', 'Easypaisa', easypaisa)}${_payCardHtml('🏦', 'Bank Account', bank)}` : ''}
+    ${!hasMethods && !campaigns?.length ? '<div class="card text-center"><p class="text-muted">Payment details coming soon.</p></div>' : ''}
+    <button class="btn btn-primary mt-2" style="width:100%" onclick="openFeedbackModal('support')">💬 Donated? Let us know</button>
+    <div style="height:20px"></div>`;
 }
 window.showDonationPage = showDonationPage;
 
 
 
-function openFeedbackModal() {
+// Opened from Profile → My Reports ("Send New Feedback") and from the Support page ("Donated? Let us know").
+// It is about the APP — what students think of it — not a bug form (broken questions are reported with the 🚩 button
+// on the question itself), so the wording changes with where it was opened from.
+function openFeedbackModal(context) {
+  const fromSupport = context === 'support';
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px">
-      <div class="fw-700 mb-1">💬 Send Feedback</div>
-      <p class="text-sm text-muted mb-3">Suggestions, bugs, or anything else you'd like the admin to know.</p>
-      <textarea id="_rpt_msg" class="input-field" rows="4" placeholder="Type your feedback..." maxlength="2000" style="resize:vertical"></textarea>
+      <div class="fw-700 mb-1">${fromSupport ? '💛 Thank you for supporting us' : '💬 Tell us about the app'}</div>
+      <p class="text-sm text-muted mb-3">${fromSupport
+        ? 'Tell us how LUMHSian is working for you, and what we could do better. If you donated, add your name and transaction ID so we can thank you personally.'
+        : 'How is the app working for you? Share what you like, what is missing, or what could be better.'}</p>
+      <textarea id="_rpt_msg" class="input-field" rows="4" placeholder="${fromSupport ? 'Your thoughts on the app (and donation details, if any)…' : 'Write your feedback about the app…'}" maxlength="2000" style="resize:vertical"></textarea>
       <div class="btn-row mt-3">
         <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitReport(this,null)">Send Feedback</button>
+        <button class="btn btn-primary" onclick="submitReport(this,null,'${fromSupport ? 'support' : ''}')">Send</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -92,10 +109,10 @@ async function openMyReports() {
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:440px;max-height:85vh;overflow-y:auto">
       <div class="flex-between mb-3">
-        <span class="fw-700">📬 My Reports &amp; Feedback</span>
+        <span class="fw-700">📬 Feedback &amp; Reports</span>
         <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
       </div>
-      <button class="btn btn-secondary btn-sm mb-3" style="width:100%" onclick="this.closest('[style*=fixed]').remove();openFeedbackModal()">💬 Send New Feedback</button>
+      <button class="btn btn-secondary btn-sm mb-3" style="width:100%" onclick="this.closest('[style*=fixed]').remove();openFeedbackModal()">💬 Tell us about the app</button>
       <div id="myReportsList">${skeletonList(2, false)}</div>
     </div>`;
   document.body.appendChild(overlay);
@@ -615,7 +632,7 @@ export async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">❌</div><div><div class="list-item-title">Wrong Questions</div><div class="list-item-sub">Sorted by module, subject & test</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
-    <div class="list-item" onclick="navGo('savedtests')">
+    <div class="list-item" onclick="openSavedTests()">
       <div class="list-item-left"><div class="list-item-icon">📁</div><div><div class="list-item-title">Saved Tests</div><div class="list-item-sub">Your Make Your Own tests</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
@@ -639,7 +656,7 @@ export async function renderProfile() {
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
     <div class="list-item" onclick="openMyReports()">
-      <div class="list-item-left"><div class="list-item-icon">📬</div><div><div class="list-item-title">My Reports & Feedback</div><div class="list-item-sub">Report questions, send feedback, see replies</div></div></div>
+      <div class="list-item-left"><div class="list-item-icon">📬</div><div><div class="list-item-title">Feedback & Reports</div><div class="list-item-sub">Tell us about the app, report a question, see replies</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
     ${getSetting('payment_enabled','false') === 'true' ? `
