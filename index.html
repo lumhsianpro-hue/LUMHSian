@@ -19,6 +19,38 @@
 <link rel="stylesheet" href="css/admin.css">
 <link rel="stylesheet" href="css/quiz.css">
 <link rel="stylesheet" href="css/responsive.css">
+<script>
+// Safety net for partial updates: if only some of the app's files are replaced while browsers still hold the old
+// cached copies of the others, the module graph can fail to load (blank white page) or load half-updated. Instead of
+// leaving a student stuck, show a clear "Refresh" prompt that clears the cache and reloads.
+(function () {
+  function show() {
+    if (document.getElementById('lumUpdateNotice')) return;
+    var d = document.createElement('div');
+    d.id = 'lumUpdateNotice';
+    d.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:2147483000;background:#171717;color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font-family:system-ui,sans-serif';
+    d.innerHTML = '<div style="max-width:320px"><div style="font-size:42px;margin-bottom:10px">&#128260;</div><h2 style="margin:0 0 8px">App updated</h2><p style="margin:0 0 18px;opacity:.8;line-height:1.5">A newer version is available. Tap Refresh to load it.</p><button id="lumUpdateBtn" style="background:#c9980a;color:#fff;border:0;border-radius:12px;padding:12px 28px;font-size:16px;font-weight:700">Refresh</button></div>';
+    document.body.appendChild(d);
+    document.getElementById('lumUpdateBtn').onclick = function () {
+      var done = function () { location.reload(); };
+      try {
+        var jobs = [];
+        if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+        if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+        Promise.all(jobs).then(done, done);
+      } catch (e) { done(); }
+    };
+  }
+  window.__lumShowUpdate = show;
+  window.addEventListener('error', function (e) {
+    var m = String((e && e.message) || '');
+    if (/does not provide an export|Importing a module script failed|Failed to fetch dynamically imported|error loading dynamically imported/i.test(m)) {
+      if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+    }
+  });
+  setTimeout(function () { if (!window.__lumBooted) show(); }, 20000);
+})();
+</script>
 </head>
 <body>
 
