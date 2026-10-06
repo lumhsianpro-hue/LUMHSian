@@ -26,34 +26,32 @@ async function _fetchAllUsers(year) {
 }
 
 async function _fetchStatsFor(emails) {
-  const out = [];
-  let cols = 'email,attempt_correct,attempt_questions,attempt_answered,total_tests';
-  for (let i = 0; i < emails.length; i += 150) {
-    const chunk = emails.slice(i, i + 150);
-    let res = await sb.from('user_stats').select(cols).in('email', chunk);
-    if (res.error && cols.includes('attempt_answered')) {
-      // attempt_answered not migrated yet — fall back so the leaderboard still loads (it then counts skipped too)
-      cols = 'email,attempt_correct,attempt_questions,total_tests';
-      res = await sb.from('user_stats').select(cols).in('email', chunk);
-    }
-    if (res.error && cols.includes('attempt_questions')) {
-      // the attempt-mode columns aren't migrated at all yet: nobody can qualify, but the screen still opens normally
-      cols = 'email,total_tests';
-      res = await sb.from('user_stats').select(cols).in('email', chunk);
-    }
-    if (res.error) { await db(Promise.resolve(res), 'Stats error'); return null; }
-    out.push(...(res.data || []));
+  const chunks = [];
+  for (let i = 0; i < emails.length; i += 150) chunks.push(emails.slice(i, i + 150));
+  if (!chunks.length) return [];
+  const fetchChunk = (chunk, cols) => sb.from('user_stats').select(cols).in('email', chunk);
+  // Newest columns first. If attempt_answered / the attempt-mode columns haven't been migrated yet, fall back so the
+  // leaderboard still opens instead of showing an error.
+  const colSets = ['email,attempt_correct,attempt_questions,attempt_answered,total_tests', 'email,attempt_correct,attempt_questions,total_tests', 'email,total_tests'];
+  let k = 0, first = null;
+  for (; k < colSets.length; k++) {
+    first = await fetchChunk(chunks[0], colSets[k]);
+    if (!first.error) break;
   }
-  return out;
+  if (!first || first.error) { await db(Promise.resolve(first), 'Stats error'); return null; }
+  const rest = await Promise.all(chunks.slice(1).map(ch => fetchChunk(ch, colSets[k])));
+  const failed = rest.find(r => r.error);
+  if (failed) { await db(Promise.resolve(failed), 'Stats error'); return null; }
+  return [...(first.data || []), ...rest.flatMap(r => r.data || [])];
 }
 
 // Shared by renderRanking(), the post-test rank celebration AND the Home rank badge (getRankInfo in app.js), so
 // everything always shows the same rank.
 export async function computeLeaderboardCohort(year) {
   const users = await _fetchAllUsers(year);
-  if (!users) return { combined: [], myRank: 0, me: null, myAttempted: 0 };
+  if (!users) return { combined: [], everyone: [], myRank: 0, me: null, myAttempted: 0 };
   const stats = await _fetchStatsFor(users.map(u => u.email));
-  if (!stats) return { combined: [], myRank: 0, me: null, myAttempted: 0 };
+  if (!stats) return { combined: [], everyone: [], myRank: 0, me: null, myAttempted: 0 };
   // Ranking is purely on Attempt-mode performance — practice/review answers never factor in.
   //   • To qualify: at least MIN_ATTEMPTED_QUESTIONS questions ATTEMPTED (answered) in Attempt mode, cumulative across
   //     any mix of practice tests, Build Your Own Test and past papers. Skipped questions do not count here.
@@ -75,7 +73,8 @@ export async function computeLeaderboardCohort(year) {
   const myRank = combined.findIndex(u => u.email === myEmail) + 1;
   const me = combined.find(u => u.email === myEmail) || null;
   const mine = everyone.find(u => u.email === myEmail);
-  return { combined, myRank, me, myAttempted: mine ? mine.attempted : 0 };
+  // `everyone` (every student in the cohort, ranked or not) is only used by the admin's student profile.
+  return { combined, everyone, myRank, me, myAttempted: mine ? mine.attempted : 0 };
 }
 
 
@@ -96,7 +95,7 @@ export async function renderRanking() {
   const wrap = document.getElementById('rankingPageWrap');
   wrap.innerHTML = `${skeletonList(4)}`;
   const myYear = window.currentUser?.year_of_study || null;
-  const { combined, myRank, me, myAttempted } = await computeLeaderboardCohort(myYear);
+  const { combined, myRank, me } = await computeLeaderboardCohort(myYear);
   const top10 = combined.slice(0, 10);
   const rankMedals = ['🥇','🥈','🥉'];
 
@@ -113,26 +112,28 @@ export async function renderRanking() {
       </button>
       <div style="font-size:36px;margin-bottom:8px">🏆</div>
       <div style="font-family:var(--font-display);font-size:22px;font-weight:800">Top Rankers</div>
-      <div style="font-size:13px;opacity:.7;margin-top:4px">${myYear ? `${myYear} · ` : ''}${combined.length} students · Ranked by accuracy</div>
+      <div style="font-size:13px;opacity:.7;margin-top:4px">${myYear ? `${myYear} · ` : ''}${window.currentUser.is_admin ? `${combined.length} ranked student${combined.length === 1 ? '' : 's'} · ` : ''}Ranked by accuracy</div>
     </div>
-    <div class="text-xs text-muted" style="text-align:center;margin-bottom:16px;line-height:1.5">🔒 To appear here, attempt at least ${MIN_ATTEMPTED_QUESTIONS} questions in Attempt mode (skipped ones don't count) — any mix of practice tests, Build Your Own Test, or past papers. Ranking is by accuracy, and skipped questions count as wrong.</div>
-
     ${me ? `<div style="background:var(--gold-50);border:2px solid var(--gold-400);border-radius:var(--radius-lg);padding:16px;margin-bottom:16px">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold-600);margin-bottom:8px">Your Position</div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold-600);margin-bottom:10px">Your Rank${myYear ? ' · ' + esc(String(myYear)) : ''}</div>
       <div class="flex-between">
-        <div class="flex" style="gap:10px">
-          ${renderAvatar(me.name, 40)}
-          <div>
-            <div class="fw-700">Dr. ${esc(me.name)}</div>
-            <div class="text-xs text-muted">${esc(me.college)||''} · ${me.attempted} attempted</div>
+        <div class="flex" style="gap:12px;min-width:0">
+          <div style="font-size:36px;font-weight:800;color:var(--gold-700);line-height:1">#${myRank}</div>
+          <div style="min-width:0">
+            <div class="fw-700 text-sm">Dr. ${esc(me.name)}</div>
+            <div class="text-xs text-muted">${esc(me.college) || ''}</div>
           </div>
         </div>
-        <div style="text-align:right">
+        <div style="text-align:right;flex-shrink:0">
           <div style="font-size:22px;font-weight:800;color:var(--gold-700)">${me.acc}%</div>
-          <div class="text-xs text-muted">Rank #${myRank}</div>
+          <div class="text-xs text-muted">accuracy</div>
         </div>
       </div>
-    </div>` : myYear ? `<div class="card" style="margin-bottom:16px;text-align:center"><div class="fw-700" style="font-size:18px">${myAttempted} / ${MIN_ATTEMPTED_QUESTIONS} attempted</div><div style="height:8px;background:var(--border);border-radius:99px;overflow:hidden;margin:10px 0"><div style="height:100%;width:${Math.min(100, Math.round(myAttempted / MIN_ATTEMPTED_QUESTIONS * 100))}%;background:var(--gold-500,#c9980a)"></div></div><p class="text-sm">Attempt ${Math.max(0, MIN_ATTEMPTED_QUESTIONS - myAttempted)} more questions in Attempt mode to appear on the leaderboard. Skipped questions don't count.</p></div>` : `<div class="card" style="margin-bottom:16px;text-align:center"><p>Set your year in Profile to see your ranking among peers.</p></div>`}
+    </div>` : myYear ? `<div class="card" style="margin-bottom:16px;text-align:center">
+      <div style="font-size:30px">🏁</div>
+      <div class="fw-700" style="margin:6px 0 4px">You are not ranked yet</div>
+      <p class="text-sm">Attempt at least ${MIN_ATTEMPTED_QUESTIONS} questions in Attempt mode of practice tests or past papers to get your rank. Ranking is by accuracy, and skipped questions count as wrong.</p>
+    </div>` : `<div class="card" style="margin-bottom:16px;text-align:center"><p>Set your year in Profile to see your ranking among peers.</p></div>`}
 
     <div class="section-label">Top 10 · ${myYear || 'All Students'}</div>
     ${top10.map((u, i) => {
@@ -145,7 +146,7 @@ export async function renderRanking() {
         <div style="margin:0 4px">${rankAvatarHtml(u, 36)}</div>
         <div style="flex:1;min-width:0">
           <div class="fw-700 text-sm">${showName ? 'Dr. '+esc(u.name) : 'Anonymous 🎭'}${isMe ? ' · You' : ''}</div>
-          <div class="text-xs text-muted">${esc(u.college)||'Unknown College'} · ${u.attempted} Qs</div>
+          <div class="text-xs text-muted">${esc(u.college)||'Unknown College'}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div class="fw-700" style="color:var(--gold-700);font-size:18px">${u.acc}%</div>
