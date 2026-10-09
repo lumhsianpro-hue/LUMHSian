@@ -904,12 +904,17 @@ async function finishBrowseReview() {
     if (stats.last_practice_date !== today) {
       stats.streak = (stats.last_practice_date === yesterday) ? (stats.streak || 0) + 1 : 1;
       stats.last_practice_date = today;
-      // Also add to history
-      if (!stats.history) stats.history = [];
-      stats.history.unshift({ date: today, total: viewed, correct, mode: 'browse' });
-      if (stats.history.length > 90) stats.history = stats.history.slice(0, 90);
-      saveUserStats(stats);
     }
+    // Every Review session goes into history (it used to be only the first one each day, so the planner under-counted),
+    // with the same fields as other sessions so Stats never shows "undefined" for them. Only questions actually
+    // answered are counted — nothing skipped.
+    if (!stats.history) stats.history = [];
+    stats.history.unshift({
+      date: today, module: t.moduleName, label: t.testTitle || t.paperTitle || t.moduleName, type: 'Review',
+      total: viewed, correct, wrong, skipped: 0, mode: 'browse'
+    });
+    if (stats.history.length > 120) stats.history = stats.history.slice(0, 120);
+    saveUserStats(stats);
   }
   const dest = t.returnScreen || 'home';
   const offerCfg = (t.isCustom && t.customConfig && !t.customTestId && !t.savedAsCustom) ? t.customConfig : null;
@@ -1014,6 +1019,7 @@ async function submitTest() {
     stats.total_tests = (stats.total_tests || 0) + 1;
     stats.total_questions = (stats.total_questions || 0) + total;
     stats.total_correct = (stats.total_correct || 0) + correct;
+    stats.total_skipped = (stats.total_skipped || 0) + skipped;   // lifetime skipped (Stats shows it separately from incorrect)
     stats.best_score = Math.max(stats.best_score || 0, percent);
 
     // Leaderboard ranking now needs attempt-mode performance specifically —
@@ -1083,7 +1089,7 @@ async function submitTest() {
       label: window.activeTest.testTitle || window.activeTest.paperTitle || window.activeTest.moduleName, type: sessionType,
       percent, accuracy, correct, wrong, skipped, total, timeTaken, questions: window.activeTest.questions.length, mode: window.activeTest.mode
     });
-    stats.history = history.slice(0, 60);
+    stats.history = history.slice(0, 120);   // roomy enough that the 30-day planner heatmap stays complete for busy students
     await saveUserStats(stats);
 
     // Best-effort — don't block the results screen on this, and never let a log
@@ -1371,35 +1377,39 @@ window.openReportModal = openReportModal;
 
 
 
+// Sends a student's report / feedback / chat message. ONE row for the admin's Reports tab (reports_feedback) plus a
+// copy in inbox_messages so it appears in the student's own chat. The copy is best effort: if the inbox table isn't
+// set up yet the admin still received the message.
+export async function sendStudentMessage({ type, question_id, message }) {
+  const email = window.currentUser.email;
+  const { data, error } = await sb.from('reports_feedback').insert({
+    type, question_id: question_id || null, user_email: email, user_name: window.currentUser.name, message
+  }).select('id').single();
+  if (error || !data) { console.warn('Message not sent', error); return { ok: false }; }
+  const { data: copy, error: e2 } = await sb.from('inbox_messages').insert({
+    user_email: email, sender: 'student', kind: type === 'question_report' ? 'report' : 'message', body: message, ref_id: data.id
+  }).select('id').single();
+  if (e2) console.warn('Inbox copy not saved (run the inbox SQL migration):', e2.message);
+  return { ok: true, reportId: data.id, inboxId: copy ? copy.id : null };
+}
+
 async function submitReport(btn, questionId, context) {
   const overlay = btn.closest('[style*="fixed"]');
-  const card = overlay.querySelector('div');
-  const textarea = overlay.querySelector('#_rpt_msg');
-  const message = textarea.value.trim();
+  const message = overlay.querySelector('#_rpt_msg').value.trim();
   if (!message) return showToast(questionId ? 'Please describe the issue first' : 'Please write your feedback first');
   if (message.length > 2000) return showToast('That message is too long (max 2000 characters).');
   const rl = rateLimited('submit_report', 5, 15 * 60 * 1000);
   if (!rl.allowed) return showToast(`Too many messages sent. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
-  const originalLabel = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Sending...';
-  const { error } = await db(sb.from('reports_feedback').insert({
-    type: questionId ? 'question_report' : 'feedback',
-    question_id: questionId || null,
-    user_email: window.currentUser.email,
-    user_name: window.currentUser.name,
-    message: context === 'support' ? '[Support] ' + message : message
-  }), questionId ? 'Report failed' : 'Could not send feedback');
-  if (error) { btn.disabled = false; btn.textContent = originalLabel; return; }
-  // Wipe the written text and show a clear "Sent" state in place of the form,
-  // instead of silently destroying the modal — makes it obvious it went through.
-  card.innerHTML = `
-    <div style="text-align:center;padding:8px 0">
-      <div style="font-size:40px;margin-bottom:8px">✅</div>
-      <div class="fw-700 mb-1">Sent!</div>
-      <p class="text-sm text-muted">${questionId ? 'The admin will review this and may reply in your Profile → My Reports.' : 'Thank you! The admin reads every message and may reply in your Profile → My Reports.'}</p>
-    </div>`;
-  setTimeout(() => overlay.remove(), 1600);
+  // Optimistic: the form closes and confirms at once and the send continues in the background, so the app never
+  // waits on the network. If it does fail, the text is put back in the form so nothing is lost.
+  overlay.remove();
+  showToast(questionId ? '🚩 Report sent ✓' : '💬 Message sent ✓');
+  const res = await sendStudentMessage({ type: questionId ? 'question_report' : 'feedback', question_id: questionId, message: context === 'support' ? '[Support] ' + message : message });
+  if (res.ok) return;
+  showToast('⚠️ Could not send. Your text was kept, please try again', 4500);
+  if (questionId) openReportModal(questionId); else if (typeof window.openFeedbackModal === 'function') window.openFeedbackModal(context);
+  const again = document.getElementById('_rpt_msg');
+  if (again) again.value = message;
 }
 window.submitReport = submitReport;
 

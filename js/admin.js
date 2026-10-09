@@ -1,9 +1,10 @@
 import { _renderStale, getQuestionCountsBy, getSetting, loadAppSettings, loadYearScreen, renderHome, saveAppState } from './app.js';
 import { showScreen } from './navigation.js';
 import { MIN_ATTEMPTED_QUESTIONS, computeLeaderboardCohort } from './leaderboard.js';
+import { inboxThreadHtml, loadInboxThread } from './profile.js';
 import { callAIRaw } from './quiz.js';
 import { ADMIN_EMAIL, USERS_SAFE_COLS, adminRPC, db, sb } from './supabase.js';
-import { _debounce, cacheClear, esc, escJs, renderMd, showConfirm, showLoading, showToast } from './utils.js';
+import { _debounce, cacheClear, compressImageFile, esc, escJs, normalizePhone, renderMd, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
 // ==================== ADMIN PANEL MAIN ====================
 // Leaves the admin panel: back to wherever it was opened from, or Home if the app was reopened straight onto it
@@ -465,6 +466,182 @@ export function timeAgo(ts) {
 
 
 
+// ==================== SEND MESSAGE (admin → one student) ====================
+// A chat sheet for one student: their conversation so far plus a composer with an optional photo. Sending is
+// optimistic and runs in the background (the photo is shrunk first), so the admin can keep working — or close the
+// sheet — while it goes out. The student gets a bell notification that opens their Inbox.
+const INBOX_SQL = `CREATE TABLE IF NOT EXISTS inbox_messages (
+  id BIGSERIAL PRIMARY KEY, user_email TEXT NOT NULL, sender TEXT NOT NULL DEFAULT 'admin', kind TEXT NOT NULL DEFAULT 'message',
+  body TEXT, image_url TEXT, ref_id BIGINT, quote TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), read_at TIMESTAMPTZ);
+CREATE INDEX IF NOT EXISTS idx_inbox_messages_user ON inbox_messages(user_email, created_at DESC);
+ALTER TABLE inbox_messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "inbox_select_own_or_admin" ON inbox_messages;
+DROP POLICY IF EXISTS "inbox_insert_admin_or_own" ON inbox_messages;
+DROP POLICY IF EXISTS "inbox_update_admin_only" ON inbox_messages;
+DROP POLICY IF EXISTS "inbox_delete_own_or_admin" ON inbox_messages;
+CREATE POLICY "inbox_select_own_or_admin" ON inbox_messages FOR SELECT USING (user_email = (SELECT u.email FROM users u WHERE u.auth_uid = auth.uid()) OR is_current_user_admin());
+CREATE POLICY "inbox_insert_admin_or_own" ON inbox_messages FOR INSERT WITH CHECK (is_current_user_admin() OR (sender = 'student' AND user_email = (SELECT u.email FROM users u WHERE u.auth_uid = auth.uid())));
+CREATE POLICY "inbox_update_admin_only" ON inbox_messages FOR UPDATE USING (is_current_user_admin());
+CREATE POLICY "inbox_delete_own_or_admin" ON inbox_messages FOR DELETE USING (user_email = (SELECT u.email FROM users u WHERE u.auth_uid = auth.uid()) OR is_current_user_admin());
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE inbox_messages; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+ALTER TABLE app_notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_skipped INTEGER DEFAULT 0;`;
+
+function adminCopyInboxSql() {
+  navigator.clipboard?.writeText(INBOX_SQL);
+  showToast('SQL copied. Paste it in Supabase → SQL Editor and run it once');
+}
+window.adminCopyInboxSql = adminCopyInboxSql;
+
+function _admMsgOpenFor(email) { return document.getElementById('adminMsgOverlay') && window._admMsg && window._admMsg.email === email; }
+
+function _admMsgDraw(scroll) {
+  const S = window._admMsg;
+  const body = document.getElementById('admMsgBody');
+  if (!S || !body) return;
+  const notice = S.tableOk ? '' : `<div class="card" style="margin:6px 0 10px;padding:12px;border:1.5px solid var(--gold-400)">
+      <div class="fw-700 text-sm">Inbox is not set up yet</div>
+      <div class="text-xs text-muted" style="margin:2px 0 8px">Run the setup SQL once in Supabase, then messages can be sent.</div>
+      <button class="btn btn-secondary btn-sm" onclick="adminCopyInboxSql()">📋 Copy setup SQL</button></div>`;
+  body.innerHTML = notice + inboxThreadHtml(S.thread, 'admin', 'adminMsgDelete', 'adminMsgRetry',
+    '<div class="ib-empty"><div style="font-size:36px">✉️</div><div class="fw-700" style="margin-top:6px">No messages yet</div><p class="text-sm" style="margin-top:4px">Write the first message below.</p></div>');
+  if (scroll) body.scrollTop = body.scrollHeight;
+}
+
+async function adminOpenMessages(email, name) {
+  document.getElementById('adminMsgOverlay')?.remove();
+  window._admMsg = { email, name, file: null, thread: [], tableOk: true };
+  const overlay = document.createElement('div');
+  overlay.id = 'adminMsgOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.7);z-index:10006;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(6px)';
+  overlay.innerHTML = `
+    <div class="ib-sheet">
+      <div class="ib-sheet-head">
+        <div style="min-width:0"><div class="fw-700" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✉️ ${esc(name) || esc(email)}</div>
+        <div class="text-xs text-muted">Shows in the student's Inbox and notifies them</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="adminCloseMessages()">✕</button>
+      </div>
+      <div class="ib-sheet-body" id="admMsgBody">${skeletonList(2, false)}</div>
+      <div class="ib-sheet-foot">
+        <div id="admMsgChip"></div>
+        <div class="ib-composer" style="position:static;padding:0;background:transparent">
+          <button class="ib-attach" aria-label="Attach a photo" onclick="document.getElementById('admMsgFile').click()">📷</button>
+          <input type="file" id="admMsgFile" accept="image/*" style="display:none" onchange="adminMsgPick(this)">
+          <textarea id="admMsgInput" rows="1" maxlength="2000" placeholder="Write a message…" oninput="inboxGrow(this)"></textarea>
+          <button class="ib-send" aria-label="Send" onclick="adminMsgSend()">➤</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const { messages, tableOk } = await loadInboxThread(email);
+  const S = window._admMsg;
+  if (!S || S.email !== email) return;
+  S.thread = messages;
+  S.tableOk = tableOk;
+  _admMsgDraw(true);
+}
+window.adminOpenMessages = adminOpenMessages;
+
+function adminCloseMessages() { document.getElementById('adminMsgOverlay')?.remove(); }
+window.adminCloseMessages = adminCloseMessages;
+
+function _admMsgChip() {
+  const S = window._admMsg;
+  const el = document.getElementById('admMsgChip');
+  if (!el || !S) return;
+  el.innerHTML = S.file ? `<div class="ib-chip"><img src="${esc(S.fileUrl)}" alt=""><span>${esc(S.file.name.slice(0, 26))}</span><button class="ib-del" aria-label="Remove photo" onclick="adminMsgClearFile()">✕</button></div>` : '';
+}
+
+function adminMsgPick(input) {
+  const S = window._admMsg;
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!S || !file) return;
+  if (!/^image\//.test(file.type)) return showToast('Please choose an image');
+  if (file.size > 25 * 1024 * 1024) return showToast('That photo is too large (max 25 MB)');
+  if (S.fileUrl) URL.revokeObjectURL(S.fileUrl);
+  S.file = file;
+  S.fileUrl = URL.createObjectURL(file);
+  _admMsgChip();
+}
+window.adminMsgPick = adminMsgPick;
+
+function adminMsgClearFile() {
+  const S = window._admMsg;
+  if (!S) return;
+  if (S.fileUrl) URL.revokeObjectURL(S.fileUrl);
+  S.file = null; S.fileUrl = null;
+  _admMsgChip();
+}
+window.adminMsgClearFile = adminMsgClearFile;
+
+function adminMsgSend() {
+  const S = window._admMsg;
+  const input = document.getElementById('admMsgInput');
+  if (!S || !input) return;
+  const body = input.value.trim();
+  if (!body && !S.file) return showToast('Write a message or attach a photo');
+  const tmp = { id: 'tmp' + Date.now(), sender: 'admin', kind: 'message', body, created_at: new Date().toISOString(), _state: 'sending', _file: S.file, _previewUrl: S.fileUrl };
+  S.thread.push(tmp);
+  S.file = null; S.fileUrl = null;                       // the bubble owns the photo now
+  input.value = ''; input.style.height = 'auto';
+  _admMsgChip();
+  _admMsgDraw(true);
+  _admMsgDeliver(tmp, S.email, S.name);                  // not awaited: the admin can keep working
+}
+window.adminMsgSend = adminMsgSend;
+
+async function _admMsgDeliver(tmp, email, name) {
+  tmp._state = 'sending';
+  try {
+    if (tmp._file && !tmp.image_url) {
+      const blob = await compressImageFile(tmp._file);
+      const path = `inbox/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+      const { error: ue } = await sb.storage.from('module-images').upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+      if (ue) throw ue;
+      tmp.image_url = sb.storage.from('module-images').getPublicUrl(path).data.publicUrl;   // a retry won't upload it twice
+    }
+    const { data, error } = await sb.from('inbox_messages').insert({ user_email: email, sender: 'admin', kind: 'message', body: tmp.body || null, image_url: tmp.image_url || null }).select('*').single();
+    if (error) throw error;
+    if (tmp._previewUrl) URL.revokeObjectURL(tmp._previewUrl);
+    Object.assign(tmp, data, { _state: null, _file: null, _previewUrl: null });
+    showToast(`✉️ Sent to ${name || email}`);
+    logAdminAction('Sent a message to a student', email);
+  } catch (e) {
+    tmp._state = 'failed';
+    const missing = /inbox_messages|does not exist|schema cache/i.test(e.message || '');
+    if (missing && window._admMsg) window._admMsg.tableOk = false;
+    showToast(missing ? '❌ Inbox is not set up yet. Open the sheet and copy the setup SQL' : '❌ Message not sent: ' + (e.message || 'network problem'), 5000);
+  }
+  if (_admMsgOpenFor(email)) _admMsgDraw(false);
+}
+
+function adminMsgRetry(id) {
+  const S = window._admMsg;
+  const m = S && S.thread.find(x => String(x.id) === String(id));
+  if (!m) return;
+  _admMsgDraw(false);
+  _admMsgDeliver(m, S.email, S.name);
+}
+window.adminMsgRetry = adminMsgRetry;
+
+function adminMsgDelete(id) {
+  const S = window._admMsg;
+  const m = S && S.thread.find(x => String(x.id) === String(id));
+  if (!m) return;
+  if (m.legacy) return showToast('Older reports and replies are managed from the Reports tab');
+  S.thread = S.thread.filter(x => x !== m);
+  _admMsgDraw(false);
+  if (typeof m.id !== 'number') return;                  // never reached the server
+  sb.from('inbox_messages').delete().eq('id', m.id).then(({ error }) => {
+    if (error) { showToast('Could not delete: ' + error.message); adminOpenMessages(S.email, S.name); }
+  });
+}
+window.adminMsgDelete = adminMsgDelete;
+
+
+
 // Admin-only: where this student stands among the ranked students of their year ("#13 of 16"). Students themselves
 // only ever see their own rank number — never how many students are ranked.
 async function _adminStudentRankHtml(u, s) {
@@ -539,6 +716,7 @@ async function adminViewStudentDetail(email) {
           ${u.is_banned ? '<span style="background:rgba(220,38,38,.4);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">🚫 Banned</span>' : '<span style="background:rgba(5,150,105,.3);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">✅ Active</span>'}
           ${u.is_admin ? '<span style="background:rgba(245,158,11,.4);border-radius:999px;padding:3px 12px;font-size:11px;font-weight:600">⭐ Admin</span>' : ''}
         </div>
+        <button class="btn" style="margin-top:14px;width:100%;background:#fff;color:var(--gold-700);font-weight:800" onclick="adminOpenMessages('${escJs(u.email)}','${escJs(u.name || '')}')">✉️ Send Message</button>
       </div>
       <!-- Body -->
       <div style="padding:20px">
@@ -646,7 +824,9 @@ window.adminEditStudentInfo = adminEditStudentInfo;
 
 async function adminSaveStudentInfo(email) {
   const name = document.getElementById('_ei_name').value.trim();
-  const phone = document.getElementById('_ei_phone').value.trim();
+  const phoneRaw = document.getElementById('_ei_phone').value.trim();
+  const phone = phoneRaw ? normalizePhone(phoneRaw) : '';
+  if (phoneRaw && !phone) return showToast('Enter a valid phone number or leave it empty');
   const enrollment_number = document.getElementById('_ei_enroll').value.trim();
   const year_of_study = document.getElementById('_ei_year').value;
   const college = document.getElementById('_ei_college').value;
@@ -4082,6 +4262,11 @@ async function adminReplyToReport(id, filter) {
   if (!reply) return showToast('Please type a reply');
   await db(sb.from('reports_feedback').update({ admin_reply: reply, status: 'replied', replied_at: new Date().toISOString() }).eq('id', id), 'Reply failed');
   showToast('Reply sent ✓');
+  // Also drop the reply into the student's Inbox chat (in the background — the admin doesn't wait for it)
+  (async () => {
+    const { data: rep } = await sb.from('reports_feedback').select('user_email,message').eq('id', id).maybeSingle();
+    if (rep) await sb.from('inbox_messages').insert({ user_email: rep.user_email, sender: 'admin', kind: 'reply', body: reply, ref_id: id, quote: (rep.message || '').slice(0, 120) });
+  })().catch(() => {});
   logAdminAction('Replied to a report/feedback', `Report #${id}`);
   adminReports(filter);
 }
@@ -4194,13 +4379,23 @@ window.adminDeleteSelectedErrorLogs = adminDeleteSelectedErrorLogs;
 
 
 
+// How long a notification stays in students' bell before it disappears on its own
+const TTL_CHOICES = [[1, '1 hour'], [6, '6 hours'], [12, '12 hours'], [24, '1 day'], [48, '2 days'], [72, '3 days'], [168, '1 week'], [336, '2 weeks'], [720, '30 days']];
+const _ttlOptions = (sel = 48) => TTL_CHOICES.map(([h, l]) => `<option value="${h}"${h === sel ? ' selected' : ''}>${l}</option>`).join('');
+
 async function adminAnnouncements(token = window._adminRenderToken) {
-  // Best-effort cleanup — notifications auto-expire after 48h from the
-  // student's point of view regardless (checkNewNotifications filters them
-  // out at query time), but this keeps the table from growing forever. Not
-  // awaited: if it fails or is slow, it shouldn't hold up loading the screen.
-  db(sb.from('app_notifications').delete().lt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()), 'Cleanup failed');
-  db(sb.from('announcements').delete().lt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()), 'Cleanup failed');
+  // Best-effort cleanup, in the background: each notification disappears for students at its own expiry (see
+  // _notifAlive in app.js); this just keeps the tables from growing forever. Rows from before the duration option
+  // existed (no expires_at) keep the old 48-hour rule. If the expires_at column isn't added yet, the old rule is used.
+  (async () => {
+    const nowISO = new Date().toISOString();
+    const old48 = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    for (const t of ['app_notifications', 'announcements']) {
+      const r1 = await sb.from(t).delete().lt('expires_at', nowISO);
+      if (r1.error) { await sb.from(t).delete().lt('created_at', old48); continue; }
+      await sb.from(t).delete().is('expires_at', null).lt('created_at', old48);
+    }
+  })().catch(() => {});
 
   const { data: announcements } = await db(sb.from('announcements').select('*').order('created_at', { ascending: false }), 'Announce error');
 
@@ -4214,7 +4409,9 @@ async function adminAnnouncements(token = window._adminRenderToken) {
   for (const y of (targetYears || [])) yearNameById[y.id] = y.name;
 
   const notifList = (sentNotifs || []).map(n => {
-    const hoursLeft = Math.max(0, Math.round(48 - (Date.now() - new Date(n.created_at).getTime()) / 3600000));
+    const endMs = n.expires_at ? new Date(n.expires_at).getTime() : new Date(n.created_at).getTime() + 48 * 3600000;
+    const left = Math.max(0, endMs - Date.now());
+    const leftLabel = left >= 86400000 ? Math.round(left / 86400000) + 'd' : left >= 3600000 ? Math.round(left / 3600000) + 'h' : Math.max(1, Math.round(left / 60000)) + 'm';
     return `
     <div class="admin-row">
       <div class="admin-row-left">
@@ -4223,7 +4420,7 @@ async function adminAnnouncements(token = window._adminRenderToken) {
         ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:160px;border-radius:var(--radius-md);margin-top:6px">` : ''}
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
           <span class="chip" style="font-size:10px">${new Date(n.created_at).toLocaleDateString()}</span>
-          <span class="chip" style="font-size:10px">⏳ expires in ${hoursLeft}h</span>
+          <span class="chip" style="font-size:10px">⏳ expires in ${leftLabel}</span>
           ${n.target_college === 'Others' ? '<span class="chip" style="font-size:10px">🌐 Others</span>' : (n.target_college ? `<span class="chip" style="font-size:10px">🏫 ${esc(n.target_college)}</span>` : '<span class="chip" style="font-size:10px">👥 All Colleges</span>')}
           ${n.target_year_id ? `<span class="chip" style="font-size:10px">🎓 ${esc(yearNameById[n.target_year_id] || 'Unknown Year')}</span>` : '<span class="chip" style="font-size:10px">🎓 All Years</span>'}
         </div>
@@ -4282,9 +4479,11 @@ async function adminAnnouncements(token = window._adminRenderToken) {
         <option value="">🎓 All Years</option>
         ${yearOpts}
       </select>
+      <label class="input-label">Keep for</label>
+      <select id="ntf_ttl" class="input-field" title="How long students see this" aria-label="How long students see this">${_ttlOptions(48)}</select>
       <button class="btn btn-primary mt-2" onclick="adminSendNotification()">🔔 Send to Notification Bell</button>
     </div>
-    <div class="fw-700 mb-2">📋 Sent Notifications <span class="text-xs text-muted" style="font-weight:500">(auto-expire after 48h)</span></div>
+    <div class="fw-700 mb-2">📋 Sent Notifications <span class="text-xs text-muted" style="font-weight:500">(each disappears after its own time)</span></div>
     ${notifList || '<div class="card"><p class="text-muted">No notifications sent yet.</p></div>'}
     <div style="height:20px"></div>
 
@@ -4319,6 +4518,8 @@ async function adminAnnouncements(token = window._adminRenderToken) {
         <option value="feature">✨ New Feature</option>
         <option value="maintenance">⚠️ Maintenance</option>
       </select>
+      <label class="input-label">Keep for</label>
+      <select id="an_ttl" class="input-field" title="How long students see this" aria-label="How long students see this">${_ttlOptions(48)}</select>
       <div style="margin-top:10px"><label><input type="checkbox" id="an_active" checked> <span class="text-sm">Publish immediately (show to students)</span></label></div>
       <button class="btn btn-primary mt-3" onclick="adminAddAnnouncement()">📤 Publish Announcement</button>
     </div>
@@ -4335,7 +4536,15 @@ async function adminSendNotification() {
   const college = document.getElementById('ntf_college').value || null;
   const target_year_id = parseInt(document.getElementById('ntf_year').value) || null;
   if (!title) return showToast('Please enter a title');
-  await db(sb.from('app_notifications').insert({ title, body, image_url, target_college: college, target_year_id }), 'Send failed');
+  const hours = parseInt(document.getElementById('ntf_ttl').value) || 48;
+  const row = { title, body, image_url, target_college: college, target_year_id };
+  let { error } = await sb.from('app_notifications').insert({ ...row, expires_at: new Date(Date.now() + hours * 3600000).toISOString() });
+  if (error && /expires_at/i.test(error.message || '')) {
+    // the one-time SQL (expires_at column) hasn't been run: still send it, with the original 48-hour life
+    ({ error } = await sb.from('app_notifications').insert(row));
+    if (!error) showToast('Sent with the default 2 days. Run the setup SQL to choose a custom time', 5000);
+  }
+  if (error) return showToast('Send failed: ' + error.message);
   showToast('🔔 Notification sent ✓');
   logAdminAction('Sent a notification', title);
   document.getElementById('ntf_title').value = '';
@@ -4370,7 +4579,14 @@ async function adminAddAnnouncement() {
   const type = document.getElementById('an_type').value;
   const is_active = document.getElementById('an_active').checked;
   if (!title) return showToast('Title required');
-  await db(sb.from('announcements').insert({ emoji, title, body, image_url, target_college, target_year_id, type, is_active, created_at: new Date().toISOString() }), 'Add failed');
+  const hours = parseInt(document.getElementById('an_ttl').value) || 48;
+  const arow = { emoji, title, body, image_url, target_college, target_year_id, type, is_active, created_at: new Date().toISOString() };
+  let { error: aerr } = await sb.from('announcements').insert({ ...arow, expires_at: new Date(Date.now() + hours * 3600000).toISOString() });
+  if (aerr && /expires_at/i.test(aerr.message || '')) {
+    ({ error: aerr } = await sb.from('announcements').insert(arow));
+    if (!aerr) showToast('Published with the default 2 days. Run the setup SQL to choose a custom time', 5000);
+  }
+  if (aerr) return showToast('Add failed: ' + aerr.message);
   cacheClear('announcements');
   showToast('Announcement published ✓'); adminAnnouncements();
 }

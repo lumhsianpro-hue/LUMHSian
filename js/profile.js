@@ -2,9 +2,9 @@ import { timeAgo } from './admin.js';
 import { APP_VERSION, _isStandalone, getRankInfo, getSetting, getUserStats, isAIEnabled, renderHome } from './app.js';
 import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
-import { checkExpiredAttemptOnRender, getResumableSnapshot } from './quiz.js';
+import { checkExpiredAttemptOnRender, getResumableSnapshot, sendStudentMessage } from './quiz.js';
 import { db, sb } from './supabase.js';
-import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, renderAvatar, renderMd, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
+import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, normalizePhone, rateLimited, renderAvatar, renderMd, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
 
 
@@ -102,60 +102,197 @@ window.openFeedbackModal = openFeedbackModal;
 
 
 
-async function openMyReports() {
-  const overlay = document.createElement('div');
-  overlay.id = 'myReportsOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:440px;max-height:85vh;overflow-y:auto">
-      <div class="flex-between mb-3">
-        <span class="fw-700">📬 Feedback &amp; Reports</span>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
-      </div>
-      <button class="btn btn-secondary btn-sm mb-3" style="width:100%" onclick="this.closest('[style*=fixed]').remove();openFeedbackModal()">💬 Tell us about the app</button>
-      <div id="myReportsList">${skeletonList(2, false)}</div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const { data } = await db(sb.from('reports_feedback').select('*').eq('user_email', window.currentUser.email).order('created_at', { ascending: false }), 'Load failed');
-  const list = document.getElementById('myReportsList');
-  if (!data?.length) { list.innerHTML = '<p class="text-sm text-muted text-center">No reports yet.</p>'; return; }
-  const qIds = [...new Set(data.map(r => r.question_id).filter(Boolean))];
-  let qMap = {};
-  if (qIds.length) {
-    const { data: qs } = await db(sb.from('questions').select('id,text').in('id', qIds), 'Questions load failed');
-    (qs || []).forEach(q => { qMap[q.id] = q; });
+// ==================== INBOX (chat with the admin) ====================
+// One conversation per student: messages from the admin (with an optional photo), replies to the student's reports, and
+// the student's own messages/reports. Deleting is direct (no confirmation dialog). Sending is optimistic: the bubble
+// appears at once and goes out in the background, with a Retry if it fails.
+const INBOX_HIDDEN_KEY = 'lum_inbox_hidden';
+function _inboxHidden() { try { return new Set(JSON.parse(localStorage.getItem(INBOX_HIDDEN_KEY) || '[]')); } catch { return new Set(); } }
+function _inboxHide(id) {
+  const s = _inboxHidden(); s.add(String(id));
+  localStorage.setItem(INBOX_HIDDEN_KEY, JSON.stringify([...s].slice(-500)));
+}
+
+// The merged, time-ordered conversation for one student: real inbox rows plus older reports / replies that were sent
+// before the inbox existed (those show up read-only-ish: deleting them just hides them on this device).
+export async function loadInboxThread(email, { limit = 200 } = {}) {
+  const [inboxRes, repRes] = await Promise.all([
+    sb.from('inbox_messages').select('*').eq('user_email', email).order('created_at', { ascending: false }).limit(limit),
+    sb.from('reports_feedback').select('id,type,question_id,message,admin_reply,replied_at,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(60)
+  ]);
+  const tableOk = !inboxRes.error;
+  const rows = (inboxRes.data || []).slice().reverse();
+  const has = (sender, refId, kind) => rows.some(m => m.ref_id === refId && m.sender === sender && (!kind || m.kind === kind));
+  const hidden = _inboxHidden();
+  const legacy = [];
+  for (const r of (repRes.data || [])) {
+    if (!has('student', r.id)) legacy.push({ id: 'r' + r.id, legacy: true, sender: 'student', kind: r.type === 'question_report' ? 'report' : 'message', body: r.message, created_at: r.created_at });
+    if (r.admin_reply && !has('admin', r.id, 'reply')) legacy.push({ id: 'rr' + r.id, legacy: true, sender: 'admin', kind: 'reply', body: r.admin_reply, quote: (r.message || '').slice(0, 120), created_at: r.replied_at || r.created_at });
   }
-  list.innerHTML = data.map(r => {
-    const q = r.question_id ? qMap[r.question_id] : null;
-    return `
-    <div class="card" style="margin-bottom:10px">
-      <div class="flex-between mb-1">
-        <span class="badge ${r.type === 'question_report' ? 'badge-amber' : 'badge-teal'}" style="font-size:10px">${r.type === 'question_report' ? '🚩 Question Report' : '💬 Feedback'}</span>
-        <span class="badge ${r.status === 'pending' ? 'badge-amber' : 'badge-green'}" style="font-size:10px">${r.status === 'pending' ? 'Pending' : '✓ Replied'}</span>
-      </div>
-      ${q?.text ? `<div class="text-xs text-muted mb-1">Re: ${esc(q.text.substring(0,70))}...</div>` : ''}
-      <div class="text-sm mb-1">${renderMd(r.message)}</div>
-      <div class="flex-between" style="align-items:flex-end">
-        <div class="text-xs text-muted">${timeAgo(new Date(r.created_at).getTime())}</div>
-        <button class="btn btn-ghost btn-xs" onclick="deleteMyReport(${r.id})">🗑 Delete</button>
-      </div>
-      ${r.admin_reply ? `<div style="background:var(--gold-50);border-radius:10px;padding:8px 10px;margin-top:8px"><div class="text-xs fw-700" style="color:var(--gold-700)">Admin reply:</div><div class="text-sm">${renderMd(r.admin_reply)}</div></div>` : ''}
+  const messages = [...rows, ...legacy.filter(m => !hidden.has(m.id))].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  return { messages, tableOk };
+}
+
+function _ibDay(d) {
+  const now = new Date();
+  const y = new Date(Date.now() - 86400000);
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+}
+
+// who: 'student' = the viewer's own messages sit on the right (student view); 'admin' = the admin's messages do (admin sheet)
+export function inboxBubbleHtml(m, viewer, delFn, retryFn) {
+  const mine = m.sender === viewer;
+  const time = new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const tag = m.kind === 'report' ? '<div class="ib-tag">🚩 Question report</div>' : (m.kind === 'reply' ? '<div class="ib-tag">📬 Reply to a report</div>' : '');
+  const quote = m.quote ? `<div class="ib-quote">${esc(m.quote)}${m.quote.length >= 120 ? '…' : ''}</div>` : '';
+  const src = m.image_url || m._previewUrl;
+  const img = src ? `<img class="ib-img" src="${esc(src)}" alt="" loading="lazy" onclick="inboxViewImage('${escJs(src)}')" onerror="this.style.display='none'">` : '';
+  const body = m.body ? `<div class="ib-text">${renderMd(m.body)}</div>` : '';
+  const state = m._state === 'sending' ? '<span class="ib-state">Sending…</span>'
+    : m._state === 'failed' ? `<button class="ib-retry" onclick="${retryFn}('${m.id}')">⚠️ Not sent · Retry</button>` : '';
+  return `<div class="ib-row ${mine ? 'ib-me' : 'ib-other'}" id="ib_${m.id}">
+    <div class="ib-bubble">${tag}${quote}${img}${body}
+      <div class="ib-meta"><span>${time}</span>${state}<button class="ib-del" title="Delete" aria-label="Delete message" onclick="${delFn}('${m.id}')">🗑</button></div>
+    </div></div>`;
+}
+
+export function inboxThreadHtml(messages, viewer, delFn, retryFn, emptyHtml) {
+  if (!messages.length) return emptyHtml;
+  let last = '', html = '';
+  for (const m of messages) {
+    const day = _ibDay(new Date(m.created_at));
+    if (day !== last) { html += `<div class="ib-day">${day}</div>`; last = day; }
+    html += inboxBubbleHtml(m, viewer, delFn, retryFn);
+  }
+  return html;
+}
+
+function _ibDraw(scroll) {
+  const S = window._inbox;
+  const el = document.getElementById('ibThread');
+  if (!S || !el) return;
+  el.innerHTML = inboxThreadHtml(S.messages, 'student', 'inboxDelete', 'inboxRetry',
+    `<div class="ib-empty"><div style="font-size:40px">✉️</div><div class="fw-700" style="margin-top:6px">No messages yet</div><p class="text-sm" style="margin-top:4px">Messages and report replies from the admin appear here. You can write to the admin below.</p></div>`);
+  if (scroll) window.scrollTo(0, document.body.scrollHeight);
+}
+
+// Opened from Profile and from the bell (a new message notification lands here)
+export async function openInbox() {
+  showScreen('inbox');
+  await renderInbox();
+}
+window.openInbox = openInbox;
+window.openMyReports = openInbox;   // older entry point
+
+export async function renderInbox() {
+  const wrap = document.getElementById('inboxPageWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <button class="back-btn" onclick="goBack()">← Back</button>
+    <div class="card-teal" style="margin:10px 0 6px"><h2>✉️ Inbox</h2><p>Messages and replies from the admin</p></div>
+    <div class="ib-thread" id="ibThread">${skeletonList(2, false)}</div>
+    <div class="ib-composer">
+      <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Write to the admin…" oninput="inboxGrow(this)"></textarea>
+      <button class="ib-send" id="ibSend" aria-label="Send" onclick="inboxSend()">➤</button>
     </div>`;
-  }).join('');
+  const { messages, tableOk } = await loadInboxThread(window.currentUser.email);
+  window._inbox = { messages, tableOk };
+  _ibDraw(true);
+  _ibSeen();
+  clearInterval(window._ibTimer);
+  window._ibTimer = setInterval(_ibPoll, 8000);
 }
-window.openMyReports = openMyReports;
+window.renderInbox = renderInbox;
 
-
-
-async function deleteMyReport(id) {
-  showConfirm('Delete this report? This cannot be undone.', async () => {
-    const { error } = await db(sb.from('reports_feedback').delete().eq('id', id).eq('user_email', window.currentUser.email), 'Delete failed');
-    if (error) return; // db() already showed the specific error
-    showToast('Report deleted');
-    openMyReports();
-  }, 'Delete', true);
+// Opening the inbox counts as reading: remember the newest admin message id so the bell and Profile badge clear
+function _ibSeen() {
+  const S = window._inbox;
+  if (!S) return;
+  const top = Math.max(0, ...S.messages.filter(m => m.sender === 'admin' && typeof m.id === 'number').map(m => m.id));
+  if (top > (window._inboxSeenId ? window._inboxSeenId() : 0)) localStorage.setItem('lum_inbox_seen_id', String(top));
+  window._inboxUnread = 0;
+  if (typeof window.checkNewNotifications === 'function') window.checkNewNotifications();
 }
-window.deleteMyReport = deleteMyReport;
+
+async function _ibPoll() {
+  if (document.querySelector('.screen.active')?.id !== 'screen-inbox') { clearInterval(window._ibTimer); return; }
+  const S = window._inbox;
+  if (!S || !S.tableOk) return;
+  const maxId = Math.max(0, ...S.messages.filter(m => typeof m.id === 'number').map(m => m.id));
+  const { data } = await sb.from('inbox_messages').select('*').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', maxId).order('id');
+  const known = new Set(S.messages.map(m => String(m.id)));
+  const fresh = (data || []).filter(m => !known.has(String(m.id)));
+  if (!fresh.length) return;
+  S.messages.push(...fresh);
+  _ibDraw(true);
+  _ibSeen();
+}
+window._ibPoll = _ibPoll;
+
+function inboxGrow(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 110) + 'px'; }
+window.inboxGrow = inboxGrow;
+
+async function _ibDeliver(tmp) {
+  tmp._state = 'sending';
+  const res = await sendStudentMessage({ type: 'feedback', message: tmp.body });
+  if (res.ok) { if (res.inboxId) tmp.id = res.inboxId; tmp._state = null; }
+  else { tmp._state = 'failed'; showToast('⚠️ Message not sent. Tap Retry'); }
+  _ibDraw(false);
+}
+
+function inboxSend() {
+  const input = document.getElementById('ibInput');
+  const S = window._inbox;
+  if (!input || !S) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const rl = rateLimited('inbox_send', 20, 15 * 60 * 1000);
+  if (!rl.allowed) return showToast(`Too many messages. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
+  const tmp = { id: 'tmp' + Date.now(), sender: 'student', kind: 'message', body: text, created_at: new Date().toISOString(), _state: 'sending' };
+  S.messages.push(tmp);
+  input.value = ''; inboxGrow(input);
+  _ibDraw(true);
+  _ibDeliver(tmp);   // not awaited: the app stays responsive while it sends
+}
+window.inboxSend = inboxSend;
+
+function inboxRetry(id) {
+  const m = window._inbox?.messages.find(x => String(x.id) === String(id));
+  if (!m) return;
+  m._state = 'sending'; _ibDraw(false);
+  _ibDeliver(m);
+}
+window.inboxRetry = inboxRetry;
+
+function inboxDelete(id) {
+  const S = window._inbox;
+  if (!S) return;
+  const m = S.messages.find(x => String(x.id) === String(id));
+  if (!m) return;
+  S.messages = S.messages.filter(x => x !== m);
+  _ibDraw(false);                                   // gone straight away
+  showToast('Message deleted');
+  if (m.legacy) { _inboxHide(m.id); return; }       // pre-inbox report/reply: hidden on this device
+  if (typeof m.id !== 'number') return;             // never reached the server
+  sb.from('inbox_messages').delete().eq('id', m.id).eq('user_email', window.currentUser.email).then(({ error }) => {
+    if (error) { showToast('Could not delete. Check your connection'); renderInbox(); }
+  });
+}
+window.inboxDelete = inboxDelete;
+
+function inboxViewImage(url) {
+  const o = document.createElement('div');
+  o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10020;display:flex;align-items:center;justify-content:center;padding:12px;cursor:zoom-out';
+  o.innerHTML = `<img src="${esc(url)}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px">`;
+  o.onclick = () => o.remove();
+  document.body.appendChild(o);
+}
+window.inboxViewImage = inboxViewImage;
+
+
+
 
 
 
@@ -164,11 +301,18 @@ export async function renderStats() {
   wrap.innerHTML = `${skeletonList(4)}`;
   const stats = await getUserStats(true);
   const history = stats.history || [];
+  // Accuracy = correct ÷ ALL questions in graded tests, so a skipped question counts as wrong there. Skipped and
+  // Incorrect are still shown as two separate numbers.
   const acc = stats.total_questions ? Math.round((stats.total_correct / stats.total_questions) * 100) : 0;
+  const histSkipped = history.filter(h => h.mode !== 'browse').reduce((a, h) => a + (h.skipped || 0), 0);
+  const skipped = Math.min(stats.total_questions || 0, Math.max(stats.total_skipped || 0, histSkipped));
+  const attemptedQ = Math.max(0, (stats.total_questions || 0) - skipped);
+  const incorrect = Math.max(0, attemptedQ - (stats.total_correct || 0));
+  const scored = history.filter(h => typeof h.percent === 'number');   // Review sessions have no score
 
   // Performance by type
   const byType = {};
-  for (const h of history) {
+  for (const h of scored) {
     if (!byType[h.type]) byType[h.type] = { count: 0, totalPct: 0 };
     byType[h.type].count++;
     byType[h.type].totalPct += h.percent || 0;
@@ -184,15 +328,25 @@ export async function renderStats() {
     </div>`).join('') || '<p class="text-muted">No data yet.</p>';
 
   // Recent history
-  const histHtml = history.slice(0, 15).map(h => `
+  const histHtml = history.slice(0, 15).map(h => typeof h.percent !== 'number' ? `
     <div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div>
-        <div class="fw-600 text-sm">${h.module}</div>
+        <div class="fw-600 text-sm">${esc(h.label || h.module || 'Review session')}</div>
+        <div class="text-xs text-muted">${h.date} · Review</div>
+      </div>
+      <div style="text-align:right">
+        <div class="fw-700" style="font-size:14px">${h.total || 0} reviewed</div>
+        <div class="text-xs text-muted">${h.correct || 0} right</div>
+      </div>
+    </div>` : `
+    <div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <div class="fw-600 text-sm">${esc(h.module || '')}</div>
         <div class="text-xs text-muted">${h.date} · ${h.type}</div>
       </div>
       <div style="text-align:right">
         <div class="fw-700" style="color:${h.percent >= 60 ? 'var(--green)' : 'var(--red)'};font-size:15px">${h.percent}%</div>
-        <div class="text-xs text-muted">${h.correct}/${h.total}</div>
+        <div class="text-xs text-muted">${h.correct}/${h.total}${h.skipped != null ? ` · ${h.wrong || 0} wrong · ${h.skipped} skipped` : ''}</div>
       </div>
     </div>`).join('') || '<p class="text-muted">No tests yet.</p>';
 
@@ -227,7 +381,7 @@ export async function renderStats() {
   // Badges (computed live from existing stats — no extra DB table needed)
   const badgeDefs = [
     { id: 'first_test', icon: ICON_TARGET, label: 'First Steps', desc: 'Completed your first test', earned: (stats.total_tests||0) >= 1 },
-    { id: 'century', icon: '💯', label: 'Century Club', desc: '100+ questions answered', earned: (stats.total_questions||0) >= 100 },
+    { id: 'century', icon: '💯', label: 'Century Club', desc: '100+ questions answered', earned: attemptedQ >= 100 },
     { id: 'perfectionist', icon: '🌟', label: 'Perfectionist', desc: 'Scored 100% in a test', earned: (stats.best_score||0) >= 100 },
     { id: 'streak7', icon: '🔥', label: '7-Day Streak', desc: '7 days in a row', earned: (stats.streak||0) >= 7 },
     { id: 'streak30', icon: ICON_MEDAL, label: '30-Day Streak', desc: '30 days in a row', earned: (stats.streak||0) >= 30 },
@@ -269,8 +423,16 @@ export async function renderStats() {
         <div class="stat-key">Correct</div>
       </div>
       <div class="stat-box">
-        <div class="stat-val">${(stats.total_questions || 0) - (stats.total_correct || 0)}</div>
+        <div class="stat-val">${incorrect}</div>
         <div class="stat-key">Incorrect</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val">${skipped}</div>
+        <div class="stat-key">Skipped</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-val">${attemptedQ}</div>
+        <div class="stat-key">Attempted</div>
       </div>
     </div>
 
@@ -284,7 +446,7 @@ export async function renderStats() {
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">${badgesHtml}</div>
     </div>
 
-    ${history.length >= 3 ? `
+    ${scored.length >= 3 ? `
     <div class="card" style="margin-bottom:20px">
       <div class="fw-700 mb-2">📈 Last 10 Test Scores</div>
       <canvas id="perfCanvas" height="140" style="width:100%"></canvas>
@@ -302,12 +464,12 @@ export async function renderStats() {
     <div style="height:16px"></div>`;
 
   // Draw chart
-  if (history.length >= 3) {
+  if (scored.length >= 3) {
     const canvas = document.getElementById('perfCanvas');
     if (canvas) {
       canvas.width = canvas.parentElement.offsetWidth - 40;
       const ctx = canvas.getContext('2d');
-      const data = history.slice(0, 10).reverse().map(h => h.percent);
+      const data = scored.slice(0, 10).reverse().map(h => h.percent);
       const W = canvas.width, H = 140;
       const padL = 32, padR = 12, padT = 12, padB = 24;
       const chartW = W - padL - padR, chartH = H - padT - padB;
@@ -655,9 +817,9 @@ export async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_key_set','') === 'true' ? '✅ Tap to ask a question' : '⚠️ Not set up by admin yet'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
-    <div class="list-item" onclick="openMyReports()">
-      <div class="list-item-left"><div class="list-item-icon">📬</div><div><div class="list-item-title">Feedback & Reports</div><div class="list-item-sub">Tell us about the app, report a question, see replies</div></div></div>
-      <span style="color:var(--ink-4)">›</span>
+    <div class="list-item" onclick="openInbox()">
+      <div class="list-item-left"><div class="list-item-icon">✉️</div><div><div class="list-item-title">Inbox</div><div class="list-item-sub">Messages from admin, report replies</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px">${(window._inboxUnread || 0) > 0 ? `<span class="badge badge-red">${window._inboxUnread}</span>` : ''}<span style="color:var(--ink-4)">›</span></div>
     </div>
     ${getSetting('payment_enabled','false') === 'true' ? `
     <div class="list-item" onclick="showSubscriptionPlans()">
@@ -726,24 +888,30 @@ function editCollege() {
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px">
       <div class="fw-700 mb-1">🏫 Edit College</div>
-      <div class="text-xs text-muted mb-3">Select your college/university. Choose Others if it isn't listed yet</div>
-      <select id="_ec_coll" class="input-field" title="College / University" aria-label="College / University"><option value="">Loading...</option></select>
+      <div class="text-xs text-muted mb-3">Select your college / university. Choose Others if it isn't listed</div>
+      <select id="_ec_coll" class="input-field" title="College / University" aria-label="College / University"><option value="">Loading…</option></select>
       <div class="btn-row mt-3">
         <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="(async()=>{
-          const c=document.getElementById('_ec_coll').value.trim();
-          if(!c)return showToast('Select a college');
-          await db(sb.from('users').update({college:c}).eq('email','${window.currentUser.email}'),'Update failed');
-          currentUser.college=c;
-          showToast('College updated ✓');
-          this.closest('[style*=fixed]').remove();
-          renderProfile();
-        })()">Save</button>
+        <button class="btn btn-primary" onclick="saveCollege(this)">Save</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
   populateCollegeSelect('_ec_coll', window.currentUser.college || '');
 }
+
+async function saveCollege(btn) {
+  const college = document.getElementById('_ec_coll').value;
+  if (!college) return showToast('Please select your college');
+  const overlay = btn.closest('[style*=fixed]');
+  const prev = window.currentUser.college;
+  window.currentUser.college = college;          // optimistic: the profile updates at once, the save runs behind it
+  overlay.remove();
+  renderProfile();
+  showToast('College saved ✓');
+  const { error } = await db(sb.from('users').update({ college }).eq('email', window.currentUser.email), 'Could not save college');
+  if (error) { window.currentUser.college = prev; renderProfile(); }
+}
+window.saveCollege = saveCollege;
 window.editCollege = editCollege;
 
 
@@ -753,23 +921,37 @@ function editPhone() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10002;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:400px">
-      <div class="fw-700 mb-1">📱 Phone Number</div>
-      <div class="text-xs text-muted mb-3">Used by admin for contact regarding your account</div>
-      <input id="_ep_phone" class="input-field" type="tel" placeholder="03XX-XXXXXXX" value="${window.currentUser.phone||''}">
+      <div class="fw-700 mb-1">📱 ${window.currentUser.phone ? 'Edit' : 'Add'} Phone Number</div>
+      <div class="text-xs text-muted mb-3">Enter a valid mobile number, e.g. 03XX-XXXXXXX</div>
+      <input id="_ep_phone" class="input-field" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="03XX-XXXXXXX" value="${esc(window.currentUser.phone || '')}">
+      <div id="_ep_err" class="text-xs" style="color:var(--red);margin-top:6px;display:none"></div>
       <div class="btn-row mt-3">
         <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="(async()=>{
-          const p=document.getElementById('_ep_phone').value.trim();
-          await db(sb.from('users').update({phone:p}).eq('email','${window.currentUser.email}'),'Update failed');
-          currentUser.phone=p;
-          showToast('Phone updated ✓');
-          this.closest('[style*=fixed]').remove();
-          renderProfile();
-        })()">Save</button>
+        <button class="btn btn-primary" onclick="savePhone(this)">Save</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
 }
+
+async function savePhone(btn) {
+  const input = document.getElementById('_ep_phone');
+  const err = document.getElementById('_ep_err');
+  const phone = normalizePhone(input.value);      // only a real phone number gets through; it is stored in a clean form
+  if (!phone) {
+    err.textContent = 'Please enter a valid phone number, e.g. 03XX-XXXXXXX';
+    err.style.display = 'block';
+    return;
+  }
+  const overlay = btn.closest('[style*=fixed]');
+  const prev = window.currentUser.phone;
+  window.currentUser.phone = phone;               // optimistic: the profile updates at once, the save runs behind it
+  overlay.remove();
+  renderProfile();
+  showToast('Phone number saved ✓');
+  const { error } = await db(sb.from('users').update({ phone }).eq('email', window.currentUser.email), 'Could not save phone number');
+  if (error) { window.currentUser.phone = prev; renderProfile(); }
+}
+window.savePhone = savePhone;
 window.editPhone = editPhone;
 
 
@@ -1085,7 +1267,7 @@ function _qpDraw() {
       <button class="btn btn-ghost btn-sm" onclick="qpToggleExp()">${showExp ? '🙈 Hide Explanation' : '📖 Show Explanation'}</button>
       ${answered ? '<button class="btn btn-ghost btn-sm" onclick="qpRetry()">↺ Try again</button>' : ''}
     </div>
-    ${showExp ? `<div class="explanation-box" style="margin-top:12px">
+    ${showExp ? `<div class="explanation-box show" style="margin-top:12px">
       <div class="exp-label">✅ Correct: ${esc(opts[q.correct_answer]) || ''}</div>
       <div class="exp-content" style="margin-top:6px">${q.explanation ? renderMd(q.explanation) : '<span style="color:var(--ink-4)">No explanation yet.</span>'}</div>
       ${q.explanation_image_url ? `<img src="${esc(q.explanation_image_url)}" style="max-width:100%;border-radius:12px;margin-top:10px" onerror="this.style.display='none'">` : ''}
@@ -1157,19 +1339,22 @@ window.confirmRemoveBookmark = (qid) => qfRemove('bm', qid);
 // renderSearch and executeSearch are defined once, further below, with module/difficulty filters.
 
 // ==================== PLANNER ====================
+// Questions actually attempted in one logged session (skipped ones are not "done")
+const _attemptedOf = h => Math.max(0, (h.total || 0) - (h.skipped || 0));
+
 export async function renderPlanner() {
   const wrap = document.getElementById('plannerPageWrap');
   const stats = await getUserStats();
   const goal = parseInt(localStorage.getItem('daily_goal') || '20');
   const todayStr = new Date().toLocaleDateString();
   const todayHistory = (stats.history || []).filter(h => h.date === todayStr);
-  const todayQ = todayHistory.reduce((a, h) => a + (h.total || 0), 0);
+  const todayQ = todayHistory.reduce((a, h) => a + _attemptedOf(h), 0);
   const todayPct = Math.min(100, Math.round((todayQ / goal) * 100));
 
   // Build 30-day activity heatmap
   const historyMap = {};
   for (const h of (stats.history || [])) {
-    historyMap[h.date] = (historyMap[h.date] || 0) + (h.total || 0);
+    historyMap[h.date] = (historyMap[h.date] || 0) + _attemptedOf(h);
   }
   const today = new Date();
   let heatmapHtml = '<div style="display:grid;grid-template-columns:repeat(10,1fr);gap:4px">';
