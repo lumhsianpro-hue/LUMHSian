@@ -337,12 +337,19 @@ function _fetchYearsCached() {
 }
 
 
+// A notification/announcement lives until its own expires_at (chosen by the admin when sending). Rows without one
+// (sent before that option existed) keep the original 48 hours.
+function _notifAlive(n) {
+  const end = n.expires_at ? new Date(n.expires_at).getTime() : new Date(n.created_at).getTime() + 48 * 3600 * 1000;
+  return end > Date.now();
+}
+
 function _fetchAnnouncementsCached() {
   const cached = cacheGet('announcements', 180000);
-  if (cached) return Promise.resolve({ data: cached });
-  const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  return db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce error').then(r => {
-    if (r.data) cacheSet('announcements', r.data);
+  if (cached) return Promise.resolve({ data: cached.filter(_notifAlive) });
+  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();   // the longest the admin can choose
+  return db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce error').then(r => {
+    if (r.data) { r.data = r.data.filter(_notifAlive); cacheSet('announcements', r.data); }
     return r;
   });
 }
@@ -1245,7 +1252,7 @@ async function ctbModulesChanged() {
     (byMod[key] = byMod[key] || []).push(t);
   });
   const moduleTitle = mid => `<div class="ctb-group-title">📚 ${esc(moduleNameMap[mid] || '')}</div>`;
-  const checkRow = (cls, id, label, on) => `<label class="ctb-check"><input type="checkbox" class="${cls}" value="${id}"${on ? ' checked' : ''}><span class="text-sm">${esc(label)}</span></label>`;
+  const checkRow = (cls, id, label, on) => `<label class="ctb-check"><input type="checkbox" class="${cls}" value="${id}"${on ? ' checked' : ''}${cls === 'ctb-test' ? ' onchange="ctbSyncBox(this.closest(\'.ctb-box\'))"' : ''}><span class="text-sm">${esc(label)}</span></label>`;
 
   // Subjects: grouped under their module so two modules' subjects never run together
   subWrap.innerHTML = subs?.length ? moduleIds.map(mid => {
@@ -1254,10 +1261,17 @@ async function ctbModulesChanged() {
   }).join('') : '<p class="text-xs text-muted">No subjects defined. All questions in the module(s) will be used.</p>';
 
   // Practice tests: one box per subject (named after the subject) holding that subject's tests
+  // The head holds TWO separate controls: a "select all" checkbox on the left, and the title + arrow on the right that
+  // collapses/expands the box. They used to be one tap area (a tiny text button inside the clickable header), so a tap
+  // that missed the button by a few pixels collapsed the list instead of selecting.
   const testBox = (name, list) => `<div class="ctb-box open">
-      <div class="ctb-box-head" onclick="this.parentElement.classList.toggle('open')">
-        <span class="fw-600 text-sm">${esc(name)}</span>
-        <span class="text-xs text-muted">${list.length} test${list.length === 1 ? '' : 's'}<button type="button" class="ctb-selall" onclick="event.stopPropagation();ctbToggleBox(this)">Select all</button></span>
+      <div class="ctb-box-head">
+        <label class="ctb-all" title="Select every test in this subject"><input type="checkbox" class="ctb-boxall" onchange="ctbBoxAll(this)"><span>All</span></label>
+        <div class="ctb-box-title" onclick="ctbBoxToggle(this)">
+          <div class="fw-600 text-sm">${esc(name)}</div>
+          <div class="text-xs text-muted"><span class="ctb-count">0</span> of ${list.length} selected</div>
+        </div>
+        <div class="ctb-chev" onclick="ctbBoxToggle(this)">▾</div>
       </div>
       <div class="ctb-box-body">${list.map(t => checkRow('ctb-test', t.id, t.title, keepTests.has(String(t.id)))).join('')}</div>
     </div>`;
@@ -1270,17 +1284,35 @@ async function ctbModulesChanged() {
     const loose = [...(byMod[0] || []), ...Object.keys(byMod).filter(k => k !== '0' && !known.has(k)).flatMap(k => byMod[k])];
     return `<div style="margin-bottom:12px">${moduleTitle(mid)}${subjectBoxes}${loose.length ? testBox('Whole-module tests', loose) : ''}</div>`;
   }).join('') : '<p class="text-xs text-muted">No practice tests in the selected module(s) yet.</p>';
+  testWrap.querySelectorAll('.ctb-box').forEach(ctbSyncBox);   // reflect any ticks that were kept across the re-render
 }
 
-// "Select all" / "Clear" for one subject box in the practice-test picker
-function ctbToggleBox(btn) {
-  const boxEl = btn.closest('.ctb-box');
-  const inputs = [...boxEl.querySelectorAll('input[type=checkbox]')];
-  const allOn = inputs.every(i => i.checked);
-  inputs.forEach(i => { i.checked = !allOn; });
-  btn.textContent = allOn ? 'Select all' : 'Clear';
+// Keeps a subject box's "All" checkbox (ticked / half-ticked / empty) and its "n of m selected" count in step with the
+// individual tests, however they were ticked.
+function ctbSyncBox(boxEl) {
+  if (!boxEl) return;
+  const inputs = [...boxEl.querySelectorAll('.ctb-test')];
+  const n = inputs.filter(i => i.checked).length;
+  const all = boxEl.querySelector('.ctb-boxall');
+  if (all) { all.checked = n > 0 && n === inputs.length; all.indeterminate = n > 0 && n < inputs.length; }
+  const c = boxEl.querySelector('.ctb-count');
+  if (c) c.textContent = n;
 }
-window.ctbToggleBox = ctbToggleBox;
+window.ctbSyncBox = ctbSyncBox;
+
+function ctbBoxAll(cb) {
+  const boxEl = cb.closest('.ctb-box');
+  if (!boxEl) return;
+  boxEl.querySelectorAll('.ctb-test').forEach(i => { i.checked = cb.checked; });
+  ctbSyncBox(boxEl);
+}
+window.ctbBoxAll = ctbBoxAll;
+
+function ctbBoxToggle(el) {
+  const boxEl = el.closest('.ctb-box');
+  if (boxEl) boxEl.classList.toggle('open');
+}
+window.ctbBoxToggle = ctbBoxToggle;
 window.ctbModulesChanged = ctbModulesChanged;
 
 
@@ -1422,7 +1454,7 @@ export async function saveUserStats(stats) {
   // Columns that needed a one-time migration in Supabase (see the SQL notes at the end of this file) are saved
   // separately from the core stats. Bundled into one upsert, a single missing column made Supabase reject the ENTIRE
   // save — total_tests / total_correct / history / streak included — for every submission until the migration was run.
-  const OPTIONAL_COLS = ['completed_attempt_tests', 'attempt_answered', 'attempt_questions', 'attempt_correct', 'archived_years'];
+  const OPTIONAL_COLS = ['completed_attempt_tests', 'attempt_answered', 'attempt_questions', 'attempt_correct', 'archived_years', 'total_skipped'];
   const coreStats = {}, optional = {};
   for (const [k, v] of Object.entries(stats)) (OPTIONAL_COLS.includes(k) ? optional : coreStats)[k] = v;
   const { error } = await sb.from('user_stats').upsert({ email: window.currentUser.email, ...coreStats });
@@ -1600,29 +1632,62 @@ window.dismissNotification = dismissNotification;
 
 
 
+// Admin messages the student hasn't opened yet. "Seen" is tracked on this device as the highest message id they have
+// opened, so no database write is needed just to mark something read.
+function _inboxSeenId() { return parseInt(localStorage.getItem('lum_inbox_seen_id') || '0'); }
+window._inboxSeenId = _inboxSeenId;
+window.checkNewNotifications = checkNewNotifications;   // (function declaration, so it is available from here)
+
+// Live delivery: when the admin sends a message the bell updates (and an open Inbox shows it) within a moment instead of
+// waiting for the next poll. Needs Realtime enabled for inbox_messages (see the SQL notes); without it the polling
+// below simply carries on as before.
+function _subscribeInbox() {
+  if (window._inboxSub || !window.currentUser || typeof sb.channel !== 'function') return;
+  try {
+    window._inboxSub = sb.channel('inbox-' + window.currentUser.email)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inbox_messages', filter: 'user_email=eq.' + window.currentUser.email }, () => {
+        checkNewNotifications();
+        if (typeof window._ibPoll === 'function') window._ibPoll();
+      })
+      .subscribe();
+  } catch (e) { window._inboxSub = null; }
+}
+
 async function checkNewNotifications() {
   if (!window.currentUser || localStorage.getItem('notif_enabled') === 'false') return;
-  // Both auto-expire after 48h — filtering at query time means every reader
-  // of window._appNotifs (badge count, bell modal) respects the window
-  // automatically, with no separate cleanup step required client-side.
-  const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  const [{ data: notifs }, { data: announces }, { data: replies }] = await Promise.all([
-    db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Notif load failed'),
-    db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(20), 'Announce load failed'),
-    // A student's own report/feedback getting a reply is personal, not a
-    // broadcast — scoped to user_email, so it only ever shows for the
-    // student who filed it, unlike app_notifications/announcements above.
-    db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at').eq('user_email', window.currentUser.email).eq('status', 'replied').gte('replied_at', cutoff).order('replied_at', { ascending: false }).limit(20), 'Reply notif load failed')
+  _subscribeInbox();
+  // Notifications and announcements each carry their own expiry (see _notifAlive), so fetch the last 30 days (the
+  // longest the admin can choose) and keep only what is still alive. Filtering here means every reader of
+  // window._appNotifs (badge count, bell modal) respects it with no separate cleanup step.
+  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const [{ data: notifs0 }, { data: announces0 }, { data: replies }, inboxRes] = await Promise.all([
+    db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
+    db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
+    // Legacy path for report replies (used only while the inbox table isn't set up yet)
+    db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at').eq('user_email', window.currentUser.email).eq('status', 'replied').gte('replied_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()).order('replied_at', { ascending: false }).limit(20), 'Reply notif load failed'),
+    // No toast on failure: if the inbox table doesn't exist yet that is expected, not an error the student should see
+    sb.from('inbox_messages').select('id,kind,body,image_url,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', _inboxSeenId()).order('id', { ascending: false }).limit(20)
   ]);
+  const notifs = (notifs0 || []).filter(_notifAlive);
+  const announces = (announces0 || []).filter(_notifAlive);
+  const inboxOk = !inboxRes.error;
+  const inboxItems = inboxOk ? (inboxRes.data || []) : [];
+  window._inboxUnread = inboxItems.length;
   const dismissed = _getDismissedNotifIds();
   const myYearForFilter = await _getMyYear();
   const merged = [
     ...(notifs || []).map(n => ({ ...n, _source: 'notif' })),
     ...(announces || []).map(a => ({ ...a, _source: 'announce' })),
-    ...(replies || []).map(r => ({
+    // Once the inbox exists, replies arrive there as messages; the old report-reply items are only a fallback
+    ...(inboxOk ? [] : (replies || [])).map(r => ({
       id: r.id, _source: 'report_reply', created_at: r.replied_at,
       title: '📬 Your report got a reply',
       body: (r.admin_reply || '').substring(0, 140) + ((r.admin_reply || '').length > 140 ? '…' : '')
+    })),
+    ...inboxItems.map(m => ({
+      id: m.id, _source: 'inbox', created_at: m.created_at,
+      title: m.kind === 'reply' ? '📬 Reply to your report' : '✉️ New message from admin',
+      body: m.body ? (m.body.substring(0, 140) + (m.body.length > 140 ? '…' : '')) : (m.image_url ? '📷 Photo' : '')
     }))
   ]
     .filter(n =>
@@ -1664,6 +1729,7 @@ function openNotificationBell(isRerender, filter) {
   const typeMeta = {
     announce: { color: 'var(--gold-500)', bg: 'var(--gold-50)' },
     report_reply: { color: '#0d7a4f', bg: '#e8f8f0' },
+    inbox: { color: '#0d7a4f', bg: '#e8f8f0' },
     notif: { color: '#6d5bd0', bg: '#efecfc' }
   };
 
@@ -1674,10 +1740,10 @@ function openNotificationBell(isRerender, filter) {
   const cardHtml = (n) => {
     const isUnread = new Date(n.created_at).getTime() > lastSeen;
     const meta = typeMeta[n._source] || typeMeta.notif;
-    const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'report_reply' ? '📬' : '🔔');
-    const isReportReply = n._source === 'report_reply';
+    const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'inbox' ? '✉️' : (n._source === 'report_reply' ? '📬' : '🔔'));
+    const isReportReply = n._source === 'report_reply' || n._source === 'inbox';
     return `
-      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${isUnread ? meta.bg : 'var(--surface)'};border:1px solid ${isUnread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openMyReports()"` : ''}>
+      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${isUnread ? meta.bg : 'var(--surface)'};border:1px solid ${isUnread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openInbox()"` : ''}>
         <div style="width:34px;height:34px;border-radius:50%;background:${meta.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;border:1px solid ${meta.color}33">${icon}</div>
         <div style="min-width:0;flex:1">
           <div class="flex-between" style="align-items:flex-start;gap:6px">
@@ -1685,7 +1751,7 @@ function openNotificationBell(isRerender, filter) {
             <button onclick="event.stopPropagation();dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:14px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:0">🗑</button>
           </div>
           ${n.body ? `<div class="text-sm" style="margin-top:2px;color:var(--ink-3)">${esc(n.body)}</div>` : ''}
-          ${isReportReply ? `<div class="text-xs fw-600" style="color:${meta.color};margin-top:5px">Tap to view in My Reports →</div>` : ''}
+          ${isReportReply ? `<div class="text-xs fw-600" style="color:${meta.color};margin-top:5px">Tap to open your Inbox →</div>` : ''}
           ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
           <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}${isUnread ? ' · <span style="color:'+meta.color+';font-weight:700">NEW</span>' : ''}</div>
         </div>
@@ -2420,6 +2486,39 @@ ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS test_ids INTEGER[] DEFAULT '{}
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_questions INTEGER DEFAULT 0;
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_correct INTEGER DEFAULT 0;
 
+-- MIGRATION (safe to re-run): Inbox (admin <-> student chat), per-notification duration, lifetime skipped count.
+CREATE TABLE IF NOT EXISTS inbox_messages (
+  id BIGSERIAL PRIMARY KEY,
+  user_email TEXT NOT NULL,            -- the student this conversation belongs to
+  sender TEXT NOT NULL DEFAULT 'admin',  -- 'admin' | 'student'
+  kind TEXT NOT NULL DEFAULT 'message',  -- 'message' | 'reply' | 'report'
+  body TEXT,
+  image_url TEXT,
+  ref_id BIGINT,                       -- reports_feedback.id this message belongs to (reports / replies)
+  quote TEXT,                          -- the student's original text, shown above an admin reply
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_messages_user ON inbox_messages(user_email, created_at DESC);
+ALTER TABLE inbox_messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "inbox_select_own_or_admin" ON inbox_messages;
+DROP POLICY IF EXISTS "inbox_insert_admin_or_own" ON inbox_messages;
+DROP POLICY IF EXISTS "inbox_update_admin_only" ON inbox_messages;
+DROP POLICY IF EXISTS "inbox_delete_own_or_admin" ON inbox_messages;
+CREATE POLICY "inbox_select_own_or_admin" ON inbox_messages FOR SELECT
+  USING (user_email = (SELECT u.email FROM users u WHERE u.auth_uid = auth.uid()) OR is_current_user_admin());
+CREATE POLICY "inbox_insert_admin_or_own" ON inbox_messages FOR INSERT
+  WITH CHECK (is_current_user_admin() OR (sender = 'student' AND user_email = (SELECT u.email FROM users u WHERE u.auth_uid = auth.uid())));
+CREATE POLICY "inbox_update_admin_only" ON inbox_messages FOR UPDATE USING (is_current_user_admin());
+CREATE POLICY "inbox_delete_own_or_admin" ON inbox_messages FOR DELETE
+  USING (user_email = (SELECT u.email FROM users u WHERE u.auth_uid = auth.uid()) OR is_current_user_admin());
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE inbox_messages; EXCEPTION WHEN OTHERS THEN NULL; END $$;  -- instant delivery (optional)
+ALTER TABLE app_notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_skipped INTEGER DEFAULT 0;
+UPDATE user_stats SET total_skipped = COALESCE((SELECT SUM(COALESCE((h->>'skipped')::int, 0)) FROM jsonb_array_elements(history) h WHERE COALESCE(h->>'mode','') <> 'browse'), 0)
+  WHERE COALESCE(total_skipped, 0) = 0 AND history IS NOT NULL AND jsonb_typeof(history) = 'array';
+
 -- MIGRATION (safe to re-run): the leaderboard now needs 200 ATTEMPTED questions (skipped ones
 -- don't count toward the 200, but still count as wrong when accuracy is measured). This running
 -- total of attempted questions is written by submitTest() in quiz.js. The UPDATE gives existing
@@ -3033,7 +3132,8 @@ window.onload = async function() {
   if (window.currentUser && !window.currentUser.is_admin && window.currentUser.profile_completed) {
     checkNewNotifications();
     checkWhatsNew();
-    setInterval(checkNewNotifications, 120000);
+    setInterval(checkNewNotifications, 60000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNewNotifications(); });
   }
   applyWallpaper();
   } catch(e) {
@@ -3358,6 +3458,6 @@ function _showGuide(device, steps) {
 // functions below won't exist — show the "App updated · Refresh" prompt from index.html instead of leaving broken buttons.
 window.__lumBooted = true;
 setTimeout(() => {
-  const needed = ['leaveFinishedTest', 'waOpen', 'showDonationPage', '_closeLegalPage', 'adminGoBack', 'openSavedTests'];
+  const needed = ['leaveFinishedTest', 'waOpen', 'showDonationPage', '_closeLegalPage', 'adminGoBack', 'openSavedTests', 'openInbox', 'adminOpenMessages'];
   if ((needed.some(n => typeof window[n] !== 'function') || !window.__lumNavReady) && typeof window.__lumShowUpdate === 'function') window.__lumShowUpdate();
 }, 5000);

@@ -330,7 +330,9 @@ window.closeModal = closeModal;
 // ==================== CUSTOM CONFIRM DIALOG ====================
 export function showConfirm(message, onConfirm, confirmLabel = 'Confirm', danger = true) {
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10003;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)';
+  // z-index above every other dialog in the app: a confirmation opened from inside another overlay (e.g. deleting
+  // from a list shown in a modal) used to appear BEHIND it, so it could not be tapped and the screen looked frozen.
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:20000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:360px;text-align:center">
       <div style="font-size:22px;margin-bottom:12px">⚠️</div>
@@ -342,6 +344,46 @@ export function showConfirm(message, onConfirm, confirmLabel = 'Confirm', danger
     </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector('#_confirmBtn').onclick = () => { overlay.remove(); onConfirm(); };
+}
+
+
+
+// Phone numbers. A Pakistani mobile in any usual spelling (0300-1234567, 0300 1234567, +92 300 1234567, 0092300…,
+// 3001234567) is stored in the local 03XXXXXXXXX form; a landline needs its area code; any other country's number
+// must start with + and have 8–15 digits. Anything else (letters, too short, too long) returns null = not a phone number.
+export function normalizePhone(raw) {
+  const s = String(raw || '').trim();
+  if (!s || /[^\d\s\-+().]/.test(s) || (s.match(/\+/g) || []).length > 1 || (s.includes('+') && !s.startsWith('+'))) return null;
+  const plus = s.startsWith('+');
+  let d = s.replace(/\D/g, '');
+  if (!d) return null;
+  if (d.startsWith('0092')) d = d.slice(2);                 // 0092300… → 92300…
+  if (/^923\d{9}$/.test(d)) return '0' + d.slice(2);        // +92 / 92 / 0092 mobile → 03XXXXXXXXX
+  if (!plus && /^3\d{9}$/.test(d)) return '0' + d;          // 3001234567 (leading 0 forgotten)
+  if (d.startsWith('03')) return (!plus && /^03\d{9}$/.test(d)) ? d : null;
+  if (!plus && /^0[1245-9]\d{8,10}$/.test(d)) return d;      // landline with area code
+  if (plus && /^[1-9]\d{7,14}$/.test(d)) return '+' + d;     // other international number
+  return null;
+}
+
+// Shrinks a photo before it is uploaded (max 1280px on the long side, JPEG) so sending one takes a moment, not a
+// minute, on mobile data — and so it displays crisply at a sensible size.
+export function compressImageFile(file, maxDim = 1280, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const r = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * r));
+      c.height = Math.max(1, Math.round(img.height * r));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(b => b ? resolve(b) : reject(new Error('Could not process the image')), 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read the image')); };
+    img.src = url;
+  });
 }
 
 

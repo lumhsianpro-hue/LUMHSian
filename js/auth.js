@@ -4,7 +4,7 @@ import { _resetNavigationRoot, showScreen } from './navigation.js';
 import { requestNotificationPermission } from './profile.js';
 import { RESUME_KEY, _showResumeDialog, _showTimeExpiredResult, clearPersistedTest } from './quiz.js';
 import { ADMIN_EMAIL, USERS_SAFE_COLS, _showReconnecting, db, sb } from './supabase.js';
-import { cacheGet, cacheSet, rateLimited, showLoading, showToast } from './utils.js';
+import { cacheGet, cacheSet, normalizePhone, rateLimited, showLoading, showToast } from './utils.js';
 
 
 
@@ -302,7 +302,8 @@ function markFieldError(inputId, errorId, show) {
 async function submitCreateAccount() {
   const name = document.getElementById('ca_name').value.trim();
   const city = document.getElementById('ca_city').value.trim();
-  const phone = document.getElementById('ca_phone').value.trim();
+  const phoneRaw = document.getElementById('ca_phone').value.trim();
+  const phone = phoneRaw ? normalizePhone(phoneRaw) : '';       // optional, but if given it must be a real phone number
   const gender = document.getElementById('ca_gender').value;
   const dob = document.getElementById('ca_dob').value || '2005-01-01';
   const college = document.getElementById('ca_college').value.trim();
@@ -313,6 +314,7 @@ async function submitCreateAccount() {
   markFieldError('ca_college', 'err_ca_college', !collegeOk);
   markFieldError('ca_year', 'err_ca_year', !yearOk);
   if (!nameOk || !collegeOk || !yearOk) return showToast('Please fill the required fields');
+  if (phoneRaw && !phone) return showToast('Please enter a valid phone number (e.g. 03XX-XXXXXXX) or leave it empty');
 
   showLoading(true, 'Creating your account...');
   const { error } = await db(sb.from('users').update({
