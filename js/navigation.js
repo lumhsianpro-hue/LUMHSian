@@ -21,10 +21,28 @@ function _blankScreenGuard(id, el) {
   }, 1800);
 }
 
+// Screens added after launch (Saved Tests, Support, Inbox) are created on the spot if the page's HTML doesn't have them
+// yet, so a stale cached index.html can never leave a blank screen with no way back.
+const _SCREEN_WRAPS = { savedtests: 'savedTestsPageWrap', support: 'supportPageWrap', inbox: 'inboxPageWrap' };
+function _createScreen(id) {
+  const wrapId = _SCREEN_WRAPS[id];
+  const host = document.getElementById('screen-home')?.parentElement;
+  if (!wrapId || !host) return null;
+  const el = document.createElement('div');
+  el.id = 'screen-' + id;
+  el.className = 'screen';
+  const wrap = document.createElement('div');
+  wrap.className = 'page-wrap';
+  wrap.id = wrapId;
+  el.appendChild(wrap);
+  host.appendChild(el);
+  return el;
+}
+
 export function showScreen(id, pushToStack = true) {
   // Only touch screens that need to change — avoids DOM thrashing
   const current = document.querySelector('.screen.active');
-  const next = document.getElementById('screen-' + id);
+  const next = document.getElementById('screen-' + id) || _createScreen(id);
   if (!next) return;
   if (current && current !== next) current.classList.remove('active');
   next.classList.add('active');
