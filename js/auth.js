@@ -176,6 +176,7 @@ async function _handleAuthedSessionInner(session) {
   if (row.is_banned) { showLoading(false); showToast('Account banned. Contact admin.'); await sb.auth.signOut(); return; }
 
   window.currentUser = row;
+  window.flushPendingStats?.();
   _resetNavigationRoot();
   showLoading(false);
 

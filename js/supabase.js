@@ -13,6 +13,10 @@ const _nativeFetch = window.fetch.bind(window);
 let _requestMinute = Math.floor(Date.now() / 60000);
 let _requestsByScreen = {};
 let _requestLogTimer = null;
+let _lastNetworkToastAt = 0;
+const _retryDelays = [1000, 3000, 6000];
+const _requestTimeoutMs = 25000;
+const _buttonRequests = new WeakMap();
 
 function _flushRequestCounts() {
   const entries = Object.entries(_requestsByScreen).map(([screen, requests]) => ({ screen, requests }));
@@ -24,7 +28,7 @@ function _flushRequestCounts() {
   _requestMinute = Math.floor(Date.now() / 60000);
 }
 
-function _countedFetch(input, init) {
+function _countSupabaseRequest(input) {
   try {
     const requestUrl = new URL(typeof input === 'string' ? input : input.url);
     if (requestUrl.origin === SUPABASE_URL) {
@@ -40,13 +44,88 @@ function _countedFetch(input, init) {
       }
     }
   } catch (e) {}
-  return _nativeFetch(input, init);
+}
+
+function _networkToast(retry) {
+  const now = Date.now();
+  if (now - _lastNetworkToastAt < 8000) return;
+  _lastNetworkToastAt = now;
+  showToast('Slow internet, please try again', 8000, retry ? async () => {
+    showToast('Retrying...', 25000);
+    try {
+      const response = await retry();
+      if (response && ('ok' in response ? response.ok : !response.error)) showToast('Request completed', 2500);
+      else showToast('Slow internet, please try again', 8000);
+    } catch (e) {
+      showToast('Slow internet, please try again', 8000);
+    }
+  } : null);
+}
+
+function _retryableStatus(status) {
+  return [408, 425, 429, 500, 502, 503, 504].includes(status);
+}
+
+function _wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function _supabaseFetchRequest(input, init = {}, { notify = true, retryReads = true } = {}) {
+  let url;
+  try { url = new URL(typeof input === 'string' ? input : input.url); } catch (e) {}
+  if (url?.origin !== SUPABASE_URL) return _nativeFetch(input, init);
+
+  const method = String(init.method || input.method || 'GET').toUpperCase();
+  const canRetry = retryReads && (method === 'GET' || method === 'HEAD');
+  const maxAttempts = canRetry ? _retryDelays.length + 1 : 1;
+  const sourceSignal = init.signal || (typeof Request !== 'undefined' && input instanceof Request ? input.signal : null);
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    _countSupabaseRequest(input);
+    const controller = new AbortController();
+    const abortFromSource = () => controller.abort(sourceSignal?.reason);
+    if (sourceSignal?.aborted) abortFromSource();
+    else sourceSignal?.addEventListener('abort', abortFromSource, { once: true });
+    const timeoutId = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), _requestTimeoutMs);
+    try {
+      const requestInput = typeof Request !== 'undefined' && input instanceof Request ? input.clone() : input;
+      const response = await _nativeFetch(requestInput, { ...init, signal: controller.signal });
+      const body = await response.arrayBuffer();
+      const responseBody = [204, 205, 304].includes(response.status) ? null : body;
+      const completedResponse = new Response(responseBody, { status: response.status, statusText: response.statusText, headers: response.headers });
+      if (!canRetry || !_retryableStatus(completedResponse.status)) return completedResponse;
+      lastError = new Error(`Supabase request failed with status ${completedResponse.status}`);
+      if (attempt === maxAttempts - 1) {
+        if (notify) _networkToast(() => _supabaseFetch(input, init, { notify: false }));
+        return completedResponse;
+      }
+    } catch (error) {
+      lastError = error;
+      if (sourceSignal?.aborted || attempt === maxAttempts - 1) {
+        if (notify && !sourceSignal?.aborted) _networkToast(() => _supabaseFetch(input, init, { notify: false }));
+        throw error;
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      sourceSignal?.removeEventListener('abort', abortFromSource);
+    }
+    await _wait(_retryDelays[attempt]);
+  }
+  throw lastError || new Error('Supabase request failed');
+}
+
+
+async function _supabaseFetch(input, init = {}, options) {
+  const button = _lockActiveButton();
+  try { return await _supabaseFetchRequest(input, init, options); }
+  finally { _unlockButton(button); }
 }
 
 
 export const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.localStorage },
-  global: { fetch: _countedFetch }
+  global: { fetch: _supabaseFetch }
 });
 
 
@@ -59,51 +138,45 @@ export const USERS_SAFE_COLS = 'auth_uid,email,name,gender,college,joined,last_a
 
 
 
-let _lastNetworkToastAt = 0;
-
-function _shouldTreatAsSlowNetwork(err) {
-  const message = String(err?.message || err || '');
-  return /timed out|timeout|Failed to fetch|NetworkError|fetch failed|load failed|connection.*slow/i.test(message);
+function _lockActiveButton() {
+  const button = document.activeElement;
+  if (!(button instanceof HTMLButtonElement)) return null;
+  let state = _buttonRequests.get(button);
+  if (button.disabled && !state) return null;
+  if (!state) {
+    state = { count: 0, wasDisabled: button.disabled };
+    _buttonRequests.set(button, state);
+  }
+  state.count++;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  return button;
 }
 
-function _networkToast(message, duration = 6000) {
-  const now = Date.now();
-  if (now - _lastNetworkToastAt < duration) return;
-  _lastNetworkToastAt = now;
-  showToast(message, duration);
-}
-
-function _requestTimeoutMs() {
-  try {
-    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    const type = connection?.effectiveType || '';
-    if (!navigator.onLine || type.includes('2g') || type.includes('slow') || type.includes('3g')) return 18000;
-  } catch (e) {}
-  return 8000;
+function _unlockButton(button) {
+  if (!button) return;
+  const state = _buttonRequests.get(button);
+  if (!state) return;
+  state.count--;
+  if (state.count <= 0) {
+    button.disabled = state.wasDisabled;
+    button.removeAttribute('aria-busy');
+    _buttonRequests.delete(button);
+  }
 }
 
 export async function db(promise, errMsg = 'Database error') {
+  const button = _lockActiveButton();
   try {
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Request timed out')), _requestTimeoutMs()));
-    const res = await Promise.race([promise, timeout]);
+    const res = await promise;
     if (res.error) throw res.error;
     return res;
   } catch (err) {
-    const message = String(err?.message || err || '');
-    console.error(errMsg, err);
-    const detail = [err.message, err.hint, err.details].filter(Boolean).join(' · ');
-    const friendly = !navigator.onLine
-      ? 'Offline right now — the app will retry when the connection returns.'
-      : _shouldTreatAsSlowNetwork(err)
-        ? 'Your connection is slow right now — the app is retrying quietly.'
-        : (errMsg + ': ' + (detail || 'Unknown error'));
-
-    if (!navigator.onLine || _shouldTreatAsSlowNetwork(err)) {
-      _networkToast(friendly, 5000);
-    } else {
-      showToast(friendly, 9000);
-    }
+    console.warn(errMsg, err);
+    _networkToast(() => db(promise, errMsg));
     return { data: null, error: err, count: null };
+  } finally {
+    _unlockButton(button);
   }
 }
 window.db = db;
@@ -178,33 +251,71 @@ let _reconnectTimer = null;
 
 
 let _reconnectAttempts = 0;
+let _reconnectDelayIndex = 0;
+let _reconnectBusy = false;
+const _reconnectDelays = [4000, 8000, 15000, 30000, 60000];
 
 
 export function _showReconnecting() {
   _reconnectActive = true;
   _reconnectAttempts = 0;
+  _reconnectDelayIndex = 0;
   showScreen('reconnecting', false);
   document.getElementById('reconnectRetryBtn').style.display = 'none';
   document.getElementById('reconnectStatusText').textContent = "Your session is safe, just waiting for the connection to come back.";
   window.addEventListener('online', _reconnectNow);
+  document.addEventListener('visibilitychange', _reconnectVisibilityChanged);
   _reconnectLoop();
 }
 
 
 function _reconnectNow() {
   clearTimeout(_reconnectTimer);
+  if (document.hidden) return;
   _reconnectLoop();
 }
 
 
+function _reconnectVisibilityChanged() {
+  if (document.hidden) clearTimeout(_reconnectTimer);
+  else _reconnectNow();
+}
+
+
+function _scheduleReconnect() {
+  if (!_reconnectActive || document.hidden) return;
+  clearTimeout(_reconnectTimer);
+  const delay = _reconnectDelays[Math.min(_reconnectDelayIndex, _reconnectDelays.length - 1)];
+  _reconnectDelayIndex++;
+  _reconnectTimer = setTimeout(_reconnectLoop, delay);
+}
+
+
 async function _reconnectLoop() {
-  if (!_reconnectActive) return;
-  _reconnectAttempts++;
+  if (!_reconnectActive || _reconnectBusy || document.hidden) return;
+  clearTimeout(_reconnectTimer);
+  if (!navigator.onLine) {
+    _scheduleReconnect();
+    return;
+  }
+
+  _reconnectBusy = true;
+  let connectionWorks = false;
   let session = null;
   try {
-    session = await getSessionWithRetry(1, 800);
-  } catch (e) { console.warn('reconnect attempt failed', e); }
-  if (!_reconnectActive) return; // stopped elsewhere while this was in flight
+    const health = await _supabaseFetch(`${SUPABASE_URL}/auth/v1/health`, { method: 'GET', headers: { apikey: SUPABASE_KEY } }, { notify: false, retryReads: false });
+    connectionWorks = health.ok;
+    if (connectionWorks) {
+      const { data, error } = await sb.auth.getSession();
+      if (error) throw error;
+      session = data?.session || null;
+    }
+  } catch (e) {
+    console.warn('reconnect check failed', e);
+  } finally {
+    _reconnectBusy = false;
+  }
+  if (!_reconnectActive) return;
   if (session) {
     try {
       await handleAuthedSession(session);
@@ -217,12 +328,17 @@ async function _reconnectLoop() {
       console.warn('reconnect: handleAuthedSession failed, will retry', e);
       if (!_reconnectActive) return;
     }
+  } else if (connectionWorks) {
+    _reconnectStop();
+    showScreen('splash', false);
+    return;
   }
+  _reconnectAttempts++;
   if (_reconnectAttempts >= 4) {
     document.getElementById('reconnectRetryBtn').style.display = 'block';
     document.getElementById('reconnectStatusText').textContent = 'Still trying to reconnect you. You can keep waiting or retry manually.';
   }
-  _reconnectTimer = setTimeout(_reconnectLoop, 4000);
+  _scheduleReconnect();
 }
 
 
@@ -230,6 +346,7 @@ function _reconnectStop() {
   _reconnectActive = false;
   clearTimeout(_reconnectTimer);
   window.removeEventListener('online', _reconnectNow);
+  document.removeEventListener('visibilitychange', _reconnectVisibilityChanged);
 }
 
 

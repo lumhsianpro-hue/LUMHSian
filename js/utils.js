@@ -241,10 +241,21 @@ export function rateLimited(key, maxAttempts, windowMs) {
 
 
 // ==================== UTILS ====================
-export function showToast(msg, dur = 3000) {
+export function showToast(msg, dur = 3000, action = null) {
   const t = document.getElementById('toast');
   if (!t) return;
-  t.textContent = msg;
+  t.replaceChildren();
+  const message = document.createElement('span');
+  message.textContent = msg;
+  t.appendChild(message);
+  if (typeof action === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toast-action';
+    button.textContent = 'Retry';
+    button.addEventListener('click', action, { once: true });
+    t.appendChild(button);
+  }
   t.classList.add('show');
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove('show'), dur);

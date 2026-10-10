@@ -16,6 +16,66 @@ import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON
 export const APP_VERSION = '2026-10-10.1';
 
 
+const PENDING_STATS_KEY = 'lum_pending_stats_v1';
+
+
+function _pendingStats() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PENDING_STATS_KEY) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch (e) { return []; }
+}
+
+
+function _queuePendingStats(email, stats) {
+  const entry = { email, stats, queuedAt: Date.now() };
+  try {
+    const pending = _pendingStats().filter(item => item.email !== email);
+    pending.push(entry);
+    localStorage.setItem(PENDING_STATS_KEY, JSON.stringify(pending));
+  } catch (e) {
+    console.error('Could not save pending test results locally', e);
+    showToast('Could not save your result on this device. Free storage and try again.', 6000);
+  }
+  return entry;
+}
+
+
+function _clearPendingStats(entry) {
+  try {
+    const pending = _pendingStats().filter(item => item.email !== entry.email || item.queuedAt !== entry.queuedAt);
+    if (pending.length) localStorage.setItem(PENDING_STATS_KEY, JSON.stringify(pending));
+    else localStorage.removeItem(PENDING_STATS_KEY);
+  } catch (e) { console.warn('Could not clear synced result queue', e); }
+}
+
+
+let _flushingPendingStats = false;
+
+
+export async function flushPendingStats() {
+  if (_flushingPendingStats || !navigator.onLine || !window.currentUser?.email) return;
+  const entry = _pendingStats().find(item => item.email === window.currentUser.email);
+  if (!entry?.stats) return;
+  _flushingPendingStats = true;
+  try { await saveUserStats(entry.stats); }
+  finally { _flushingPendingStats = false; }
+}
+window.flushPendingStats = flushPendingStats;
+
+
+window.addEventListener('online', flushPendingStats);
+
+
+function _updateOfflineBanner() {
+  const banner = document.getElementById('offlineBanner');
+  if (banner) banner.hidden = navigator.onLine;
+}
+window.addEventListener('online', _updateOfflineBanner);
+window.addEventListener('offline', _updateOfflineBanner);
+_updateOfflineBanner();
+
+
 
 // ==================== CLIENT ERROR LOGGING ====================
 // Sends uncaught JS errors and unhandled promise rejections straight from
@@ -108,10 +168,16 @@ window.currentAIContext = null;
 
 // ==================== YEAR SELECTION ====================
 export async function loadYearScreen() {
+  const wrap = document.getElementById('yearPageWrap');
+  wrap.innerHTML = `<button class="back-btn mb-3" onclick="goBack()">← Back</button>${skeletonList(4)}`;
   showLoading(true, 'Loading years...');
   try {
-  const { data: years } = await db(sb.from('years').select('*').order('display_order'), 'Failed to load years');
-  const wrap = document.getElementById('yearPageWrap');
+  const { data: years, error } = await db(sb.from('years').select('*').order('display_order'), 'Failed to load years');
+    if (error) {
+      wrap.innerHTML = `<button class="back-btn mb-3" onclick="goBack()">← Back</button><div class="card">Could not load years. Please try again.</div><button class="btn btn-primary mt-3" onclick="loadYearScreen()">Retry</button>`;
+      showScreen('year');
+      return;
+    }
     if (!years?.length) { wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card"><p>No years configured yet. Contact admin.</p></div>`; showScreen('year'); return; }
   let html = `<div class="card-teal" style="margin-bottom:20px"><h2>Select Your Year</h2><p>MBBS Program</p></div>`;
     html = `<button class="back-btn mb-3" onclick="goBack()">← Back</button>` + html;
@@ -130,7 +196,8 @@ export async function loadYearScreen() {
   showScreen('year');
   } catch(e) {
     console.error('loadYearScreen error:', e);
-    showToast('Failed to load. Please refresh.');
+    wrap.innerHTML = `<button class="back-btn mb-3" onclick="goBack()">← Back</button><div class="card">Could not load years. Please try again.</div><button class="btn btn-primary mt-3" onclick="loadYearScreen()">Retry</button>`;
+    showScreen('year');
   } finally {
     showLoading(false);
   }
@@ -1532,6 +1599,13 @@ export async function getUserStats(forceRefresh = false) {
   if (!forceRefresh && window._lastStats && window._lastStatsUser === statsUser) {
     return window._lastStats;
   }
+  const pending = _pendingStats().find(item => item.email === statsUser);
+  if (pending?.stats) {
+    window._lastStats = pending.stats;
+    window._lastStatsFetchedAt = Date.now();
+    window._lastStatsUser = statsUser;
+    return pending.stats;
+  }
   const { data } = await db(sb.from('user_stats').select('*').eq('email', window.currentUser.email).maybeSingle(), 'Stats fetch failed');
   const result = data || { total_tests: 0, total_questions: 0, total_correct: 0, best_score: 0, history: [], streak: 0, last_practice_date: null, subject_stats: {}, paper_stats: {}, test_stats: {} };
   window._lastStats = result;
@@ -1546,28 +1620,31 @@ export async function saveUserStats(stats) {
   window._lastStats = stats;
   window._lastStatsFetchedAt = Date.now();
   window._lastStatsUser = window.currentUser?.email || null;
+  const email = window.currentUser?.email;
+  if (!email) return;
+  const queuedEntry = _queuePendingStats(email, stats);
   // Columns that needed a one-time migration in Supabase (see the SQL notes at the end of this file) are saved
   // separately from the core stats. Bundled into one upsert, a single missing column made Supabase reject the ENTIRE
   // save — total_tests / total_correct / history / streak included — for every submission until the migration was run.
   const OPTIONAL_COLS = ['completed_attempt_tests', 'attempt_answered', 'attempt_questions', 'attempt_correct', 'archived_years', 'total_skipped'];
   const coreStats = {}, optional = {};
   for (const [k, v] of Object.entries(stats)) (OPTIONAL_COLS.includes(k) ? optional : coreStats)[k] = v;
-  const { error } = await sb.from('user_stats').upsert({ email: window.currentUser.email, ...coreStats });
+  const { error } = await db(sb.from('user_stats').upsert({ email, ...coreStats }), 'Stats save failed');
   if (error) {
     console.warn('Stats save failed', error);
-    showToast('⚠️ Could not save your stats. Check your connection', 4000);
     return;
   }
   if (Object.keys(optional).length) {
-    const { error: eo } = await sb.from('user_stats').update(optional).eq('email', window.currentUser.email);
+    const { error: eo } = await db(sb.from('user_stats').update(optional).eq('email', email), 'Stats save failed');
     if (eo) {
       // One of these columns isn't in the database yet — save them one by one so only that one is skipped.
       for (const [k, v] of Object.entries(optional)) {
-        const { error: e1 } = await sb.from('user_stats').update({ [k]: v }).eq('email', window.currentUser.email);
+        const { error: e1 } = await db(sb.from('user_stats').update({ [k]: v }).eq('email', email), 'Stats save failed');
         if (e1) console.warn(k + ' not saved — run the migration in Supabase SQL Editor (see SQL reference section)', e1);
       }
     }
   }
+  _clearPendingStats(queuedEntry);
 }
 
 
