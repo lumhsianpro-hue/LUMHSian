@@ -1584,9 +1584,39 @@ if ('serviceWorker' in navigator) {
 
 
 
-function showLocalNotification(title, body) {
-  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem('notif_enabled') !== 'false') {
-    new Notification(title, { body });
+const NOTIFICATION_FETCH_TTL = 15 * 60 * 1000;
+const NOTIFICATION_BASELINE_VERSION = '2026-10-10-v1';
+let _notificationFetchAt = 0;
+let _notificationFetchPromise = null;
+let _notificationFetchUser = null;
+let _pendingNotificationOpen = new URLSearchParams(location.search).get('open') === 'notifications';
+
+function _notificationStorageKey(kind) {
+  const userKey = window.currentUser?.auth_uid || window.currentUser?.email || 'anonymous';
+  return `lum_${kind}_${encodeURIComponent(userKey)}`;
+}
+
+function _shownNotificationIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('shown_notifications')) || '[]')); }
+  catch { return new Set(); }
+}
+
+function _saveShownNotificationIds(ids) {
+  try { localStorage.setItem(_notificationStorageKey('shown_notifications'), JSON.stringify([...ids].slice(-200))); }
+  catch (e) { console.warn('Could not save notification history', e); }
+}
+
+async function _showServiceWorkerNotification(item) {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || Notification.permission !== 'granted') return;
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(item.title || 'LUMHSian', {
+      body: item.body || '',
+      tag: String(item.id),
+      data: { url: location.origin }
+    });
+  } catch (e) {
+    console.warn('Notification display failed', e);
   }
 }
 
@@ -1656,69 +1686,104 @@ function _subscribeInbox() {
   } catch (e) { window._inboxSub = null; }
 }
 
-async function checkNewNotifications() {
+async function checkNewNotifications(force = false) {
   if (!window.currentUser || localStorage.getItem('notif_enabled') === 'false') return;
-  _subscribeInbox();
-  // Notifications and announcements each carry their own expiry (see _notifAlive), so fetch the last 30 days (the
-  // longest the admin can choose) and keep only what is still alive. Filtering here means every reader of
-  // window._appNotifs (badge count, bell modal) respects it with no separate cleanup step.
-  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const [{ data: notifs0 }, { data: announces0 }, { data: replies }, inboxRes] = await Promise.all([
-    db(sb.from('app_notifications').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
-    db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
-    // Legacy path for report replies (used only while the inbox table isn't set up yet)
-    db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at').eq('user_email', window.currentUser.email).eq('status', 'replied').gte('replied_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()).order('replied_at', { ascending: false }).limit(20), 'Reply notif load failed'),
-    // No toast on failure: if the inbox table doesn't exist yet that is expected, not an error the student should see
-    sb.from('inbox_messages').select('id,kind,body,image_url,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', _inboxSeenId()).order('id', { ascending: false }).limit(20)
-  ]);
-  const notifs = (notifs0 || []).filter(_notifAlive);
-  const announces = (announces0 || []).filter(_notifAlive);
-  const inboxOk = !inboxRes.error;
-  const inboxItems = inboxOk ? (inboxRes.data || []) : [];
-  window._inboxUnread = inboxItems.length;
-  const dismissed = _getDismissedNotifIds();
-  const myYearForFilter = await _getMyYear();
-  const merged = [
-    ...(notifs || []).map(n => ({ ...n, _source: 'notif' })),
-    ...(announces || []).map(a => ({ ...a, _source: 'announce' })),
-    // Once the inbox exists, replies arrive there as messages; the old report-reply items are only a fallback
-    ...(inboxOk ? [] : (replies || [])).map(r => ({
-      id: r.id, _source: 'report_reply', created_at: r.replied_at,
-      title: '📬 Your report got a reply',
-      body: (r.admin_reply || '').substring(0, 140) + ((r.admin_reply || '').length > 140 ? '…' : '')
-    })),
-    ...inboxItems.map(m => ({
-      id: m.id, _source: 'inbox', created_at: m.created_at,
-      title: m.kind === 'reply' ? '📬 Reply to your report' : '✉️ New message from admin',
-      body: m.body ? (m.body.substring(0, 140) + (m.body.length > 140 ? '…' : '')) : (m.image_url ? '📷 Photo' : '')
-    }))
-  ]
-    .filter(n =>
+  const currentFetchUser = window.currentUser.auth_uid || window.currentUser.email;
+  if (_notificationFetchUser !== currentFetchUser) {
+    _notificationFetchUser = currentFetchUser;
+    _notificationFetchAt = 0;
+    window._appNotifs = null;
+  }
+  if (!force && window._appNotifs && Date.now() - _notificationFetchAt < NOTIFICATION_FETCH_TTL) return;
+  if (_notificationFetchPromise) return _notificationFetchPromise;
+  _notificationFetchPromise = (async () => {
+    _subscribeInbox();
+    const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const [notifRes, announceRes, replyRes, inboxRes] = await Promise.all([
+      db(sb.from('app_notifications').select('id,title,body,created_at,expires_at,target_college,target_year_id').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
+      db(sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
+      db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at').eq('user_email', window.currentUser.email).eq('status', 'replied').gte('replied_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()).order('replied_at', { ascending: false }).limit(20), 'Reply notif load failed'),
+      sb.from('inbox_messages').select('id,kind,body,image_url,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', _inboxSeenId()).order('id', { ascending: false }).limit(20)
+    ]);
+    const notifs = (notifRes.data || []).filter(_notifAlive);
+    const announces = (announceRes.data || []).filter(_notifAlive);
+    const inboxOk = !inboxRes.error;
+    const inboxItems = inboxOk ? (inboxRes.data || []) : [];
+    window._inboxUnread = inboxItems.length;
+    const dismissed = _getDismissedNotifIds();
+    const myYearForFilter = await _getMyYear();
+    const merged = [
+      ...notifs.map(n => ({ ...n, _source: 'notif' })),
+      ...announces.map(a => ({ ...a, _source: 'announce' })),
+      ...(inboxOk ? [] : (replyRes.data || []).map(r => ({
+        id: r.id, _source: 'report_reply', created_at: r.replied_at,
+        title: '📬 Your report got a reply',
+        body: (r.admin_reply || '').substring(0, 140) + ((r.admin_reply || '').length > 140 ? '…' : '')
+      }))),
+      ...inboxItems.map(m => ({
+        id: m.id, _source: 'inbox', created_at: m.created_at,
+        title: m.kind === 'reply' ? '📬 Reply to your report' : '✉️ New message from admin',
+        body: m.body ? (m.body.substring(0, 140) + (m.body.length > 140 ? '…' : '')) : (m.image_url ? '📷 Photo' : '')
+      }))
+    ].filter(n =>
       (!n.target_college || n.target_college === window.currentUser.college) &&
       (!n.target_year_id || n.target_year_id === myYearForFilter?.id) &&
       !dismissed.has(`${n._source}:${n.id}`)
-    )
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  window._appNotifs = merged;
+    ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    window._appNotifs = merged;
 
-  const lastSeen = parseInt(localStorage.getItem('last_seen_notif_time') || '0');
-  const unread = merged.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
-  const badge = document.getElementById('notifBellBadge');
-  if (badge) badge.style.display = unread > 0 ? 'flex' : 'none';
-  if (badge) badge.textContent = unread > 9 ? '9+' : unread;
-  // Fire a native OS notification for the newest one if we have permission (nice-to-have, doesn't work if app/browser is fully closed)
-  if (unread > 0 && merged[0]) showLocalNotification(merged[0].title, merged[0].body || '');
+    const baselineKey = _notificationStorageKey('notification_baseline');
+    const shownIds = _shownNotificationIds();
+    let baselineVersion = null;
+    try { baselineVersion = localStorage.getItem(baselineKey); } catch (e) {}
+    const isFirstLoad = baselineVersion !== NOTIFICATION_BASELINE_VERSION;
+    if (isFirstLoad) {
+      merged.forEach(n => shownIds.add(`${n._source}:${n.id}`));
+      try { localStorage.setItem(baselineKey, NOTIFICATION_BASELINE_VERSION); } catch (e) {}
+    } else {
+      for (const item of merged) {
+        const idKey = `${item._source}:${item.id}`;
+        if (shownIds.has(idKey)) continue;
+        shownIds.add(idKey);
+        _saveShownNotificationIds(shownIds);
+        await _showServiceWorkerNotification(item);
+      }
+    }
+    _saveShownNotificationIds(shownIds);
+    _notificationFetchAt = Date.now();
+
+    const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+    const unread = merged.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
+    const badge = document.getElementById('notifBellBadge');
+    if (badge) badge.style.display = unread > 0 ? 'flex' : 'none';
+    if (badge) badge.textContent = unread > 9 ? '9+' : unread;
+  })();
+  try { await _notificationFetchPromise; }
+  finally { _notificationFetchPromise = null; }
 }
 
 
 
-function openNotificationBell(isRerender, filter) {
+async function openNotificationBell(isRerender, filter) {
   filter = filter || 'all';
+  if (!isRerender) {
+    document.getElementById('notifBellOverlay')?.remove();
+    const loading = document.createElement('div');
+    loading.id = 'notifBellOverlay';
+    loading.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
+    loading.innerHTML = '<div style="background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:var(--radius-xl);width:100%;max-width:420px;padding:28px;text-align:center"><div class="spinner" style="margin:0 auto 12px"></div><p class="text-sm text-muted">Loading notifications...</p></div>';
+    document.body.appendChild(loading);
+    await checkNewNotifications(true);
+    loading.remove();
+  }
   const notifs = window._appNotifs || [];
-  const lastSeen = parseInt(localStorage.getItem('last_seen_notif_time') || '0');
+  let lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0');
   if (!isRerender) {
     const newest = notifs.length ? Math.max(...notifs.map(n => new Date(n.created_at).getTime())) : Date.now();
-    localStorage.setItem('last_seen_notif_time', newest);
+    localStorage.setItem(_notificationStorageKey('last_seen_notif_time'), String(newest));
+    lastSeen = newest;
+    const latestInboxId = Math.max(0, ...notifs.filter(n => n._source === 'inbox' && typeof n.id === 'number').map(n => n.id));
+    if (latestInboxId > _inboxSeenId()) localStorage.setItem('lum_inbox_seen_id', String(latestInboxId));
     document.getElementById('notifBellBadge')?.style && (document.getElementById('notifBellBadge').style.display = 'none');
   } else {
     document.getElementById('notifBellOverlay')?.remove();
@@ -1792,6 +1857,24 @@ function openNotificationBell(isRerender, filter) {
   document.body.appendChild(overlay);
 }
 window.openNotificationBell = openNotificationBell;
+
+async function _flushPendingNotificationOpen() {
+  if (!_pendingNotificationOpen || !window.currentUser || !window._notificationAuthReady) return;
+  _pendingNotificationOpen = false;
+  const url = new URL(location.href);
+  url.searchParams.delete('open');
+  history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  await openNotificationBell();
+}
+window._flushPendingNotificationOpen = _flushPendingNotificationOpen;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data?.type !== 'open-notifications') return;
+    _pendingNotificationOpen = true;
+    _flushPendingNotificationOpen().catch(e => console.warn('Could not open notifications', e));
+  });
+}
 
 
 
@@ -3141,8 +3224,8 @@ window.onload = async function() {
   if (window.currentUser && !window.currentUser.is_admin && window.currentUser.profile_completed) {
     checkNewNotifications();
     checkWhatsNew();
-    setInterval(checkNewNotifications, 60000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNewNotifications(); });
+    window._notificationAuthReady = true;
+    await _flushPendingNotificationOpen();
   }
   applyWallpaper();
   } catch(e) {

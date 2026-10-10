@@ -140,6 +140,7 @@ async function _handleAuthedSessionInner(session) {
   // Reset on SIGNED_OUT (below) so a genuine new sign-in still runs fully.
   if (window._authSessionHandled) return;
   window._authSessionHandled = true;
+  window._notificationAuthReady = false;
   const _hasSavedState = !!localStorage.getItem('lum_app_state');
   showLoading(true, _hasSavedState ? 'Welcome back...' : 'Setting up...');
   const authUid = session.user.id;
@@ -261,9 +262,15 @@ async function _handleAuthedSessionInner(session) {
 
   const saved = localStorage.getItem('lum_year');
   if (saved) window.selectedYear = JSON.parse(saved);
-  if (await restoreAppState()) return;
+  if (await restoreAppState()) {
+    window._notificationAuthReady = true;
+    window._flushPendingNotificationOpen?.().catch(e => console.warn('Could not open notifications', e));
+    return;
+  }
   // Always go to home — year_of_study is now stored on user profile, not in localStorage
   renderHome(); showScreen('home');
+  window._notificationAuthReady = true;
+  window._flushPendingNotificationOpen?.().catch(e => console.warn('Could not open notifications', e));
 }
 
 
@@ -331,6 +338,8 @@ async function submitCreateAccount() {
   requestNotificationPermission();
   _resetNavigationRoot();
   renderHome(); showScreen('home');
+  window._notificationAuthReady = true;
+  window._flushPendingNotificationOpen?.().catch(e => console.warn('Could not open notifications', e));
 }
 window.submitCreateAccount = submitCreateAccount;
 
@@ -342,6 +351,7 @@ export async function logout() {
   clearAppState();
   localStorage.removeItem('lum_year');
   window._authSessionHandled = false;
+  window._notificationAuthReady = false;
   window.currentUser = null; window.selectedYear = null; window.activeTest = null;
   _resetNavigationRoot();
   document.getElementById('bottomNav').classList.remove('show');

@@ -11,3 +11,19 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(fetch(new Request(e.request, { cache: 'no-store' })));
 });
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const appUrl = new URL(self.registration.scope);
+    const openUrl = new URL('?open=notifications', appUrl);
+    const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if (new URL(client.url).origin !== appUrl.origin) continue;
+      await client.focus();
+      client.postMessage({ type: 'open-notifications' });
+      return;
+    }
+    await clients.openWindow(openUrl.href);
+  })());
+});
