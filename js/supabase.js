@@ -134,7 +134,7 @@ export const ADMIN_EMAIL = 'lumhsianpro@gmail.com';
  // used as contact email fallback only
 // Every column on `users` EXCEPT password_hash — use this instead of select('*') anywhere
 // a browser reads from the users table, now that password_hash is locked down server-side.
-export const USERS_SAFE_COLS = 'auth_uid,email,name,gender,college,joined,last_active,last_heartbeat,current_screen,show_on_leaderboard,is_admin,is_banned,profile_image,phone,year_of_study,enrollment_number';
+export const USERS_SAFE_COLS = 'auth_uid,email,name,gender,college,joined,last_active,last_heartbeat,current_screen,is_admin,is_banned,profile_image,phone,year_of_study,enrollment_number';
 
 
 

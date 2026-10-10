@@ -1,5 +1,5 @@
 // Network-only worker: never serve stale app code, and clear caches left by older releases.
-const CACHE_NAME = 'lumhsian-v2026-10-10-notification-theme-logger';
+const CACHE_NAME = 'lumhsian-v2026-10-10.2';
 
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil((async () => {

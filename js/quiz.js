@@ -1,5 +1,4 @@
 import { getSetting, getUserStats, isAIEnabled, loadBookmarkedIndexSet, loadYearScreen, logActivity, renderHome, saveUserStats } from './app.js';
-import { checkRankCelebration } from './leaderboard.js';
 import { _returnToScreen, showScreen } from './navigation.js';
 import { SUPABASE_KEY, SUPABASE_URL, db, sb } from './supabase.js';
 import { ICON_CHART, ICON_CHECK_CIRCLE, ICON_CLOCK, ICON_TARGET, ICON_X_CIRCLE, cacheGet, cacheSet, closeModal, esc, escJs, openModal, playSound, rateLimited, renderMd, showConfirm, showLoading, showToast } from './utils.js';
@@ -1038,11 +1037,11 @@ async function submitTest() {
   const mins = Math.floor(timeTaken / 60), secs = timeTaken % 60;
   const timeStr = `${mins}m ${secs}s`;
 
-  // Build Your Own Test is excluded from stats/history/leaderboard entirely —
+  // Build Your Own Test is excluded from personal totals and test history —
   // it's meant for free practice on a student's own custom question set, not
   // tracked performance. A test where the student answered zero questions is
   // also excluded — otherwise opening a test and immediately exiting counted
-  // as a full "attempt" toward stats, ranking, best score, and wrong-answer
+  // as a full "attempt" toward stats, best score, and wrong-answer
   // history. Everything in this block only runs for a real, answered attempt.
   if (!window.activeTest.isCustom && attempted > 0) {
     const stats = await getUserStats();
@@ -1052,16 +1051,9 @@ async function submitTest() {
     stats.total_skipped = (stats.total_skipped || 0) + skipped;   // lifetime skipped (Stats shows it separately from incorrect)
     stats.best_score = Math.max(stats.best_score || 0, percent);
 
-    // Leaderboard ranking now needs attempt-mode performance specifically —
-    // tracked as its own running total (attempt_questions/attempt_correct)
-    // rather than the old "must fully complete one entire test" rule, so a
-    // partial Attempt (skipped some questions) still contributes toward the
-    // 200-attempted-question threshold, cumulative across as many Attempts as it takes.
-    // completed_attempt_tests is kept alongside it (unused for ranking now,
-    // but other code may still read it).
+    // Keep the attempt-mode performance totals alongside the personal stats.
     if (window.activeTest.mode === 'attempt') {
-      // attempt_answered counts only questions actually attempted (leaderboard eligibility). Older rows that predate
-      // it start from attempt_questions so nobody loses the progress they already had.
+      // Older rows without attempt_answered begin with their existing attempt_questions total.
       const prevAnswered = (stats.attempt_answered || 0) > 0 ? stats.attempt_answered : (stats.attempt_questions || 0);
       stats.attempt_answered = prevAnswered + attempted;
       stats.attempt_questions = (stats.attempt_questions || 0) + total;   // accuracy denominator: skipped count as wrong
@@ -1137,14 +1129,10 @@ async function submitTest() {
     // Review mode never saves anything to Wrong Questions — only a real Attempt (or Practice) does
     if (wrongIds.length && window.activeTest.mode !== 'browse') saveWrongAttempts(wrongIds);
 
-    // Rank celebration — checked last since it depends on the stats upsert
-    // above already being committed. Not awaited: it pops in over the results
-    // screen a moment later rather than delaying it.
-    checkRankCelebration();
   } else if (window.activeTest.isCustom && window.activeTest.mode === 'attempt' && attempted > 0) {
     // Custom (Build Your Own Test) attempts skip every other stat above —
     // they're not tied to one module/subject for progress-tracking purposes
-    // — but they still count toward the leaderboard's attempt-question total,
+    // — but their attempt-mode performance totals are still saved,
     // same as any other Attempt.
     const stats = await getUserStats();
     const prevAnswered = (stats.attempt_answered || 0) > 0 ? stats.attempt_answered : (stats.attempt_questions || 0);
@@ -1160,7 +1148,6 @@ async function submitTest() {
       if (a !== null && a !== window.activeTest.questions[i].answer) customWrongIds.push(window.activeTest.questions[i].id);
     }
     if (customWrongIds.length) saveWrongAttempts(customWrongIds);
-    checkRankCelebration();
   }
 
   renderResults();
@@ -1205,8 +1192,8 @@ export function renderResults() {
       <div style="font-size:16px;margin-top:4px;opacity:.92;font-weight:700">${tier.title}</div>
       <div style="font-size:13px;margin-top:10px;opacity:.85;line-height:1.5">${tier.msg}</div>
       <div style="font-size:12px;margin-top:10px;opacity:.6">${subLabel}</div>
-      ${at.isCustom ? '<div style="font-size:11px;margin-top:8px;opacity:.75">🛠️ Custom test (not counted in your stats or the leaderboard)</div>' : ''}
-      ${!at.isCustom && attempted === 0 ? '<div style="font-size:11px;margin-top:8px;opacity:.75">No questions were answered, so this attempt was not saved to your stats or ranking.</div>' : ''}
+      ${at.isCustom ? '<div style="font-size:11px;margin-top:8px;opacity:.75">🛠️ Custom test (not counted in your personal test totals)</div>' : ''}
+      ${!at.isCustom && attempted === 0 ? '<div style="font-size:11px;margin-top:8px;opacity:.75">No questions were answered, so this attempt was not saved to your personal test totals.</div>' : ''}
     </div>
 
     <div class="stat-grid" style="margin-top:12px">

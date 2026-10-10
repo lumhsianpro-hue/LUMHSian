@@ -129,7 +129,7 @@ p{font-size:14px;color:var(--ink-3);line-height:1.65}
    (so nothing about the app needs to scroll just to switch sections) and a
    wider working column. `body:has(.bottom-nav.show)` scopes the content
    shift to only the screens where the nav rail is actually showing (Home,
-   Modules, Search, Stats, Ranks, Profile) — login, the quiz itself, and the
+   Modules, Search, Stats, Profile) — login, the quiz itself, and the
    admin panel are untouched by it. */
 @media (min-width:900px){
   .bottom-nav.show{

@@ -1,6 +1,5 @@
 import { adminContentTab, adminShowTab, applyWallpaper, renderAdminPanel, timeAgo } from './admin.js';
 import { handleAuthedSession } from './auth.js';
-import { computeLeaderboardCohort, renderRanking } from './leaderboard.js';
 import { goBack, restoreNavigationStack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
 import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
@@ -279,26 +278,6 @@ function changeYear() {
   }
 }
 window.changeYear = changeYear;
-
-// ==================== RANK HELPER ====================
-export async function getRankInfo() {
-  // Cache for 60s — called on every home render
-  if (window._rankInfoCache && window._rankInfoFetchedAt && (Date.now() - window._rankInfoFetchedAt < 60000)) {
-    return window._rankInfoCache;
-  }
-  try {
-    // Same cohort + same rules as the Ranking screen (200 attempted questions in Attempt mode, ranked by accuracy with
-    // skipped counted as wrong). This used to apply an older rule, so the rank on Home could disagree with Ranking.
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Rank info timed out')), 8000));
-    const { combined, myRank } = await Promise.race([computeLeaderboardCohort(window.currentUser?.year_of_study), timeout]);
-    const result = { rank: myRank || null, total: combined.length };
-    window._rankInfoCache = result;
-    window._rankInfoFetchedAt = Date.now();
-    return result;
-  } catch { return { rank: null, total: 0 }; }
-}
-
-
 
 // ==================== HOME / DASHBOARD ====================
 // Shared module-card HTML builder — used by both the Home teaser and the
@@ -665,7 +644,6 @@ export async function renderHome() {
   const acc = stats.total_questions ? Math.round((stats.total_correct/stats.total_questions)*100) : 0;
   const greeting = (() => { const h=new Date().getHours(); if(h<12) return '🌅 Good morning'; if(h<17) return '☀️ Good afternoon'; return '🌙 Good evening'; })();
   const avatarEmoji = window.currentUser.gender==='female' ? '👩‍⚕️' : '👨‍⚕️';
-  const rankData = await getRankInfo();
   const announceHtml = announcements.map(a=>`<div class="announce-bar">${a.image_url ? `<img src="${esc(a.image_url)}" style="width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:16px">${esc(a.emoji)||'📢'}</span>`}<span><strong>${esc(a.title)||''}</strong>${a.title&&a.body?' · ':''}${esc(a.body)||''}</span></div>`).join('');
 
   wrap.innerHTML = `
@@ -700,7 +678,7 @@ export async function renderHome() {
       <svg class="lumhsian-pulse-line" width="100%" height="11" viewBox="0 0 300 16" preserveAspectRatio="none" style="display:block;opacity:.32;margin-bottom:7px" stroke-dasharray="300">
         <path d="M0,8 L36,8 L42,1 L49,15 L55,8 L106,8 L112,1 L119,15 L125,8 L176,8 L182,1 L189,15 L195,8 L246,8 L252,1 L259,15 L265,8 L300,8" stroke="white" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
         <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:7px 4px 6px;text-align:center">
           <div style="font-size:11px;opacity:.85;margin-bottom:1px">🎯</div>
           <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display)" data-count="${acc}" data-suffix="%">0%</div>
@@ -715,11 +693,6 @@ export async function renderHome() {
           <div style="font-size:11px;opacity:.85;margin-bottom:1px">${ICON_FIRE}</div>
           <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display);animation-delay:.1s" data-count="${stats.streak||0}" data-suffix="">0</div>
           <div style="font-size:9.5px;opacity:.72;margin-top:1px;font-weight:500">Streak</div>
-        </div>
-        <div style="background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:7px 4px 6px;text-align:center">
-          <div style="font-size:11px;opacity:.85;margin-bottom:1px">🏆</div>
-          <div class="lumhsian-stat-num" style="font-size:16px;font-weight:800;font-family:var(--font-display);animation-delay:.15s">${rankData.rank?'#'+rankData.rank:'—'}</div>
-          <div style="font-size:9.5px;opacity:.72;margin-top:1px;font-weight:500">Rank</div>
         </div>
       </div>
     </div>
@@ -1310,7 +1283,7 @@ async function openCustomTestBuilder() {
         <span class="fw-700">🛠️ Build Your Own Test</span>
         <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
       </div>
-      <p class="text-xs text-muted mb-3">Mix and match — pick any combination of modules, past papers, and practice tests below. Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your stats or the leaderboard.</p>
+      <p class="text-xs text-muted mb-3">Mix and match — pick any combination of modules, past papers, and practice tests below. Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your personal statistics.</p>
 
       <div class="card" style="margin-bottom:14px;padding:12px 14px;cursor:pointer" onclick="document.getElementById('ctbOverlay')?.remove();openSavedTests()">
         <div class="flex-between"><span class="fw-700 text-sm">📁 Saved Tests${savedTests?.length ? ` (${savedTests.length})` : ''}</span><span class="text-xs fw-600" style="color:var(--gold-600)">Open →</span></div>
@@ -2110,7 +2083,7 @@ function _onAppForeground() {
     // All other screens — re-render in place
     const renders = {
       home: renderHome, modules: renderModulesScreen, search: renderSearch,
-      stats: renderStats, ranking: renderRanking, profile: renderProfile,
+      stats: renderStats, profile: renderProfile,
       bookmarks: renderBookmarks, planner: renderPlanner,
       module: () => {
         if (window._moduleScreenMode === 'pastpapers') {
@@ -2209,7 +2182,7 @@ const APP_STATE_KEY = 'lum_app_state';
 const APP_STATE_MAX_AGE = 24 * 3600 * 1000;
 
  // treat anything older than this as a fresh session
-const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','ranking','profile','bookmarks','wrongattempts','planner','savedtests','admin','module','results','review'];
+const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','profile','bookmarks','wrongattempts','planner','savedtests','admin','module','results','review'];
 
 
 
@@ -2332,7 +2305,7 @@ export async function restoreAppState() {
 
     const renders = {
       home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
-      ranking: renderRanking, profile: renderProfile, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests,
+      profile: renderProfile, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests,
       admin: () => renderAdminPanel(state.adminTab || 'overview')
     };
     if (renders[state.screenId]) await renders[state.screenId]();
@@ -2689,7 +2662,6 @@ CREATE TABLE IF NOT EXISTS users (
   last_active BIGINT,
   last_heartbeat TIMESTAMPTZ,
   current_screen TEXT,
-  show_on_leaderboard BOOLEAN DEFAULT FALSE,
   is_admin BOOLEAN DEFAULT FALSE,
   is_banned BOOLEAN DEFAULT FALSE,
   profile_image TEXT,
@@ -2740,11 +2712,6 @@ ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS archived_years JSONB DEFAULT '{}
 ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS paper_ids INTEGER[] DEFAULT '{}';
 ALTER TABLE custom_tests ADD COLUMN IF NOT EXISTS test_ids INTEGER[] DEFAULT '{}';
 
--- MIGRATION (safe to re-run): leaderboard ranking now requires at least 100
--- questions answered in Attempt mode (any mix of practice tests, Build Your
--- Own Test, or past papers) and ranks by attempt-mode accuracy specifically
--- — see computeLeaderboardCohort() in leaderboard.js and submitTest() in
--- quiz.js, which is what writes these two running totals:
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_questions INTEGER DEFAULT 0;
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_correct INTEGER DEFAULT 0;
 
@@ -2781,19 +2748,9 @@ ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_skipped INTEGER DEFAULT 0;
 UPDATE user_stats SET total_skipped = COALESCE((SELECT SUM(COALESCE((h->>'skipped')::int, 0)) FROM jsonb_array_elements(history) h WHERE COALESCE(h->>'mode','') <> 'browse'), 0)
   WHERE COALESCE(total_skipped, 0) = 0 AND history IS NOT NULL AND jsonb_typeof(history) = 'array';
 
--- MIGRATION (safe to re-run): the leaderboard now needs 200 ATTEMPTED questions (skipped ones
--- don't count toward the 200, but still count as wrong when accuracy is measured). This running
--- total of attempted questions is written by submitTest() in quiz.js. The UPDATE gives existing
--- students a starting value so nobody loses progress:
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS attempt_answered INTEGER DEFAULT 0;
 UPDATE user_stats SET attempt_answered = attempt_questions WHERE COALESCE(attempt_answered, 0) = 0 AND COALESCE(attempt_questions, 0) > 0;
 
--- MIGRATION (safe to re-run, run once in Supabase SQL Editor): leaderboard
--- eligibility now requires fully completing at least one timed Attempt test
--- (every question answered, none skipped) — this counter tracks that. The app
--- code already tolerates this column being missing (it just retries the stats
--- save without it), but until this is run nobody can qualify for the
--- leaderboard, since the eligibility check reads this column.
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS completed_attempt_tests INTEGER DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS institutes (
@@ -2993,7 +2950,6 @@ INSERT INTO system_settings (key, value) VALUES
   ('maintenance_mode', 'false'),
   ('signup_enabled', 'true'),
   ('otp_required', 'true'),
-  ('leaderboard_public', 'true'),
   ('payment_enabled', 'false'),
   ('currency', 'PKR'),
   ('free_trial_days', '7'),
@@ -3008,7 +2964,6 @@ ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO feature_flags (name, label, description, is_enabled) VALUES
   ('ai_tutor', '🤖 AI Tutor', 'AI-powered explanation for MCQs', TRUE),
-  ('leaderboard', '🏆 Leaderboard', 'Show student rankings', TRUE),
   ('bookmarks', '📖 Bookmarks', 'Save MCQs for later review', TRUE),
   ('past_papers', '📜 Past Papers', 'Timed past paper exams', TRUE),
   ('planner', '📅 Study Planner', 'Daily goal and streak system', TRUE),
@@ -3115,7 +3070,7 @@ CREATE POLICY "system_settings_delete" ON system_settings
 --   • Reference/content tables (questions, colleges, modules, announcements,
 --     years, subjects, feature flags, plans, media library): anyone can read,
 --     only an admin account can write.
---   • users: anyone can read (the leaderboard needs this) and you can update
+--   • users: anyone can read basic profile rows and you can update
 --     your own row, but never your own is_admin / is_banned / email / auth_uid
 --     — those four can only change when the request is already coming from an
 --     admin account. (Note: this does NOT yet hide one student's phone number
@@ -3127,7 +3082,7 @@ CREATE POLICY "system_settings_delete" ON system_settings
 --
 -- ⚠️ TEST BEFORE TRUSTING: run this in the Supabase SQL editor, then sign in as
 -- an ordinary (non-admin) student account and confirm (1) your profile still
--- saves, (2) the leaderboard and bookmarks still load, and (3) trying to set
+-- saves, (2) personal stats and bookmarks still load, and (3) trying to set
 -- your own is_admin/is_banned from the browser console now fails. I can't run
 -- this against your live database from here, so please verify it actually
 -- behaves as described before considering the admin panel "secured" rather
@@ -3350,11 +3305,7 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_email);
 --    Wrapping it as (select auth.uid()) instead lets Postgres compute it once
 --    per query — a well-documented Supabase perf tip. Worth an audit pass over
 --    the RLS policies above if any list screen still feels slow at scale.
--- 2. Leaderboard/ranking is already cached client-side for 60s (getRankInfo);
---    if the student body grows into the thousands, moving that computation
---    into a materialized view refreshed on a schedule (pg_cron) would take it
---    off the request path entirely.
--- 3. For data that's public and near-static (colleges, years, subscription
+-- 2. For data that's public and near-static (colleges, years, subscription
 --    plans — already localStorage-cached client-side in this file), an Edge
 --    Function with a Cache-Control header in front of it adds a CDN-level
 --    cache too, so even a first-ever visit on a fresh device doesn't hit

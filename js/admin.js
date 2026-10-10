@@ -1,6 +1,5 @@
 import { _renderStale, getQuestionCountsBy, getSetting, loadAppSettings, loadYearScreen, renderHome, saveAppState } from './app.js';
 import { showScreen } from './navigation.js';
-import { MIN_ATTEMPTED_QUESTIONS, computeLeaderboardCohort } from './leaderboard.js';
 import { inboxThreadHtml, loadInboxThread } from './profile.js';
 import { callAIRaw } from './quiz.js';
 import { ADMIN_EMAIL, USERS_SAFE_COLS, adminRPC, db, sb } from './supabase.js';
@@ -655,33 +654,6 @@ window.adminMsgDelete = adminMsgDelete;
 
 
 
-// Admin-only: where this student stands among the ranked students of their year ("#13 of 16"). Students themselves
-// only ever see their own rank number — never how many students are ranked.
-async function _adminStudentRankHtml(u, s) {
-  const year = u.year_of_study || null;
-  const key = year || 'all';
-  const cache = (window._adminRankCohort = window._adminRankCohort || {});
-  if (!cache[key] || Date.now() - cache[key].at > 60000) cache[key] = { at: Date.now(), data: await computeLeaderboardCohort(year) };
-  const { combined, everyone } = cache[key].data;
-  const pos = combined.findIndex(x => x.email === u.email) + 1;
-  const mine = (everyone || []).find(x => x.email === u.email);
-  const attemptQ = mine ? mine.attempt_questions : (s?.attempt_questions || 0);
-  const attempted = mine ? mine.attempted : ((s?.attempt_answered || 0) > 0 ? s.attempt_answered : attemptQ);
-  const acc = mine ? mine.acc : (attemptQ ? Math.round(((s?.attempt_correct || 0) / attemptQ) * 100) : 0);
-  const scope = year ? esc(String(year)) : 'All students';
-  return pos
-    ? `<div class="flex-between">
-        <div><div class="fw-700 text-sm">🏆 Leaderboard rank</div><div class="text-xs text-muted">${scope} · Attempt-mode accuracy</div></div>
-        <div style="text-align:right"><div style="font-size:26px;font-weight:800;color:var(--gold-700);line-height:1.1">#${pos}</div><div class="text-xs text-muted">of ${combined.length} ranked</div></div>
-      </div>
-      <div class="text-xs text-muted" style="margin-top:8px">Attempted ${attempted} questions · accuracy ${acc}%</div>`
-    : `<div class="flex-between">
-        <div><div class="fw-700 text-sm">🏆 Leaderboard rank</div><div class="text-xs text-muted">${scope} · ${combined.length} ranked so far</div></div>
-        <div style="text-align:right"><div style="font-size:22px;font-weight:800;color:var(--ink-4);line-height:1.1">Not ranked</div></div>
-      </div>
-      <div class="text-xs text-muted" style="margin-top:8px">Minimum ${MIN_ATTEMPTED_QUESTIONS} attempted questions required in Attempt mode</div>`;
-}
-
 async function adminViewStudentDetail(email) {
   // Robust: works whether called from the cached list, the live strip, or
   // the Analytics > Realtime tab — fetches fresh if not already in cache.
@@ -742,11 +714,6 @@ async function adminViewStudentDetail(email) {
           <div class="stat-box"><div class="stat-val">${s?.total_correct||0}</div><div class="stat-key">Correct</div></div>
           <div class="stat-box"><div class="stat-val">${s?.streak||0}🔥</div><div class="stat-key">Streak</div></div>
         </div>
-        <!-- Leaderboard rank (filled in once the cohort has loaded) -->
-        <div class="card" id="adminStudentRank" style="margin-bottom:16px;padding:14px;border:1.5px solid var(--gold-400);background:var(--gold-50)">
-          <div class="fw-700 text-sm">🏆 Leaderboard rank</div>
-          <div class="text-xs text-muted">Calculating…</div>
-        </div>
         <!-- Full Profile Info -->
         <div class="card" style="margin-bottom:20px;padding:14px">
           <div class="flex-between mb-2"><span class="fw-700 text-sm">👤 Profile Details</span>
@@ -777,13 +744,6 @@ async function adminViewStudentDetail(email) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  // Not awaited: the profile opens straight away and the rank card fills in when the cohort has loaded
-  (async () => {
-    let html;
-    try { html = await _adminStudentRankHtml(u, s); } catch (e) { html = '<div class="fw-700 text-sm">🏆 Leaderboard rank</div><div class="text-xs text-muted">Unavailable right now</div>'; }
-    const el = document.getElementById('adminStudentRank');
-    if (el) el.innerHTML = html;
-  })();
 }
 window.adminViewStudentDetail = adminViewStudentDetail;
 
@@ -4885,7 +4845,7 @@ async function adminMonetization(token = window._adminRenderToken) {
       <label class="input-label">Duration (days)</label>
       <input id="plan_days" type="number" class="input-field" placeholder="e.g., 30">
       <label class="input-label">Features (comma separated)</label>
-      <input id="plan_features" class="input-field" placeholder="All MCQs, Past Papers, AI Tutor, Leaderboard">
+      <input id="plan_features" class="input-field" placeholder="All MCQs, Past Papers, AI Tutor, Study Planner">
       <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
         <label><input type="checkbox" id="plan_featured"> <span class="text-sm">Mark as Featured</span></label>
         <label><input type="checkbox" id="plan_free"> <span class="text-sm">Free Plan (price = 0)</span></label>
@@ -5334,16 +5294,6 @@ async function adminAppSettings(token = window._adminRenderToken) {
           <span class="toggle-knob"></span>
         </label>
       </div>
-      <div class="flex-between">
-        <div>
-          <div class="fw-600">🌐 Public Leaderboard</div>
-          <div class="text-xs text-muted">Show leaderboard to all students</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="set_lb" ${S('leaderboard_public') !== 'false' ? 'checked' : ''} onchange="saveSetting('leaderboard_public',this.checked)">
-          <span class="toggle-knob"></span>
-        </label>
-      </div>
     </div>
 
     <!-- Feature Flags -->
@@ -5638,7 +5588,6 @@ window.toggleFeatureFlag = toggleFeatureFlag;
 async function createDefaultFlags() {
   const defaultFlags = [
     { name: 'ai_tutor', label: '🤖 AI Tutor', description: 'AI-powered explanation for MCQs', is_enabled: true },
-    { name: 'leaderboard', label: '🏆 Leaderboard', description: 'Show student rankings', is_enabled: true },
     { name: 'bookmarks', label: '📖 Bookmarks', description: 'Save MCQs for later review', is_enabled: true },
     { name: 'past_papers', label: '📜 Past Papers', description: 'Timed past paper exams', is_enabled: true },
     { name: 'planner', label: '📅 Study Planner', description: 'Daily goal and streak system', is_enabled: true },

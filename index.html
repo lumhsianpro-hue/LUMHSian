@@ -91,10 +91,6 @@ try {
       <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M12 20V4M20 20v-7"/><path d="M2 20h20"/></svg></span>
       <span class="nav-item-label">Stats</span>
     </button>
-    <button class="nav-item" onclick="navGo('ranking')" id="nav-ranking">
-      <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8v6a4 4 0 0 1-8 0V4Z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M10 18h4M12 14v4M9 21h6"/></svg></span>
-      <span class="nav-item-label">Ranks</span>
-    </button>
     <button class="nav-item" onclick="navGo('profile')" id="nav-profile">
       <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7"/></svg></span>
       <span class="nav-item-label">Profile</span>
@@ -122,7 +118,6 @@ try {
       <span style="background:rgba(255,255,255,.1);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;color:rgba(255,255,255,.8);display:inline-flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 8h1M14 8h1M9 12h1M14 12h1M9 16h1M14 16h1"/></svg> Past Papers</span>
       <span style="background:rgba(255,255,255,.1);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;color:rgba(255,255,255,.8);display:inline-flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.5.4.8 1 .8 1.7v.6h6.4v-.6c0-.7.3-1.3.8-1.7A7 7 0 0 0 12 2Z"/></svg> Detailed Explanations</span>
       <span style="background:rgba(255,255,255,.1);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;color:rgba(255,255,255,.8);display:inline-flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M12 20V4M20 20v-7"/><path d="M2 20h20"/></svg> Performance Analytics</span>
-      <span style="background:rgba(255,255,255,.1);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;color:rgba(255,255,255,.8);display:inline-flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 4h8v6a4 4 0 0 1-8 0V4Z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M10 18h4M12 14v4M9 21h6"/></svg> Top 10 Leaderboard</span>
     </div>
 
     <button class="splash-btn-primary" id="googleSignInBtn" onclick="signInWithGoogle()" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#1f1f1f">
@@ -247,11 +242,6 @@ try {
   <div class="page-wrap" id="statsPageWrap"></div>
 </div>
 
-<!-- LEADERBOARD -->
-<div id="screen-ranking" class="screen">
-  <div class="page-wrap" id="rankingPageWrap"></div>
-</div>
-
 <!-- SEARCH -->
 <div id="screen-search" class="screen">
   <div class="page-wrap" id="searchPageWrap"></div>
@@ -329,30 +319,6 @@ try {
 
 <!-- Password Modal -->
 
-<!-- Privacy Modal -->
-<div class="modal-backdrop" id="modalPrivacy">
-  <div class="modal-box">
-    <div class="modal-header">
-      <span class="modal-title">Privacy Settings</span>
-      <button class="modal-close" title="Close" onclick="closeModal('modalPrivacy')">✕</button>
-    </div>
-    <div class="card" style="margin-bottom:20px">
-      <div class="flex-between">
-        <div>
-          <div class="fw-700">Leaderboard Visibility</div>
-          <p class="mt-1">Show your name on the public leaderboard</p>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="privLeaderboard" onchange="savePrivacy()">
-          <span class="toggle-knob"></span>
-        </label>
-      </div>
-    </div>
-    <p class="text-xs text-muted">Your data is safe with us and is never shared with third parties.</p>
-    <button class="btn btn-primary mt-3" onclick="closeModal('modalPrivacy')">Done</button>
-  </div>
-</div>
-
 <!-- Exit Test Modal -->
 <div class="modal-backdrop" id="modalExitTest">
   <div class="modal-box">
@@ -374,7 +340,6 @@ try {
 <script type="module" src="js/navigation.js"></script>
 <script type="module" src="js/quiz.js"></script>
 <script type="module" src="js/profile.js"></script>
-<script type="module" src="js/leaderboard.js"></script>
 <script type="module" src="js/admin.js"></script>
 <script type="module" src="js/utils.js"></script>
 <script type="module" src="js/supabase.js"></script>

@@ -163,7 +163,7 @@ async function _handleAuthedSessionInner(session) {
     const { data: created } = await db(sb.from('users').insert({
       auth_uid: authUid, email, name: googleName || email.split('@')[0],
       gender: 'male', dob: '2005-01-01', college: '', city: '',
-      joined: Date.now(), show_on_leaderboard: false,
+      joined: Date.now(),
       is_admin: isAdminEmail, is_banned: false, profile_completed: false
     }).select(USERS_SAFE_COLS + ',profile_completed,city,dob').single(), 'Account creation failed');
     if (!created) { showLoading(false); showToast('Could not create your account. Please try again.'); return; }

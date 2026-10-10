@@ -205,7 +205,7 @@ export function renderAvatar(name, size = 40) {
 // Reuses the .skel-card/.skeleton classes already built for the Modules
 // screen, so every list screen gets the same "shapes of content" loading
 // feel instead of a plain spinner — extended here to Bookmarks, Wrong
-// Attempts, Ranking, Profile, and My Reports.
+// Attempts, Profile, and My Reports.
 export function skeletonList(count = 4, withHeader = true) {
   return `
     ${withHeader ? `<div class="skel-card"><div class="skeleton" style="height:22px;width:50%;margin-bottom:8px"></div><div class="skeleton" style="height:13px;width:70%"></div></div>` : ''}

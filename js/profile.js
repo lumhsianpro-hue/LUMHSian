@@ -1,5 +1,5 @@
 import { timeAgo } from './admin.js';
-import { APP_VERSION, _isStandalone, getRankInfo, getSetting, getUserStats, isAIEnabled, renderHome } from './app.js';
+import { APP_VERSION, _isStandalone, getSetting, getUserStats, isAIEnabled, renderHome } from './app.js';
 import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
 import { checkExpiredAttemptOnRender, getResumableSnapshot, sendStudentMessage } from './quiz.js';
@@ -570,10 +570,6 @@ async function showAboutPage(standalone = false) {
         <div style="font-size:20px;flex-shrink:0">📅</div>
         <div><div class="fw-700 text-sm">Study Planner</div><div class="text-xs text-muted" style="line-height:1.5">Daily goals and streaks to keep your revision consistent</div></div>
       </div>
-      <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
-        <div style="font-size:20px;flex-shrink:0">🏆</div>
-        <div><div class="fw-700 text-sm">Leaderboard</div><div class="text-xs text-muted" style="line-height:1.5">See how you stack up against your batch, or switch on Anonymous mode anytime</div></div>
-      </div>
       <div style="display:flex;gap:12px;padding:10px 0">
         <div style="font-size:20px;flex-shrink:0">🤖</div>
         <div><div class="fw-700 text-sm">AI Tutor</div><div class="text-xs text-muted" style="line-height:1.5">Ask for a plain-language explanation whenever you are stuck on a question</div></div>
@@ -620,24 +616,21 @@ function showPrivacyPolicyPage(standalone = false) {
       <p style="margin-bottom:14px">When you sign in with Google, we receive your <strong>name and email address</strong>. During signup you may also add your <strong>phone number, college/university, gender and academic year</strong>. These help personalize your question bank and are never required to be public. As you use the app we store your <strong>test attempts, scores, streaks, bookmarks and study activity</strong> so your progress can be tracked and shown back to you. If you contact us through Reports & Feedback, we store the <strong>message you send and our reply</strong>. Basic technical details (like a screen name or app version) are logged automatically <strong>only when something goes wrong</strong>, to help us fix bugs.</p>
 
       <div class="fw-700 mb-1">2. How we use it</div>
-      <p style="margin-bottom:14px">Your data is used to run the app for you: showing the right questions for your year, tracking your accuracy and streaks, powering the leaderboard, and replying to feedback or reports you send. We do not use your data for advertising, and we do not sell it to anyone.</p>
+      <p style="margin-bottom:14px">Your data is used to run the app for you: showing the right questions for your year, tracking your accuracy and streaks, and replying to feedback or reports you send. We do not use your data for advertising, and we do not sell it to anyone.</p>
 
       <div class="fw-700 mb-1">3. AI Tutor</div>
       <p style="margin-bottom:14px">If you use the AI Tutor feature, the question text you ask about is sent to an AI service provider to generate an explanation. This is only triggered when you actively use the feature.</p>
 
-      <div class="fw-700 mb-1">4. Leaderboard visibility</div>
-      <p style="margin-bottom:14px">By default your name and college may be visible to other students on the leaderboard. You can switch this off anytime from Profile → Leaderboard Privacy to appear anonymously instead.</p>
-
-      <div class="fw-700 mb-1">5. Where your data lives</div>
+      <div class="fw-700 mb-1">4. Where your data lives</div>
       <p style="margin-bottom:14px">Your data is stored with Supabase, a secure cloud database provider, and protected by access rules that keep your personal records visible only to you and app administrators. Google is used only to verify your identity when you sign in. We never see or store your Google password.</p>
 
-      <div class="fw-700 mb-1">6. Your choices</div>
+      <div class="fw-700 mb-1">5. Your choices</div>
       <p style="margin-bottom:14px">You can update your name, college and phone number anytime from your Profile. To request a copy of your data or to have your account and data deleted, contact us using the details below, and we will act on verified requests within a reasonable time.</p>
 
-      <div class="fw-700 mb-1">7. Changes to this policy</div>
+      <div class="fw-700 mb-1">6. Changes to this policy</div>
       <p style="margin-bottom:14px">If this policy changes in a meaningful way, we will let you know inside the app. Continued use after an update means you accept the revised policy.</p>
 
-      <div class="fw-700 mb-1">8. Contact us</div>
+      <div class="fw-700 mb-1">7. Contact us</div>
       <p style="margin-bottom:0">Questions about this policy or your data? Reach us at <a href="mailto:${esc(contactEmail)}" style="color:var(--gold-700)">${esc(contactEmail)}</a> or through Profile → My Reports & Feedback.</p>
     </div>
     ${externalUrl ? `<div style="text-align:center;margin-top:14px"><a href="${esc(externalUrl)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--gold-700);text-decoration:underline">🔗 View full policy on our website</a></div>` : ''}
@@ -709,7 +702,6 @@ export async function renderProfile() {
   const stats = await getUserStats();
   const acc = stats.total_questions ? Math.round((stats.total_correct / stats.total_questions) * 100) : 0;
 
-  const rankInfo = await getRankInfo();
   const totalQ = stats.total_questions || 0;
   const bestScore = stats.best_score || 0;
   const isFemale = window.currentUser.gender === 'female';
@@ -735,7 +727,6 @@ export async function renderProfile() {
       <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:12px;position:relative;z-index:1">
         ${window.currentUser.college ? `<span class="achievement-pill">🏫 ${esc(window.currentUser.college)}</span>` : ''}
         <span class="achievement-pill">📚 ${window.selectedYear?.name || 'N/A'}</span>
-        ${rankInfo.rank ? `<span class="achievement-pill">🏆 Rank #${rankInfo.rank}</span>` : ''}
         <span class="achievement-pill">${isFemale ? '👩‍⚕️ Female' : '👨‍⚕️ Male'}</span>
       </div>
     </div>
@@ -795,10 +786,6 @@ export async function renderProfile() {
     </div>
     <div class="list-item no-hover" onclick="editPhone()">
       <div class="list-item-left"><div class="list-item-icon">📱</div><div><div class="list-item-title">Phone Number</div><div class="list-item-sub">${window.currentUser.phone || 'Not set (tap to add)'}</div></div></div>
-      <span style="color:var(--ink-4)">›</span>
-    </div>
-    <div class="list-item no-hover" onclick="openPrivacyModal()">
-      <div class="list-item-left"><div class="list-item-icon">👁</div><div><div class="list-item-title">Leaderboard Privacy</div><div class="list-item-sub">${window.currentUser.show_on_leaderboard ? 'Showing name & college' : 'Anonymous mode on'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
     ${!_isStandalone ? `<div class="list-item no-hover" onclick="_triggerInstall()">
@@ -987,16 +974,6 @@ async function saveName() {
   renderProfile();
 }
 window.saveName = saveName;
-
-
-
-async function savePrivacy() {
-  const val = document.getElementById('privLeaderboard').checked;
-  await db(sb.from('users').update({ show_on_leaderboard: val }).eq('email', window.currentUser.email), 'Privacy save failed');
-  window.currentUser.show_on_leaderboard = val;
-  showToast('Privacy settings saved ✓');
-}
-window.savePrivacy = savePrivacy;
 
 
 
