@@ -2,7 +2,24 @@ import { getSetting, getUserStats, isAIEnabled, loadBookmarkedIndexSet, loadYear
 import { checkRankCelebration } from './leaderboard.js';
 import { _returnToScreen, showScreen } from './navigation.js';
 import { SUPABASE_KEY, SUPABASE_URL, db, sb } from './supabase.js';
-import { ICON_CHART, ICON_CHECK_CIRCLE, ICON_CLOCK, ICON_TARGET, ICON_X_CIRCLE, closeModal, esc, escJs, openModal, playSound, rateLimited, renderMd, showConfirm, showLoading, showToast } from './utils.js';
+import { ICON_CHART, ICON_CHECK_CIRCLE, ICON_CLOCK, ICON_TARGET, ICON_X_CIRCLE, cacheGet, cacheSet, closeModal, esc, escJs, openModal, playSound, rateLimited, renderMd, showConfirm, showLoading, showToast } from './utils.js';
+
+
+const QUESTION_CACHE_TTL = 15 * 60 * 1000;
+
+async function _fetchQuestionsCached(key, query, errorText) {
+  const cacheKey = `questions_${key}`;
+  const fresh = cacheGet(cacheKey, QUESTION_CACHE_TTL);
+  if (fresh !== null) return { data: fresh };
+  const stale = cacheGet(cacheKey, QUESTION_CACHE_TTL, true);
+  if (stale !== null) {
+    db(query, errorText).then(result => { if (result.data !== null) cacheSet(cacheKey, result.data); });
+    return { data: stale };
+  }
+  const result = await db(query, errorText);
+  if (result.data !== null) cacheSet(cacheKey, result.data);
+  return result;
+}
 
 
 
@@ -132,13 +149,16 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
   if (moduleIds?.length) {
     let q = sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('module_id', moduleIds);
     if (subjectIds?.length) q = q.in('subject_id', subjectIds);
-    queries.push(db(q, 'Failed to load questions'));
+    const key = `modules_${moduleIds.slice().sort().join('_')}_subjects_${(subjectIds || []).slice().sort().join('_')}`;
+    queries.push(_fetchQuestionsCached(key, q, 'Failed to load questions'));
   }
   if (paperIds?.length) {
-    queries.push(db(sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('paper_id', paperIds), 'Failed to load paper questions'));
+    const key = `papers_${paperIds.slice().sort().join('_')}`;
+    queries.push(_fetchQuestionsCached(key, sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('paper_id', paperIds), 'Failed to load paper questions'));
   }
   if (testIds?.length) {
-    queries.push(db(sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('practice_test_id', testIds), 'Failed to load test questions'));
+    const key = `tests_${testIds.slice().sort().join('_')}`;
+    queries.push(_fetchQuestionsCached(key, sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('practice_test_id', testIds), 'Failed to load test questions'));
   }
   const results = await Promise.all(queries);
   // Pooled from every selected source, then deduplicated by id — the same
@@ -235,7 +255,8 @@ async function _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, p
     // count shown on the test list.
     if (subjectId) query = query.eq('subject_id', subjectId);
   }
-  const { data: qs } = await db(query, 'Failed to load questions');
+  const questionKey = paperId ? `paper_${paperId}` : testId ? `test_${testId}` : `module_${moduleId}_subject_${subjectId || 'all'}`;
+  const { data: qs } = await _fetchQuestionsCached(questionKey, query, 'Failed to load questions');
   if (!qs || qs.length === 0) { showLoading(false); showToast('No questions in this category yet.'); return; }
 
   // Shuffle for practice AND timed attempts (a fresh order every time you take a test) —

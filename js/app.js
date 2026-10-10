@@ -279,10 +279,72 @@ function buildPastPapersCardHtml() {
 // .count() request per row — reused below for modules, past papers, and
 // practice tests, all of which used to fire one count query per item every
 // time their list rendered.
+const CONTENT_COUNTS_CACHE_KEY = 'content_counts_2026_10_10';
+const CONTENT_COUNTS_TTL = 15 * 60 * 1000;
+let _contentCounts = null;
+let _contentCountsPromise = null;
+let _contentCountsUnavailable = false;
+let _contentCountsFetchedAt = 0;
+
+function _refreshContentCounts() {
+  if (_contentCountsPromise) return _contentCountsPromise;
+  _contentCountsPromise = (async () => {
+    try {
+      const { data, error } = await sb.rpc('get_content_counts');
+      if (error || !Array.isArray(data)) { _contentCountsUnavailable = true; return null; }
+      const grouped = {};
+      for (const row of data) {
+        if (!row || row.content_id === null || row.content_id === undefined) continue;
+        (grouped[row.kind] ||= {})[row.content_id] = Number(row.total_count) || 0;
+      }
+      cacheSet(CONTENT_COUNTS_CACHE_KEY, grouped);
+      _contentCounts = grouped;
+      _contentCountsFetchedAt = Date.now();
+      return grouped;
+    } catch (e) {
+      _contentCountsUnavailable = true;
+      return null;
+    } finally {
+      _contentCountsPromise = null;
+    }
+  })();
+  return _contentCountsPromise;
+}
+
+async function _loadContentCounts() {
+  if (_contentCounts && Date.now() - _contentCountsFetchedAt < CONTENT_COUNTS_TTL) return _contentCounts;
+  if (_contentCountsUnavailable) return _contentCounts;
+  const cached = cacheGet(CONTENT_COUNTS_CACHE_KEY, CONTENT_COUNTS_TTL);
+  if (cached !== null) {
+    _contentCounts = cached;
+    _contentCountsFetchedAt = Date.now();
+    return cached;
+  }
+  if (_contentCounts) {
+    _refreshContentCounts();
+    return _contentCounts;
+  }
+  const stale = cacheGet(CONTENT_COUNTS_CACHE_KEY, CONTENT_COUNTS_TTL, true);
+  if (stale !== null) {
+    _contentCounts = stale;
+    _contentCountsFetchedAt = Date.now();
+    _refreshContentCounts();
+    return stale;
+  }
+  return _refreshContentCounts();
+}
+
 export async function getQuestionCountsBy(column, ids) {
   const counts = {};
   for (const id of ids) counts[id] = 0;
   if (!ids.length) return counts;
+  const kinds = { paper_id: 'questions_paper', practice_test_id: 'questions_test', module_id: 'questions_module', subject_id: 'questions_subject' };
+  const rpcCounts = kinds[column] ? await _loadContentCounts() : null;
+  if (rpcCounts) {
+    const grouped = rpcCounts[kinds[column]] || {};
+    ids.forEach(id => { counts[id] = grouped[id] || 0; });
+    return counts;
+  }
   // One exact-count-only request per id, in parallel. head:true means Postgres
   // computes just the count and returns zero rows — this is what makes it safe
   // from PostgREST's default 1000-row response cap, unlike a single combined
@@ -307,6 +369,12 @@ async function getTestCountsBySubject(subjectIds) {
   const counts = {};
   for (const id of subjectIds) counts[id] = 0;
   if (!subjectIds.length) return counts;
+  const rpcCounts = await _loadContentCounts();
+  if (rpcCounts) {
+    const grouped = rpcCounts.active_tests_subject || {};
+    subjectIds.forEach(id => { counts[id] = grouped[id] || 0; });
+    return counts;
+  }
   const results = await Promise.all(subjectIds.map(id =>
     sb.from('practice_tests').select('id', { count: 'exact', head: true }).eq('subject_id', id).eq('is_active', true)
   ));
@@ -320,6 +388,12 @@ async function getSubjectCountsForModules(moduleIds) {
   const counts = {};
   for (const id of moduleIds) counts[id] = 0;
   if (!moduleIds.length) return counts;
+  const rpcCounts = await _loadContentCounts();
+  if (rpcCounts) {
+    const grouped = rpcCounts.subjects_module || {};
+    moduleIds.forEach(id => { counts[id] = grouped[id] || 0; });
+    return counts;
+  }
   const results = await Promise.all(moduleIds.map(id =>
     sb.from('subjects').select('id', { count: 'exact', head: true }).eq('module_id', id)
   ));
@@ -329,18 +403,25 @@ async function getSubjectCountsForModules(moduleIds) {
 
 
 
-// Years and active announcements are fetched on both Home and the Modules
-// tab. Years change extremely rarely (30 min cache); announcements are
-// admin-authored and time-sensitive so they get a shorter window (3 min) —
-// both now persist in localStorage so a fresh page load can skip the network
-// call entirely too, not just repeat calls within one session.
-function _fetchYearsCached() {
-  const cached = cacheGet('years', 1800000);
-  if (cached) return Promise.resolve({ data: cached });
-  return db(sb.from('years').select('*').order('display_order'), 'Years error').then(r => {
-    if (r.data) cacheSet('years', r.data);
-    return r;
+// Return cached content immediately; expired entries render first while a
+// quiet refresh updates the cache for the next screen visit.
+function _cachedQuery(key, ttl, makeQuery, errorText) {
+  const fresh = cacheGet(key, ttl);
+    if (fresh !== null) return Promise.resolve({ data: fresh });
+  const stale = cacheGet(key, ttl, true);
+  if (stale !== null) {
+    db(makeQuery(), errorText).then(result => { if (result.data !== null) cacheSet(key, result.data); });
+    return Promise.resolve({ data: stale });
+  }
+  return db(makeQuery(), errorText).then(result => {
+    if (result.data !== null) cacheSet(key, result.data);
+    return result;
   });
+}
+
+function _fetchYearsCached() {
+  return _cachedQuery('years', CONTENT_COUNTS_TTL, () =>
+    sb.from('years').select('id,name,is_active,display_order,coming_soon_text').order('display_order'), 'Years error');
 }
 
 
@@ -352,11 +433,10 @@ function _notifAlive(n) {
 }
 
 function _fetchAnnouncementsCached() {
-  const cached = cacheGet('announcements', 180000);
-  if (cached) return Promise.resolve({ data: cached.filter(_notifAlive) });
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();   // the longest the admin can choose
-  return db(sb.from('announcements').select('*').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce error').then(r => {
-    if (r.data) { r.data = r.data.filter(_notifAlive); cacheSet('announcements', r.data); }
+    return _cachedQuery('announcements', CONTENT_COUNTS_TTL, () =>
+    sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce error').then(r => {
+    if (r.data) r.data = r.data.filter(_notifAlive);
     return r;
   });
 }
@@ -387,12 +467,12 @@ export async function renderModulesScreen() {
     let myYearHtml = '';
     if (myYear && myYear.is_active) {
       const [{ data: yearModules }] = await Promise.all([
-        db(sb.from('year_modules').select('module_id,display_order').eq('year_id', myYear.id).order('display_order'), 'Modules error')
+        _cachedQuery(`year_modules_${myYear.id}`, CONTENT_COUNTS_TTL, () => sb.from('year_modules').select('module_id,display_order').eq('year_id', myYear.id).order('display_order'), 'Modules error')
       ]);
       const moduleIds = (yearModules||[]).map(ym => ym.module_id);
       if (moduleIds.length) {
         const [{ data: modules }, ...counts] = await Promise.all([
-          db(sb.from('modules').select('*').in('id', moduleIds), 'Modules error'),
+          _cachedQuery(`modules_${moduleIds.slice().sort().join('_')}`, CONTENT_COUNTS_TTL, () => sb.from('modules').select('id,name,icon_url,color').in('id', moduleIds), 'Modules error'),
           // We don't know module ids yet, fetch after
         ]);
         const ordered = (yearModules||[]).map(ym => modules?.find(m => m.id===ym.module_id)).filter(Boolean);
@@ -499,10 +579,10 @@ export async function renderHome() {
       window.selectedYear = { id: myYear.id, name: myYear.name };
       localStorage.setItem('lum_year', JSON.stringify(window.selectedYear));
     }
-    const { data: yearModules } = await db(sb.from('year_modules').select('module_id,display_order').eq('year_id', myYear.id).order('display_order'), 'Modules error');
+    const { data: yearModules } = await _cachedQuery(`year_modules_${myYear.id}`, CONTENT_COUNTS_TTL, () => sb.from('year_modules').select('module_id,display_order').eq('year_id', myYear.id).order('display_order'), 'Modules error');
     const moduleIds = (yearModules || []).map(ym => ym.module_id);
     if (moduleIds.length) {
-      const { data: modules } = await db(sb.from('modules').select('*').in('id', moduleIds), 'Modules error');
+      const { data: modules } = await _cachedQuery(`modules_${moduleIds.slice().sort().join('_')}`, CONTENT_COUNTS_TTL, () => sb.from('modules').select('id,name,icon_url,color').in('id', moduleIds), 'Modules error');
       const ordered = (yearModules || []).map(ym => modules?.find(m => m.id === ym.module_id)).filter(Boolean).slice(0, 3);
       const counts = await getSubjectCountsForModules(ordered.map(m => m.id));
       ordered.forEach((m,i) => {
@@ -653,7 +733,7 @@ export async function openModule(moduleId, moduleName, iconUrl, color, fromYearI
   showLoading(true, 'Loading module...');
   const [moduleRes, subjectsRes, qCountRes, moduleTestsRes] = await Promise.all([
     db(sb.from('modules').select('name,icon_url,color').eq('id', moduleId).single(), 'Module error'),
-    db(sb.from('subjects').select('*').eq('module_id', moduleId).order('display_order'), 'Subjects error'),
+    _cachedQuery(`subjects_module_${moduleId}`, CONTENT_COUNTS_TTL, () => sb.from('subjects').select('id,name,module_id,display_order').eq('module_id', moduleId).order('display_order'), 'Subjects error'),
     db(sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId).is('paper_id', null), 'Question count error'),
     db(sb.from('practice_tests').select('id').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true), 'Tests error')
   ]);
@@ -792,9 +872,9 @@ export async function openPastPapersRoot() {
   // always resolve those relationships for past_papers, and this sidesteps
   // it entirely with simple, always-working queries run in parallel.
   const [{ data: allPapers }, { data: allModules }, { data: allTags }, { data: allYears }] = await Promise.all([
-    db(sb.from('past_papers').select('*').eq('is_active', true).order('display_order'), 'Past papers error'),
-    db(sb.from('modules').select('id,name'), 'Modules error'),
-    db(sb.from('past_paper_modules').select('paper_id,module_id'), 'Paper-module tags error'),
+    _cachedQuery('active_past_papers', CONTENT_COUNTS_TTL, () => sb.from('past_papers').select('id,title,year_id,college_name,paper_year,display_order').eq('is_active', true).order('display_order'), 'Past papers error'),
+    _cachedQuery('module_names', CONTENT_COUNTS_TTL, () => sb.from('modules').select('id,name'), 'Modules error'),
+    _cachedQuery('past_paper_module_tags', CONTENT_COUNTS_TTL, () => sb.from('past_paper_modules').select('paper_id,module_id'), 'Paper-module tags error'),
     db(sb.from('years').select('id,name,display_order').order('display_order'), 'Years error')
   ]);
   const moduleNameById = {};
@@ -1001,7 +1081,7 @@ window.openPastPaperCollege = openPastPaperCollege;
 async function openModuleTestGroup(moduleId, moduleName) {
   window._moduleSubView = 'moduleTests';
   showLoading(true, 'Loading practice tests...');
-  const { data: tests } = await db(sb.from('practice_tests').select('*').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true).order('display_order'), 'Tests error');
+  const { data: tests } = await _cachedQuery(`module_tests_${moduleId}`, CONTENT_COUNTS_TTL, () => sb.from('practice_tests').select('id,title,display_order').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true).order('display_order'), 'Tests error');
   const list = tests || [];
   const counts = await getQuestionCountsBy('practice_test_id', list.map(t => t.id));
   const stats = await getUserStats();
@@ -1056,7 +1136,7 @@ window.openModuleTestGroup = openModuleTestGroup;
 async function openSubjectTestGroup(moduleId, moduleName, subjectId, subjectName) {
   window._moduleSubView = 'subjectTests';
   showLoading(true, 'Loading practice tests...');
-  const { data: tests } = await db(sb.from('practice_tests').select('*').eq('module_id', moduleId).eq('subject_id', subjectId).eq('is_active', true).order('display_order'), 'Tests error');
+  const { data: tests } = await _cachedQuery(`subject_tests_${moduleId}_${subjectId}`, CONTENT_COUNTS_TTL, () => sb.from('practice_tests').select('id,title,display_order').eq('module_id', moduleId).eq('subject_id', subjectId).eq('is_active', true).order('display_order'), 'Tests error');
   const list = tests || [];
   const counts = await getQuestionCountsBy('practice_test_id', list.map(t => t.id));
   const stats = await getUserStats();
@@ -1448,13 +1528,15 @@ export async function loadBookmarkedIndexSet(mapped) {
 
 // ==================== STATS ====================
 export async function getUserStats(forceRefresh = false) {
-  if (!forceRefresh && window._lastStats && window._lastStatsFetchedAt && (Date.now() - window._lastStatsFetchedAt < 30000)) {
+  const statsUser = window.currentUser?.email || null;
+  if (!forceRefresh && window._lastStats && window._lastStatsUser === statsUser) {
     return window._lastStats;
   }
   const { data } = await db(sb.from('user_stats').select('*').eq('email', window.currentUser.email).maybeSingle(), 'Stats fetch failed');
   const result = data || { total_tests: 0, total_questions: 0, total_correct: 0, best_score: 0, history: [], streak: 0, last_practice_date: null, subject_stats: {}, paper_stats: {}, test_stats: {} };
   window._lastStats = result;
   window._lastStatsFetchedAt = Date.now();
+  window._lastStatsUser = statsUser;
   return result;
 }
 
@@ -1463,6 +1545,7 @@ export async function getUserStats(forceRefresh = false) {
 export async function saveUserStats(stats) {
   window._lastStats = stats;
   window._lastStatsFetchedAt = Date.now();
+  window._lastStatsUser = window.currentUser?.email || null;
   // Columns that needed a one-time migration in Supabase (see the SQL notes at the end of this file) are saved
   // separately from the core stats. Bundled into one upsert, a single missing column made Supabase reject the ENTIRE
   // save — total_tests / total_correct / history / streak included — for every submission until the migration was run.

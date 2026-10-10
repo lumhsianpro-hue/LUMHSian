@@ -283,15 +283,15 @@ export function showLoading(v, msg = 'Loading...') {
 // Fails silently (private browsing / storage full / corrupted entry) and
 // just falls back to a normal network fetch, so caching can never be the
 // reason a screen fails to load.
-const CACHE_PREFIX = 'lum_cache_';
+const CACHE_PREFIX = 'lum_cache_2026-10-10_';
 
 
-export function cacheGet(key, ttlMs) {
+export function cacheGet(key, ttlMs, allowStale = false) {
   try {
     const raw = localStorage.getItem(CACHE_PREFIX + key);
     if (!raw) return null;
     const { v, t } = JSON.parse(raw);
-    if (typeof t !== 'number' || Date.now() - t > ttlMs) return null;
+    if (typeof t !== 'number' || (!allowStale && Date.now() - t > ttlMs)) return null;
     return v;
   } catch (e) { return null; }
 }
