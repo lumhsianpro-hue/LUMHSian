@@ -1795,10 +1795,10 @@ async function openNotificationBell(isRerender, filter) {
   // A per-type accent (left border + icon chip color) instead of every card
   // looking identical regardless of what kind of notification it is.
   const typeMeta = {
-    announce: { color: 'var(--gold-500)', bg: 'var(--gold-50)' },
-    report_reply: { color: '#0d7a4f', bg: '#e8f8f0' },
-    inbox: { color: '#0d7a4f', bg: '#e8f8f0' },
-    notif: { color: '#6d5bd0', bg: '#efecfc' }
+    announce: { color: 'var(--gold-700)', bg: 'var(--gold-50)' },
+    report_reply: { color: 'var(--green)', bg: 'var(--green-light)' },
+    inbox: { color: 'var(--green)', bg: 'var(--green-light)' },
+    notif: { color: 'var(--gold-700)', bg: 'var(--gold-50)' }
   };
 
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
@@ -1811,8 +1811,8 @@ async function openNotificationBell(isRerender, filter) {
     const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'inbox' ? '✉️' : (n._source === 'report_reply' ? '📬' : '🔔'));
     const isReportReply = n._source === 'report_reply' || n._source === 'inbox';
     return `
-      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${isUnread ? meta.bg : 'var(--surface)'};border:1px solid ${isUnread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openInbox()"` : ''}>
-        <div style="width:34px;height:34px;border-radius:50%;background:${meta.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;border:1px solid ${meta.color}33">${icon}</div>
+      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${isUnread ? meta.bg : 'var(--surface)'};color:var(--ink);border:1px solid ${isUnread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openInbox()"` : ''}>
+        <div style="width:34px;height:34px;border-radius:50%;background:${meta.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;border:1px solid var(--border)">${icon}</div>
         <div style="min-width:0;flex:1">
           <div class="flex-between" style="align-items:flex-start;gap:6px">
             <div class="fw-700 text-sm" style="min-width:0">${esc(n.title)}</div>
@@ -1830,7 +1830,7 @@ async function openNotificationBell(isRerender, filter) {
   overlay.id = 'notifBellOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);width:100%;max-width:420px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:var(--radius-xl);width:100%;max-width:420px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden">
       <div style="padding:16px 18px 12px;border-bottom:1px solid var(--border)">
         <div class="flex-between mb-2">
           <span class="fw-700" style="font-size:16px;font-family:var(--font-display)">🔔 Notifications</span>

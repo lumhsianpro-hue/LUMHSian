@@ -126,7 +126,7 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 
 /* ===== ANNOUNCE BANNER ===== */
 
-.announce-bar{background:linear-gradient(90deg,#fffbeb,#fef3c7);border:1px solid #fde68a;border-radius:var(--radius-lg);padding:10px 16px;font-size:13px;font-weight:500;color:#92400e;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.announce-bar{background:var(--gold-50);border:1px solid var(--gold-200);border-radius:var(--radius-lg);padding:10px 16px;font-size:13px;font-weight:500;color:var(--gold-800);margin-bottom:12px;display:flex;align-items:center;gap:8px}
 
 /* ===== LEADERBOARD ===== */
 
@@ -230,11 +230,11 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 
 /* Announcement card styles */
 
-.announce-card{border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;border:1px solid transparent}
+.announce-card{border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;border:1px solid transparent;color:var(--ink)}
 .announce-card.info{background:linear-gradient(135deg,var(--gold-50),var(--gold-100));border-color:var(--gold-200)}
-.announce-card.success{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-color:#bbf7d0}
-.announce-card.warning{background:linear-gradient(135deg,#fffbeb,#fef3c7);border-color:#fde68a}
-.announce-card.urgent{background:linear-gradient(135deg,#fff1f2,#ffe4e6);border-color:#fecdd3}
+.announce-card.success{background:var(--green-light);border-color:var(--green)}
+.announce-card.warning{background:var(--amber-light);border-color:var(--amber)}
+.announce-card.urgent{background:var(--red-light);border-color:var(--red)}
 
 /* Toggle switch - proper CSS */
 

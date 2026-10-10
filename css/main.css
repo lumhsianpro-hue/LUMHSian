@@ -38,6 +38,17 @@
   --transition:0.2s cubic-bezier(0.4,0,0.2,1);
 }
 
+:root[data-theme="dark"]{
+   color-scheme:dark;
+   --surface:#000000;--surface-2:#000000;--surface-3:#000000;
+   --ink:#ffffff;--ink-2:#ffffff;--ink-3:#ffffff;--ink-4:#a6a6a6;
+   --border:#2b2b2b;--border-2:#3d3d3d;--overlay-bg:rgba(0,0,0,.95);
+   --gold-50:#2b2410;--gold-100:#332a14;--gold-200:#5c4a1a;
+   --gold-700:#e0b030;--gold-800:#f0c869;--gold-900:#f7dfa0;
+   --red:#f0645f;--red-light:#3a1616;--red-border:#5c2424;
+   --amber:#e0a030;--amber-light:#3a2e10;--green:#4ade9b;--green-light:#123024;
+}
+
 /* Dark mode is intentionally NOT wired to the phone's system setting — see
    applyDarkMode() further down. It only turns on when a student flips the
    Dark Mode switch in Profile, so it can't silently show up (or fail to

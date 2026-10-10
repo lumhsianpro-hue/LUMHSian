@@ -1495,53 +1495,11 @@ window.toggleNotifications = toggleNotifications;
 // sync again. This never checks the phone's system dark/light setting —
 // only the Dark Mode switch in Profile controls this, so it can't silently
 // turn on (or fail to turn on) based on a device setting nobody's looking at.
-const DARK_MODE_VARS = ['--surface','--surface-2','--surface-3','--ink','--ink-2','--ink-3','--ink-4','--border','--border-2','--overlay-bg','--gold-50','--gold-100','--gold-200','--gold-700','--gold-800','--gold-900','--red','--red-light','--red-border','--amber','--amber-light','--green','--green-light'];
-
-
 export function applyDarkMode(enabled) {
-  const root = document.documentElement.style;
-  if (enabled) {
-    root.setProperty('--surface', '#000000');
-    root.setProperty('--surface-2', '#000000');
-    root.setProperty('--surface-3', '#000000');
-    root.setProperty('--ink', '#ffffff');
-    root.setProperty('--ink-2', '#ffffff');
-    root.setProperty('--ink-3', '#ffffff');
-    root.setProperty('--ink-4', '#a6a6a6');
-    root.setProperty('--border', '#2b2b2b');
-    root.setProperty('--border-2', '#3d3d3d');
-    root.setProperty('--overlay-bg', 'rgba(0,0,0,.95)');
-    // Light-tint gold backgrounds (50/100/200 — subtle tinted surfaces like
-    // the explanation box or badges) become dark muted equivalents; the
-    // darker golds used as readable TEXT on those surfaces (700/800/900)
-    // become light warm gold instead — same background+text pairing,
-    // contrast flipped correctly in both directions. Mid-range golds
-    // (300-600, icons/borders/solid buttons) are untouched — they already
-    // read fine on black. The ~10 hardcoded "hero" gradients (splash,
-    // card-teal, primary buttons) also stay untouched on purpose, so they
-    // stay a consistent rich gold regardless of mode.
-    root.setProperty('--gold-50', '#2b2410');
-    root.setProperty('--gold-100', '#332a14');
-    root.setProperty('--gold-200', '#5c4a1a');
-    root.setProperty('--gold-700', '#e0b030');
-    root.setProperty('--gold-800', '#f0c869');
-    root.setProperty('--gold-900', '#f7dfa0');
-    root.setProperty('--red', '#f0645f');
-    root.setProperty('--red-light', '#3a1616');
-    root.setProperty('--red-border', '#5c2424');
-    root.setProperty('--amber', '#e0a030');
-    root.setProperty('--amber-light', '#3a2e10');
-    root.setProperty('--green', '#4ade9b');
-    root.setProperty('--green-light', '#123024');
-    document.documentElement.style.colorScheme = 'dark';
-    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', '#000000'));
-    localStorage.setItem('dark_mode', 'true');
-  } else {
-    DARK_MODE_VARS.forEach(k => root.removeProperty(k));
-    document.documentElement.style.colorScheme = 'light';
-    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', '#c9980a'));
-    localStorage.setItem('dark_mode', 'false');
-  }
+  document.documentElement.dataset.theme = enabled ? 'dark' : 'light';
+  document.documentElement.style.colorScheme = enabled ? 'dark' : 'light';
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', enabled ? '#000000' : '#c9980a'));
+  localStorage.setItem('dark_mode', enabled ? 'true' : 'false');
 }
 
 
