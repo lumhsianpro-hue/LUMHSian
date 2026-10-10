@@ -19,8 +19,8 @@ window.adminGoBack = adminGoBack;
 export async function renderAdminPanel(initialTab = 'overview') {
   const wrap = document.getElementById('adminPageWrap');
   wrap.innerHTML = `
-    <div class="admin-header" style="margin:-16px -14px 20px;padding:20px 16px 16px">
-      <button class="back-btn" style="margin:-6px 0 12px" onclick="adminGoBack()">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
+    <div class="admin-header" style="margin:-16px -14px 20px;padding:calc(20px + env(safe-area-inset-top,0px)) 16px 16px">
       <div class="flex-between" style="margin-bottom:18px">
         <div>
           <div style="font-family:var(--font-display);font-size:22px;font-weight:800;letter-spacing:-0.5px">LUMHSian <span style="color:var(--gold-300)">Admin</span></div>
@@ -4713,10 +4713,10 @@ function adminViewAsStudent() {
   // Add return button
   const retBtn = document.createElement('div');
   retBtn.id = 'adminReturnBar';
-  retBtn.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#7a5c00;color:white;padding:10px 16px;z-index:9000;display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600';
-  retBtn.innerHTML = `<span>👁 Admin Preview Mode <span style="opacity:.75;font-weight:500">· every year unlocked</span></span><button onclick="exitAdminPreview()" style="background:rgba(255,255,255,.2);border:none;color:white;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer">← Back to Admin</button>`;
+  retBtn.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#7a5c00;color:white;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;z-index:9000;display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600';
+  retBtn.innerHTML = `<span>👁 Admin Preview Mode <span style="opacity:.75;font-weight:500">· every year unlocked</span></span><button onclick="exitAdminPreview();goBack('admin')" style="background:rgba(255,255,255,.2);border:none;color:white;min-width:44px;min-height:44px;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer">← Back to Admin</button>`;
   document.body.prepend(retBtn);
-  document.body.style.paddingTop = '44px';
+  document.body.style.paddingTop = 'calc(44px + env(safe-area-inset-top,0px))';
   // The admin account's own boot path (handleAuthedSession) returns straight to
   // the admin panel and never restores selectedYear from localStorage the way a
   // real student's does — so on a fresh reload this used to be null again even
@@ -4744,7 +4744,6 @@ function exitAdminPreview() {
   document.body.style.paddingTop = '';
   document.getElementById('bottomNav').classList.remove('show');
   renderAdminPanel();
-  showScreen('admin');
   showToast('Welcome back to Admin Panel');
 }
 window.exitAdminPreview = exitAdminPreview;

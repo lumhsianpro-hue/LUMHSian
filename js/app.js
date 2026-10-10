@@ -1,7 +1,7 @@
 import { adminContentTab, adminShowTab, applyWallpaper, renderAdminPanel, timeAgo } from './admin.js';
 import { handleAuthedSession } from './auth.js';
 import { computeLeaderboardCohort, renderRanking } from './leaderboard.js';
-import { goBack, showScreen } from './navigation.js';
+import { goBack, restoreNavigationStack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
 import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
 import { _hasStoredSupabaseSession, _showReconnecting, db, getSessionWithRetry, sb } from './supabase.js';
@@ -103,11 +103,9 @@ export async function loadYearScreen() {
   try {
   const { data: years } = await db(sb.from('years').select('*').order('display_order'), 'Failed to load years');
   const wrap = document.getElementById('yearPageWrap');
-  if (!years?.length) { wrap.innerHTML = `<div class="card"><p>No years configured yet. Contact admin.</p></div>`; showScreen('year'); return; }
+    if (!years?.length) { wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card"><p>No years configured yet. Contact admin.</p></div>`; showScreen('year'); return; }
   let html = `<div class="card-teal" style="margin-bottom:20px"><h2>Select Your Year</h2><p>MBBS Program</p></div>`;
-  if (window.selectedYear) {
-    html = `<button class="btn btn-secondary btn-sm mb-3" onclick="renderHome();showScreen('home')">← Back</button>` + html;
-  }
+    html = `<button class="back-btn mb-3" onclick="goBack()">← Back</button>` + html;
   for (const y of years) {
     const active = y.is_active;
     html += `<div class="module-card ${!active ? 'locked' : ''}" onclick="${active ? `selectYear(${y.id},'${y.name.replace(/'/g,"\\'")}')` : `showToast('${String(y.coming_soon_text || 'Coming soon').replace(/'/g, "\\'").replace(/"/g, '&quot;')}') `}">
@@ -663,6 +661,7 @@ export async function openModule(moduleId, moduleName, iconUrl, color, fromYearI
   // values above, so later backToModule()/resume calls stay fresh from here too.
   window._lastOpenedModule = { moduleId, moduleName, iconUrl: iconUrl || '', color: color || '', fromYearId: fromYearId || null, fromYearName: fromYearName || null };
   window._moduleScreenMode = 'module';
+  window._moduleSubView = null;
   const subjects = subjectsRes.data || [];
   const totalQ = qCountRes.count || 0;
   const moduleTestCount = moduleTestsRes.data?.length || 0;
@@ -753,6 +752,7 @@ window.openModule = openModule;
 // re-renders the module's main page from the last-opened state instead of
 // touching navStack, so the Back button always lands somewhere sensible.
 function backToModule() {
+  window._moduleSubView = null;
   const m = window._lastOpenedModule;
   if (m) openModule(m.moduleId, m.moduleName, m.iconUrl, m.color, m.fromYearId, m.fromYearName);
   else goBack();
@@ -798,6 +798,7 @@ export async function openPastPapersRoot() {
   const myYear = (allYears || []).find(y => y.name === window.currentUser?.year_of_study) || null;
   window._lastOpenedPastPapers = { level: 'root' };
   window._moduleScreenMode = 'pastpapers';
+  window._moduleSubView = null;
 
   if (!myYear) {
     showLoading(false);
@@ -976,7 +977,7 @@ async function openPastPaperCollege(collegeKey) {
 
   const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="renderPastPapersCollegeList()">← Back to Past Papers</button>
+    <button class="back-btn" onclick="goBack()">← Back to Past Papers</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_BUILDING} ${esc(title)}</h2><p>${papers.length} paper${papers.length === 1 ? '' : 's'}</p></div>
     ${html || '<div class="card"><p>No papers with questions in this group yet.</p></div>'}
     <div style="height:16px"></div>`;
@@ -989,6 +990,7 @@ window.openPastPaperCollege = openPastPaperCollege;
 // lists the whole-module tests admin created (e.g. "Head & Neck Practice Test 1/2/3"),
 // each with the same Review/Attempt actions used everywhere else in the app.
 async function openModuleTestGroup(moduleId, moduleName) {
+  window._moduleSubView = 'moduleTests';
   showLoading(true, 'Loading practice tests...');
   const { data: tests } = await db(sb.from('practice_tests').select('*').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true).order('display_order'), 'Tests error');
   const list = tests || [];
@@ -1030,7 +1032,7 @@ async function openModuleTestGroup(moduleId, moduleName) {
 
   const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="backToModule()">← Back to ${moduleName}</button>
+    <button class="back-btn" onclick="goBack()">← Back to ${moduleName}</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_TARGET} ${moduleName} Practice Tests</h2><p>${list.length} test${list.length === 1 ? '' : 's'}</p></div>
     ${html || '<div class="card"><p>No practice tests added yet for this module. Check back soon.</p></div>'}
     <div style="height:16px"></div>`;
@@ -1043,6 +1045,7 @@ window.openModuleTestGroup = openModuleTestGroup;
 // subject's admin-created tests (e.g. "Gross Anatomy Practice Test 1/2/3"), each
 // with the same Review/Attempt actions used everywhere else in the app.
 async function openSubjectTestGroup(moduleId, moduleName, subjectId, subjectName) {
+  window._moduleSubView = 'subjectTests';
   showLoading(true, 'Loading practice tests...');
   const { data: tests } = await db(sb.from('practice_tests').select('*').eq('module_id', moduleId).eq('subject_id', subjectId).eq('is_active', true).order('display_order'), 'Tests error');
   const list = tests || [];
@@ -1084,7 +1087,7 @@ async function openSubjectTestGroup(moduleId, moduleName, subjectId, subjectName
 
   const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="backToModule()">← Back to ${moduleName}</button>
+    <button class="back-btn" onclick="goBack()">← Back to ${moduleName}</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>📖 ${subjectName} Practice Tests</h2><p>${moduleName}</p></div>
     ${html || '<div class="card"><p>No practice tests added yet for this subject. Check back soon.</p></div>'}
     <div style="height:16px"></div>`;
@@ -1575,7 +1578,7 @@ export function isAIEnabled() {
 // ==================== PWA / SERVICE WORKER ====================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   });
 }
 
@@ -1984,6 +1987,7 @@ export function saveAppState() {
     }
     localStorage.setItem(APP_STATE_KEY, JSON.stringify({
       screenId,
+      navStack: Array.isArray(window.navStack) ? window.navStack.slice() : [],
       adminTab: screenId === 'admin' ? (window._currentAdminTab || 'overview') : null,
       contentTab: screenId === 'admin' ? (window._currentContentTab || null) : null,
       qSubTab: screenId === 'admin' ? (window._currentQSubTab || null) : null,
@@ -2037,12 +2041,14 @@ export async function restoreAppState() {
         // a saved college — openPastPapersRoot() re-resolves "my year" fresh
         // each time, so this can never show a stale/wrong year's papers.
         await openPastPapersRoot();
+        restoreNavigationStack(state.navStack, state.screenId);
         setTimeout(() => window.scrollTo(0, state.scrollY || 0), 300);
         return true;
       }
       if (!state.moduleState) return false; // can't restore without saved module params
       const m = state.moduleState;
       await openModule(m.moduleId, m.moduleName, m.iconUrl || '', m.color || '');
+      restoreNavigationStack(state.navStack, state.screenId);
       // openModule already calls showScreen('module') internally, so skip generic render below
       setTimeout(() => window.scrollTo(0, state.scrollY || 0), 300);
       return true;
@@ -2053,6 +2059,7 @@ export async function restoreAppState() {
       if (!state.savedActiveTest) return false;
       window.activeTest = state.savedActiveTest;
       renderResults(); // re-renders resultsPageWrap and calls showScreen('results')
+      restoreNavigationStack(state.navStack, state.screenId);
       setTimeout(() => window.scrollTo(0, state.scrollY || 0), 300);
       return true;
     }
@@ -2065,6 +2072,7 @@ export async function restoreAppState() {
       window.reviewState = { ...state.savedReviewState, bookmarked: new Set(state.savedReviewState.bookmarked || []) };
       renderReview();
       showScreen('review', false);
+      restoreNavigationStack(state.navStack, state.screenId);
       setTimeout(() => window.scrollTo(0, state.scrollY || 0), 300);
       return true;
     }
@@ -2076,6 +2084,7 @@ export async function restoreAppState() {
     };
     if (renders[state.screenId]) await renders[state.screenId]();
     showScreen(state.screenId, false);
+    restoreNavigationStack(state.navStack, state.screenId);
     // Restore inner content sub-tab (and its own Add/Browse/Bulk sub-tab) if saved
     if (state.screenId === 'admin' && state.contentTab) {
       setTimeout(() => {
@@ -2129,7 +2138,7 @@ const metaTheme = document.createElement('meta');
 metaTheme.name = 'theme-color';
 
 
-metaTheme.content = localStorage.getItem('dark_mode') === 'true' ? '#000000' : '#ffffff';
+metaTheme.content = localStorage.getItem('dark_mode') === 'true' ? '#000000' : '#c9980a';
 
 
 document.head.appendChild(metaTheme);

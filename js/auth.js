@@ -329,6 +329,7 @@ async function submitCreateAccount() {
   showToast(`Welcome, Dr. ${name}! 🩺`);
   startHeartbeat();
   requestNotificationPermission();
+  _resetNavigationRoot();
   renderHome(); showScreen('home');
 }
 window.submitCreateAccount = submitCreateAccount;

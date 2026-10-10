@@ -39,7 +39,7 @@ function _createScreen(id) {
   return el;
 }
 
-export function showScreen(id, pushToStack = true) {
+export function showScreen(id, pushToStack = true, preserveHistory = false) {
   // Only touch screens that need to change — avoids DOM thrashing
   const current = document.querySelector('.screen.active');
   const next = document.getElementById('screen-' + id) || _createScreen(id);
@@ -48,10 +48,16 @@ export function showScreen(id, pushToStack = true) {
   next.classList.add('active');
   window.scrollTo(0, 0);
   if (pushToStack) {
-    if (window.navStack[window.navStack.length - 1] !== id) window.navStack.push(id);
-    if (window.navStack.length > 30) window.navStack.shift();
+    if (window.navStack[window.navStack.length - 1] !== id) {
+      window.navStack.push(id);
+      try { window.history.pushState({ screen: id }, ''); } catch (e) { /* browser history is optional */ }
+    }
+  } else if (!preserveHistory) {
+    try {
+      if (window.currentUser && !['splash', 'reconnecting', 'createaccount'].includes(id)) window.history.replaceState({ screen: id }, '');
+      else window.history.replaceState(null, '');
+    } catch (e) { /* browser history is optional */ }
   }
-  _ensureBackTrap();
   _blankScreenGuard(id, next);
   updateBottomNav(id);
   if (typeof saveAppStateDebounced === 'function') saveAppStateDebounced();
@@ -60,6 +66,20 @@ export function showScreen(id, pushToStack = true) {
   document.getElementById('bottomNav').classList.toggle('show', showNavFor.includes(id));
 }
 window.showScreen = showScreen;
+
+
+export function restoreNavigationStack(savedStack, activeScreen) {
+  const known = new Set([...document.querySelectorAll('.screen')].map(el => el.id.replace('screen-', '')));
+  const stack = Array.isArray(savedStack) ? savedStack.filter(id => typeof id === 'string' && known.has(id)) : [];
+  if (!stack.length) stack.push('home');
+  if (stack[stack.length - 1] !== activeScreen) stack.push(activeScreen);
+  window.navStack = stack;
+  try {
+    window.history.replaceState({ screen: window.navStack[0] }, '');
+    window.navStack.slice(1).forEach(id => window.history.pushState({ screen: id }, ''));
+  } catch (e) { /* in-app navigation still works without history support */ }
+}
+window.restoreNavigationStack = restoreNavigationStack;
 
 
 
@@ -81,15 +101,9 @@ function updateBottomNav(id) {
 // after a full app restart.
 export function _returnToScreen(id) {
   const target = id || 'home';
-  // showScreen() is called below with pushToStack:false, which only skips
-  // PUSHING a new entry — it doesn't POP whatever test-flow screen is
-  // already sitting on top (test/results/review all get pushed normally on
-  // the way in). Left uncleaned, that stale entry can resurface later and
-  // make goBack() think the user is returning to a live test — wrongly
-  // showing "Exit Test?" on a screen that has nothing to do with a test.
-  while (window.navStack.length && ['test', 'results', 'review'].includes(window.navStack[window.navStack.length - 1])) {
-    window.navStack.pop();
-  }
+  const stack = window.navStack;
+  const targetIndex = stack.lastIndexOf(target);
+  const historyDepth = targetIndex >= 0 ? stack.length - targetIndex - 1 : 0;
   // Defined inline (not as a top-level const) on purpose: these render
   // functions live in a later <script> block than this one, so building this
   // map at parse time (before that block has run) would throw. Evaluating it
@@ -98,10 +112,10 @@ export function _returnToScreen(id) {
     home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, ranking: renderRanking, search: renderSearch, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests,
     module: () => {
       if (window._moduleScreenMode === 'pastpapers') {
-        // Deliberately always back to the college list (root), never deep into
-        // a specific college — re-resolves "my year" fresh every time, so this
-        // is always correct even if that changed since.
-        openPastPapersRoot();
+        // Return to the same Past Papers level used to launch the test.
+        const last = window._lastOpenedPastPapers;
+        if (last?.level === 'college') window.openPastPaperCollege?.(last.collegeKey);
+        else openPastPapersRoot();
       } else if (window._lastOpenedModule) {
         const m = window._lastOpenedModule;
         openModule(m.moduleId, m.moduleName, m.iconUrl || '', m.color || '', m.fromYearId || null, m.fromYearName || null);
@@ -110,10 +124,13 @@ export function _returnToScreen(id) {
   };
   // Keep the logical stack equal to what is actually on screen. Without this, going "home" from a screen that
   // was opened from somewhere else left stale entries behind, so the next Back press appeared to do nothing.
-  const at = window.navStack.lastIndexOf(target);
-  if (at >= 0) window.navStack.length = at + 1; else window.navStack.push(target);
+  if (targetIndex >= 0) stack.length = targetIndex + 1;
+  else stack.push(target);
   if (renderers[target]) renderers[target]();
-  showScreen(target, false);
+  showScreen(target, false, historyDepth > 0);
+  if (historyDepth > 0) {
+    try { window.history.go(-historyDepth); } catch (e) { /* screen is already restored */ }
+  }
 }
 window._returnToScreen = _returnToScreen;
 
@@ -125,7 +142,7 @@ export function _resetNavigationRoot() {
   // History is no longer tied screen-by-screen to the logical stack (see "BACK BUTTON" at the bottom of this
   // file), so a login/logout only needs the logical stack emptied.
   window.navStack = [];
-  _ensureBackTrap();
+  try { window.history.replaceState(null, ''); } catch (e) { /* browser history is optional */ }
 }
 window._resetNavigationRoot = _resetNavigationRoot;
 
@@ -133,29 +150,62 @@ window._resetNavigationRoot = _resetNavigationRoot;
 
 // Back from the current screen. Each case below used to leave the stack and the screen out of step, which is why
 // the Back button seemed dead on Results / after Review.
-export function goBack() {
+export function goBack(destination) {
   const stack = window.navStack;
   const activeEl = document.querySelector('.screen.active');
   const cur = activeEl ? activeEl.id.replace('screen-', '') : stack[stack.length - 1];
 
+  if (destination && stack.includes(destination)) { _returnToScreen(destination); return; }
+  if (_backWithinScreen(cur)) return;
   // A live test: Back = the same as the Pause / Exit button (never silently abandon it)
-  if (cur === 'test' && window.activeTest && !window.activeTest.submitted) { requestExitTest(); return; }
+  if (cur === 'test' && window.activeTest && !window.activeTest.submitted) { requestExitTest(true); return; }
   // Results: Back = Done (return to wherever the test was started from)
   if (cur === 'results') { leaveFinishedTest(); return; }
   // Review (or Quick View): step back to Results / Search while keeping Results on the stack
   if (cur === 'review') {
     if (window._qvState && typeof window.closeQuickView === 'function') { window.closeQuickView(); return; }
-    if (stack[stack.length - 1] === 'review') stack.pop();
-    showScreen('results', false);
-    return;
   }
   if (stack.length > 1) {
-    stack.pop();
-    _returnToScreen(stack[stack.length - 1]);
+    if (window.history.state?.screen === cur) window.history.back();
+    else _returnToScreen(stack[stack.length - 2]);
+    return;
   }
-  // At the root (Home) there is nothing to go back to — the phone-back handler below decides about exiting.
+  if (cur === 'admin') { renderHome(); showScreen('home'); }
+  // At the root, allow the browser/phone to leave normally; never add a trap entry.
 }
 window.goBack = goBack;
+
+
+function _backWithinScreen(cur) {
+  if (cur === 'module' && window._moduleScreenMode === 'pastpapers' && window._lastOpenedPastPapers?.level === 'college') {
+    window.renderPastPapersCollegeList?.();
+    return true;
+  }
+  if (cur === 'module' && window._moduleSubView) {
+    window._moduleSubView = null;
+    window.backToModule?.();
+    return true;
+  }
+  if ((cur === 'bookmarks' || cur === 'wrongattempts') && window._qp) {
+    const { kind } = window._qp;
+    const path = window._qf?.[kind]?.path || '';
+    window._qp = null;
+    window.qfOpen?.(kind, path);
+    return true;
+  }
+  const folderKind = cur === 'bookmarks' ? 'bm' : cur === 'wrongattempts' ? 'wrong' : null;
+  const folder = folderKind && window._qf?.[folderKind];
+  if (folder?.path) {
+    folder.path = folder.path.split('/').slice(0, -1).join('/');
+    window.qfOpen?.(folderKind, folder.path);
+    return true;
+  }
+  if (cur === 'profile' && window._profileSubPage) {
+    window.renderProfile?.();
+    return true;
+  }
+  return false;
+}
 
 
 
@@ -198,24 +248,8 @@ window.navGo = navGo;
 
 
 // ==================== BACK BUTTON (phone / browser) ====================
-// The browser history always holds exactly two entries for the app: a "root" entry and, in front of it, an "app"
-// entry the user actually sits on. Pressing the phone's Back moves from "app" to "root" and fires popstate; we then
-// do the in-app Back (close a dialog, tap the visible ← button, or pop the screen stack) and push the "app" entry
-// again. Because the history never grows or shrinks with in-app navigation it can no longer drift out of step with
-// navStack — the old one-history-entry-per-screen scheme left several dead Back presses behind after Done/Exit.
+// Each screen route has a matching browser-history entry, so physical and visible Back share one route stack.
 window.__lumNavReady = true;   // lets app.js detect a half-updated deployment (see the check at the end of app.js)
-const TRAP_KEY = 'lumhsianTrap';
-let _exitArmedUntil = 0;
-let _trapTimer = null;
-
-function _ensureBackTrap() {
-  try {
-    const st = window.history.state;
-    if (st && st[TRAP_KEY] === 'app') return;
-    window.history.replaceState({ [TRAP_KEY]: 'root' }, '', window.location.href);
-    window.history.pushState({ [TRAP_KEY]: 'app' }, '', window.location.href);
-  } catch (e) { /* non-fatal: the on-screen ← buttons still work */ }
-}
 
 function _closeTopOverlay() {
   const modals = [...document.querySelectorAll('.modal-backdrop.show')];
@@ -229,35 +263,36 @@ function _closeTopOverlay() {
   return false;
 }
 
-function _handleHardwareBack() {
-  if (_closeTopOverlay()) return 'handled';
+window.addEventListener('popstate', (event) => {
   const activeEl = document.querySelector('.screen.active');
   const cur = activeEl ? activeEl.id.replace('screen-', '') : '';
-  if (cur === 'test' && window.activeTest && !window.activeTest.submitted) { requestExitTest(); return 'handled'; }
-  // Every sub-view (privacy page, a subject's tests, a wrong-questions folder…) shows a ← button; use it.
-  const btn = activeEl && [...activeEl.querySelectorAll('.back-btn')].find(b => b.offsetParent !== null);
-  if (btn) { btn.click(); return 'handled'; }
-  if (window.navStack.length > 1) { goBack(); return 'handled'; }
-  return 'exit';
-}
-
-window.addEventListener('popstate', (event) => {
-  const st = event.state;
-  if (!st || !st[TRAP_KEY]) return;          // an entry from before the app took over — let the browser handle it
-  if (st[TRAP_KEY] === 'app') return;        // (moved forward onto the app entry — nothing to do)
-  // We are on the "root" entry: the user pressed Back from the app entry.
-  if (_handleHardwareBack() === 'handled') {
-    // showScreen() may already have put the app entry back while handling it; only add it if it is still missing,
-    // otherwise every in-app Back would leave an extra history entry behind (= extra dead Back presses later).
-    _ensureBackTrap();
+  if (_closeTopOverlay()) {
+    if (cur && window.currentUser) window.history.pushState({ screen: cur }, '');
     return;
   }
-  // Nothing left to go back to inside the app (Home, or the login screen).
-  if (!window.currentUser) { window.history.back(); return; }
-  const now = Date.now();
-  if (now < _exitArmedUntil) { _exitArmedUntil = 0; window.history.back(); return; }   // second press → really leave
-  _exitArmedUntil = now + 2300;
-  showToast('Press back again to exit');
-  clearTimeout(_trapTimer);
-  _trapTimer = setTimeout(_ensureBackTrap, 2400);   // user stayed → put the app entry back
+  if (!window.currentUser) return;
+  if (cur === 'test' && window.activeTest && !window.activeTest.submitted) {
+    window.history.pushState({ screen: cur }, '');
+    requestExitTest(true);
+    return;
+  }
+  if (cur === 'review' && window._qvState) window._qvState = null;
+  if (cur === 'results') window.activeTest = null;
+  if (_backWithinScreen(cur)) {
+    window.history.pushState({ screen: cur }, '');
+    return;
+  }
+  const target = event.state?.screen;
+  if (!target || target === cur) return;
+  if (window._isAdminPreview && target === 'admin') {
+    window.exitAdminPreview?.();
+    const adminIndex = window.navStack.lastIndexOf('admin');
+    if (adminIndex >= 0) window.navStack.length = adminIndex + 1;
+    showScreen('admin', false);
+    return;
+  }
+  const targetIndex = window.navStack.lastIndexOf(target);
+  if (targetIndex < 0) return;
+  window.navStack.length = targetIndex + 1;
+  showScreen(target, false);
 });

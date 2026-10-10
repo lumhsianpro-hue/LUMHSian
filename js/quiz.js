@@ -691,7 +691,7 @@ function renderTestScreen() {
 
   document.getElementById('testPageWrap').innerHTML = `
     <!-- Header -->
-    <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:12px 14px;margin:-12px -14px 16px;position:sticky;top:0;z-index:100;display:flex;justify-content:space-between;align-items:center">
+    <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:calc(12px + env(safe-area-inset-top,0px)) 14px 12px;margin:-12px -14px 16px;position:sticky;top:0;z-index:400;display:flex;justify-content:space-between;align-items:center">
       <div>
         <div style="font-size:12px;font-weight:700;color:var(--ink-4);text-transform:uppercase;letter-spacing:.5px">${t.testTitle || t.paperTitle || t.moduleName}</div>
         <div style="font-size:14px;font-weight:700;margin-top:2px">Q${t.currentIndex + 1} <span style="color:var(--ink-4);font-weight:500">/ ${total}</span> · <span style="color:var(--gold-600)">${answered} ${isInstantFeedback ? 'viewed' : 'answered'}</span></div>
@@ -784,7 +784,7 @@ window.jumpToQ = jumpToQ;
 
 
 
-export function requestExitTest() {
+export function requestExitTest(forceConfirm = false) {
   const t = window.activeTest;
   // Nothing active to exit from (or it's already submitted) — this should
   // only ever be reachable from an actual test screen, but if it's somehow
@@ -794,7 +794,7 @@ export function requestExitTest() {
   if (!t || t.submitted) { leaveFinishedTest(); return; }
   const attempted = t?.answers.filter(a => a !== null).length || 0;
 
-  if (t?.mode === 'browse') {
+  if (t?.mode === 'browse' && !forceConfirm) {
     // Review — nothing to lose (it's saved either way) and no time pressure,
     // so skip the confirmation entirely and just go, exactly where they'll
     // pick back up from when they return.
@@ -808,6 +808,15 @@ export function requestExitTest() {
   const msgEl = document.querySelector('#modalExitTest p');
   const btnsEl = document.getElementById('modalExitTestButtons');
   const isAttempt = t?.mode === 'attempt';
+
+  if (t?.mode === 'browse' && forceConfirm) {
+    msgEl.textContent = 'Your review progress is saved. Leave this test and return later?';
+    btnsEl.innerHTML = `
+      <button class="btn btn-secondary" onclick="closeModal('modalExitTest')">Keep Going</button>
+      <button class="btn btn-danger" onclick="forceExitTest()">Leave Test</button>`;
+    openModal('modalExitTest');
+    return;
+  }
 
   if (attempted > 0 && isAttempt) {
     // A real Attempt, once at least one question is answered, no longer offers
@@ -1167,7 +1176,7 @@ export function renderResults() {
   const subLabel = at.isCustom ? at.moduleName + ' · Custom Test' : (at.testTitle || at.paperTitle || (at.subjectId ? at.moduleName + ' · Subject Practice' : at.moduleName + ' · Mixed Practice'));
 
   document.getElementById('resultsPageWrap').innerHTML = `
-    <button class="back-btn" onclick="leaveFinishedTest()">← Done</button>
+    <button class="back-btn" onclick="goBack()">← Done</button>
     <div class="card-teal text-center" style="padding:32px 24px">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.7;margin-bottom:6px">${headingText}</div>
       <div style="font-size:52px;margin-bottom:8px">${tier.emoji}</div>
@@ -1220,7 +1229,7 @@ export function renderResults() {
 
     <button class="btn btn-primary mt-3" onclick="startReview()">🔍 Review Your Test</button>
     ${wrong > 0 ? `<button class="btn btn-secondary mt-2" onclick="startReview(true)">❌ Review Wrong Only (${wrong})</button>` : ''}
-    <button class="btn btn-secondary mt-2" onclick="leaveFinishedTest()">← Done</button>
+    <button class="btn btn-secondary mt-2" onclick="goBack()">← Done</button>
     ${isAIEnabled() ? `<button class="btn btn-ghost mt-1" onclick="openAITutor('Summarize my performance: ${correct} correct out of ${total} (${percent}% score, ${accuracy}% accuracy) in ${(at.testTitle || at.paperTitle || at.moduleName).replace(/'/g,"\\'")}','Provide tips to improve my weak areas')">🤖 AI Performance Tip</button>` : ''}
   `;
   showScreen('results');
@@ -1590,7 +1599,7 @@ export function renderQuickView() {
   }).join('');
 
   document.getElementById('reviewPageWrap').innerHTML = `
-    <button class="back-btn" onclick="closeQuickView()">← Back to Search</button>
+    <button class="back-btn" onclick="goBack()">← Back to Search</button>
     <div class="flex-between" style="margin-bottom:12px">
       <span class="badge badge-teal">${esc(q.difficulty) || 'medium'}</span>
       <span class="badge badge-amber">👁 Quick View</span>
@@ -1620,7 +1629,7 @@ export function renderQuickView() {
     </div>
     ` : `<button class="btn btn-ghost btn-sm" onclick="toggleQuickViewExplanation()">📖 Show Explanation</button>`}
 
-    <button class="btn btn-secondary mt-3" onclick="closeQuickView()">← Back to Search</button>
+    <button class="btn btn-secondary mt-3" onclick="goBack()">← Back to Search</button>
   `;
 }
 window.renderQuickView = renderQuickView;
@@ -1660,8 +1669,11 @@ window.toggleQuickViewBookmark = toggleQuickViewBookmark;
 // with whatever term/results/filters the student had. No re-search needed.
 function closeQuickView() {
   window._qvState = null;
-  if (window.navStack[window.navStack.length - 1] === 'review') window.navStack.pop();
-  showScreen('search', false);
+  if (window.history.state?.screen === 'review') window.history.back();
+  else {
+    if (window.navStack[window.navStack.length - 1] === 'review') window.navStack.pop();
+    showScreen('search', false);
+  }
 }
 window.closeQuickView = closeQuickView;
 

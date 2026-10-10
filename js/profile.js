@@ -509,8 +509,7 @@ export async function renderStats() {
 // wherever makes sense — back to the login screen if nobody's signed in yet,
 // or Home in the rare case this was somehow reached while already signed in.
 function _closeLegalPage() {
-  if (window.currentUser) { renderHome(); showScreen('home'); }
-  else showScreen('splash', false);
+  window.goBack?.();
 }
 // Called from an inline onclick, so it must live on window — without this the Back button on the Privacy Policy /
 // Terms / About pages opened from the login screen threw "not defined" and did nothing.
@@ -520,9 +519,15 @@ window._closeLegalPage = _closeLegalPage;
 
 async function showAboutPage(standalone = false) {
   const wrap = document.getElementById(standalone ? 'legalPageWrap' : 'profilePageWrap');
-  const backAction = standalone ? '_closeLegalPage()' : 'renderProfile()';
-  if (standalone) showScreen('legalpage', false);
-  wrap.innerHTML = `<button class="back-btn" onclick="${backAction}">← Back</button><div class="spinner" style="margin:30px auto"></div>`;
+  if (standalone) {
+    if (!window.navStack.length) {
+      window.navStack.push('splash');
+      try { window.history.replaceState({ screen: 'splash' }, ''); } catch (e) {}
+    }
+    showScreen('legalpage');
+  }
+  else window._profileSubPage = 'about';
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="spinner" style="margin:30px auto"></div>`;
   // Silent fetch — if the about_cards table hasn't been created yet, just show none, no error toast.
   let aboutCards = [];
   try {
@@ -532,7 +537,7 @@ async function showAboutPage(standalone = false) {
 
   const appName = getSetting('app_name', 'LUMHSian');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="${backAction}">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card" style="margin-bottom:16px;padding:24px 20px;text-align:center">
       <img src="icon.png" style="width:56px;height:56px;border-radius:16px;margin-bottom:12px">
       <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-bottom:4px">${esc(appName)}</div>
@@ -590,13 +595,19 @@ window.showAboutPage = showAboutPage;
 
 function showPrivacyPolicyPage(standalone = false) {
   const wrap = document.getElementById(standalone ? 'legalPageWrap' : 'profilePageWrap');
-  const backAction = standalone ? '_closeLegalPage()' : 'renderProfile()';
-  if (standalone) showScreen('legalpage', false);
+  if (standalone) {
+    if (!window.navStack.length) {
+      window.navStack.push('splash');
+      try { window.history.replaceState({ screen: 'splash' }, ''); } catch (e) {}
+    }
+    showScreen('legalpage');
+  }
+  else window._profileSubPage = 'privacy';
   const appName = getSetting('app_name', 'LUMHSian');
   const contactEmail = getSetting('contact_email', 'lumhsianpro@gmail.com');
   const externalUrl = getSetting('privacy_policy_url', '');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="${backAction}">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-bottom:4px">Privacy Policy</div>
     <div class="text-xs text-muted mb-3">Last updated: ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
     <div class="card" style="line-height:1.75;font-size:13.5px;color:var(--ink-3)">
@@ -635,13 +646,19 @@ window.showPrivacyPolicyPage = showPrivacyPolicyPage;
 
 function showTermsPage(standalone = false) {
   const wrap = document.getElementById(standalone ? 'legalPageWrap' : 'profilePageWrap');
-  const backAction = standalone ? '_closeLegalPage()' : 'renderProfile()';
-  if (standalone) showScreen('legalpage', false);
+  if (standalone) {
+    if (!window.navStack.length) {
+      window.navStack.push('splash');
+      try { window.history.replaceState({ screen: 'splash' }, ''); } catch (e) {}
+    }
+    showScreen('legalpage');
+  }
+  else window._profileSubPage = 'terms';
   const appName = getSetting('app_name', 'LUMHSian');
   const contactEmail = getSetting('contact_email', 'lumhsianpro@gmail.com');
   const externalUrl = getSetting('tos_url', '');
   wrap.innerHTML = `
-    <button class="back-btn" onclick="${backAction}">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-bottom:4px">Terms of Service</div>
     <div class="text-xs text-muted mb-3">Last updated: ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
     <div class="card" style="line-height:1.75;font-size:13.5px;color:var(--ink-3)">
@@ -682,6 +699,7 @@ window.showTermsPage = showTermsPage;
 
 
 export async function renderProfile() {
+  window._profileSubPage = null;
   checkExpiredAttemptOnRender();
   const wrap = document.getElementById('profilePageWrap');
   wrap.innerHTML = `${skeletonList(4)}`;
@@ -1130,8 +1148,7 @@ function qfOpen(kind, path) {
   const modName = id => id ? (D.modules[id]?.name || 'Module') : 'Other questions';
   const subName = id => id ? (D.subjects[id]?.name || 'Subject') : 'Whole module';
   const testName = id => id ? (D.tests[id]?.title || 'Practice test') : 'Other questions';
-  const parentPath = cur.split('/').slice(0, -1).join('/');
-  const back = (label, target) => `<button class="back-btn" onclick="${target}">← ${esc(label)}</button>`;
+  const back = label => `<button class="back-btn" onclick="goBack()">← ${esc(label)}</button>`;
   const header = (title, crumb, n) => `<div class="card-teal" style="margin-bottom:14px">
       <h2 style="margin-bottom:2px">${esc(title)}</h2>
       ${crumb ? `<div class="text-xs" style="opacity:.85;margin-bottom:2px">${esc(crumb)}</div>` : ''}
@@ -1139,12 +1156,11 @@ function qfOpen(kind, path) {
     </div>`;
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   const byName = (nameFn) => (a, b) => nameFn(a.id).localeCompare(nameFn(b.id));
-  const rootBack = `qfOpen('${kind}','')`;
   let html = '';
 
   if (!cur) {
     if (!items.length) {
-      wrap.innerHTML = `${back('Back', 'goBack()')}<div class="card text-center" style="padding:40px 20px">
+      wrap.innerHTML = `${back('Back')}<div class="card text-center" style="padding:40px 20px">
         <div style="font-size:48px">${cfg.emptyIcon}</div>
         <h3 style="margin-top:12px">${cfg.emptyTitle}</h3>
         <p class="mt-2">${cfg.emptyText}</p>
@@ -1153,7 +1169,7 @@ function qfOpen(kind, path) {
     }
     const moduleItems = items.filter(i => !i.paperId);
     const paperItems = items.filter(i => i.paperId);
-    html = back('Back', 'goBack()') + `<div class="card-teal" style="margin-bottom:14px">
+    html = back('Back') + `<div class="card-teal" style="margin-bottom:14px">
         <h2>${cfg.icon} ${cfg.title}</h2>
         <p>${plural(items.length, 'question')} ${cfg.blurb}</p>
       </div>`;
@@ -1168,23 +1184,23 @@ function qfOpen(kind, path) {
     }
   } else if (P.papers && !('P' in P)) {
     const papers = _qfGroup(items, i => i.paperId).sort((a, b) => (D.papers[a.id]?.title || '').localeCompare(D.papers[b.id]?.title || ''));
-    html = back(cfg.title, rootBack) + header('Past Papers', '', items.length)
+    html = back(cfg.title) + header('Past Papers', '', items.length)
       + papers.map(p => _qfFolder(kind, '📄', D.papers[p.id]?.title || 'Paper', plural(p.count, cfg.singular), p.count, 'PP/P' + p.id)).join('');
   } else if (P.papers) {
-    html = back('Past Papers', `qfOpen('${kind}','PP')`) + header(D.papers[P.P]?.title || 'Paper', 'Past Papers', items.length) + _qfQuestionCards(kind, items);
+    html = back('Past Papers') + header(D.papers[P.P]?.title || 'Paper', 'Past Papers', items.length) + _qfQuestionCards(kind, items);
   } else if (!('S' in P)) {
     const subs = _qfGroup(items, i => i.subjectId).sort(byName(subName));
-    html = back(cfg.title, rootBack) + header(modName(P.M), '', items.length)
+    html = back(cfg.title) + header(modName(P.M), '', items.length)
       + subs.map(s => {
         const nTests = new Set(items.filter(i => i.subjectId === s.id).map(i => i.testId)).size;
         return _qfFolder(kind, '🧪', subName(s.id), `${plural(s.count, cfg.singular)} · ${plural(nTests, 'test')}`, s.count, `M${P.M}/S${s.id}`);
       }).join('');
   } else if (!('T' in P)) {
     const tests = _qfGroup(items, i => i.testId).sort(byName(testName));
-    html = back(modName(P.M), `qfOpen('${kind}','${parentPath}')`) + header(subName(P.S), modName(P.M), items.length)
+    html = back(modName(P.M)) + header(subName(P.S), modName(P.M), items.length)
       + tests.map(t => _qfFolder(kind, '📝', testName(t.id), plural(t.count, cfg.singular), t.count, `M${P.M}/S${P.S}/T${t.id}`)).join('');
   } else {
-    html = back(subName(P.S), `qfOpen('${kind}','${parentPath}')`) + header(testName(P.T), `${modName(P.M)} › ${subName(P.S)}`, items.length) + _qfQuestionCards(kind, items);
+    html = back(subName(P.S)) + header(testName(P.T), `${modName(P.M)} › ${subName(P.S)}`, items.length) + _qfQuestionCards(kind, items);
   }
   wrap.innerHTML = html + '<div style="height:16px"></div>';
   window.scrollTo(0, 0);
@@ -1256,7 +1272,7 @@ function _qpDraw() {
       : `<div class="fw-700" style="color:var(--red);margin:2px 2px 10px">❌ Not quite. The correct answer is ${letters[q.correct_answer]}.</div>`;
   const parentPath = window._qf[kind].path || '';
   wrap.innerHTML = `
-    <button class="back-btn" onclick="qfOpen('${kind}','${parentPath}')">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-elevated" style="margin-bottom:16px">
       <div style="font-size:15px;font-weight:600;line-height:1.6">${esc(q.text)}</div>
       ${q.image_url ? `<img src="${esc(q.image_url)}" style="max-width:100%;border-radius:12px;margin-top:10px" onerror="this.style.display='none'">` : ''}
@@ -1523,7 +1539,7 @@ export function applyDarkMode(enabled) {
   } else {
     DARK_MODE_VARS.forEach(k => root.removeProperty(k));
     document.documentElement.style.colorScheme = 'light';
-    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', '#ffffff'));
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', '#c9980a'));
     localStorage.setItem('dark_mode', 'false');
   }
 }
@@ -1579,8 +1595,9 @@ async function showSubscriptionPlans() {
 
   // Show in modal-like card
   const wrap = document.getElementById('profilePageWrap');
+  window._profileSubPage = 'subscription';
   wrap.innerHTML = `
-    <button class="back-btn" onclick="renderProfile()">← Back</button>
+    <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin-bottom:16px;text-align:center">
       <h2>Upgrade Your Plan</h2>
       <p>Unlock full access to all MCQs and features</p>
