@@ -113,12 +113,14 @@ function _inboxHide(id) {
   localStorage.setItem(INBOX_HIDDEN_KEY, JSON.stringify([...s].slice(-500)));
 }
 
-// The merged, time-ordered conversation for one student: real inbox rows plus older reports / replies that were sent
-// before the inbox existed (those show up read-only-ish: deleting them just hides them on this device).
+// Admin chat views also include older reports/replies; student views use the inbox table only.
 export async function loadInboxThread(email, { limit = 200 } = {}) {
+  const isAdmin = !!window.currentUser?.is_admin;
   const [inboxRes, repRes] = await Promise.all([
     sb.from('inbox_messages').select('*').eq('user_email', email).order('created_at', { ascending: false }).limit(limit),
-    sb.from('reports_feedback').select('id,type,question_id,message,admin_reply,replied_at,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(60)
+    isAdmin
+      ? sb.from('reports_feedback').select('id,type,question_id,message,admin_reply,replied_at,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(60)
+      : Promise.resolve({ data: [], error: null })
   ]);
   const tableOk = !inboxRes.error;
   const rows = (inboxRes.data || []).slice().reverse();
@@ -213,7 +215,8 @@ function _ibSeen() {
   const top = Math.max(0, ...S.messages.filter(m => m.sender === 'admin' && typeof m.id === 'number').map(m => m.id));
   if (top > (window._inboxSeenId ? window._inboxSeenId() : 0)) localStorage.setItem('lum_inbox_seen_id', String(top));
   window._inboxUnread = 0;
-  if (typeof window.checkNewNotifications === 'function') window.checkNewNotifications();
+  window._appNotifs = (window._appNotifs || []).filter(n => n._source !== 'inbox');
+  window._refreshNotificationBadge?.();
 }
 
 async function _ibPoll() {

@@ -59,15 +59,12 @@ export async function renderAdminPanel(initialTab = 'overview') {
 
     <div id="adminContent"></div>`;
 
-  await loadAdminLiveBar();
-  getPendingReportsCount().then(updateReportsBadge);
   adminShowTab(initialTab);
 }
 
 
 
-// Small helper so the Reports tab button always shows how many reports/feedback
-// are still pending, visible right from the admin panel menu without opening the tab.
+// The pending count is requested only after the admin opens the Reports tab.
 async function getPendingReportsCount() {
   try {
     const { count } = await sb.from('reports_feedback').select('*', { count: 'exact', head: true }).eq('status', 'pending');
@@ -152,9 +149,9 @@ window.adminShowTab = adminShowTab;
 // ==================== OVERVIEW TAB ====================
 async function adminOverview(token = window._adminRenderToken) {
   const [usersRes, statsRes, qRes, subRes, modRes] = await Promise.all([
-    db(sb.from('users').select('joined,gender,college,last_active,is_banned'), 'Users error'),
+    db(sb.from('users').select('joined,gender,college,last_active,is_banned', { count: 'exact' }), 'Users error'),
     db(sb.from('user_stats').select('total_tests,total_questions,total_correct,streak,history'), 'Stats error'),
-    db(sb.from('questions').select('module_id,subject_id'), 'Q error'),
+    db(sb.from('questions').select('module_id,subject_id', { count: 'exact' }), 'Q error'),
     db(sb.from('subjects').select('id,name'), 'Subjects error'),
     db(sb.from('modules').select('id,name'), 'Modules error')
   ]);
@@ -166,6 +163,22 @@ async function adminOverview(token = window._adminRenderToken) {
   const modules = modRes.data || [];
 
   const now = Date.now();
+  const liveBar = document.getElementById('adminLiveBar');
+  if (liveBar) {
+    const totalTests = stats.reduce((total, row) => total + (row.total_tests || 0), 0);
+    const onlineNow = users.filter(user => user.last_active > now - 3600000).length;
+    liveBar.innerHTML = [
+      ['👥', usersRes.count ?? users.length, 'Students'],
+      ['❓', qRes.count ?? questions.length, 'Questions'],
+      ['📝', totalTests, 'Tests Done'],
+      ['🟢', onlineNow, 'Online Now']
+    ].map(([icon, val, label]) => `
+      <div class="admin-stat-pill">
+        <div style="font-size:18px">${icon}</div>
+        <div style="font-family:var(--font-display);font-size:22px;font-weight:800;line-height:1;margin:4px 0">${val}</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.7);font-weight:600;text-transform:uppercase;letter-spacing:.3px">${label}</div>
+      </div>`).join('');
+  }
   const activeToday = users.filter(u => u.last_active > now - 86400000).length;
   const activeWeek = users.filter(u => u.last_active > now - 604800000).length;
   const banned = users.filter(u => u.is_banned).length;

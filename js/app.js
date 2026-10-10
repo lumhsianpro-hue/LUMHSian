@@ -347,7 +347,7 @@ function buildPastPapersCardHtml() {
 // practice tests, all of which used to fire one count query per item every
 // time their list rendered.
 const CONTENT_COUNTS_CACHE_KEY = 'content_counts_2026_10_10';
-const CONTENT_COUNTS_TTL = 15 * 60 * 1000;
+const CONTENT_COUNTS_TTL = 30 * 60 * 1000;
 let _contentCounts = null;
 let _contentCountsPromise = null;
 let _contentCountsUnavailable = false;
@@ -412,6 +412,9 @@ export async function getQuestionCountsBy(column, ids) {
     ids.forEach(id => { counts[id] = grouped[id] || 0; });
     return counts;
   }
+  const cacheKey = `content_counts_fallback_${column}_${ids.slice().sort().join('_')}`;
+  const cached = cacheGet(cacheKey, CONTENT_COUNTS_TTL);
+  if (cached !== null) return { ...counts, ...cached };
   // One exact-count-only request per id, in parallel. head:true means Postgres
   // computes just the count and returns zero rows — this is what makes it safe
   // from PostgREST's default 1000-row response cap, unlike a single combined
@@ -423,6 +426,7 @@ export async function getQuestionCountsBy(column, ids) {
     sb.from('questions').select('id', { count: 'exact', head: true }).eq(column, id)
   ));
   ids.forEach((id, i) => { counts[id] = results[i]?.count || 0; });
+  cacheSet(cacheKey, counts);
   return counts;
 }
 
@@ -442,10 +446,14 @@ async function getTestCountsBySubject(subjectIds) {
     subjectIds.forEach(id => { counts[id] = grouped[id] || 0; });
     return counts;
   }
+  const cacheKey = `active_test_counts_subject_${subjectIds.slice().sort().join('_')}`;
+  const cached = cacheGet(cacheKey, CONTENT_COUNTS_TTL);
+  if (cached !== null) return { ...counts, ...cached };
   const results = await Promise.all(subjectIds.map(id =>
     sb.from('practice_tests').select('id', { count: 'exact', head: true }).eq('subject_id', id).eq('is_active', true)
   ));
   subjectIds.forEach((id, i) => { counts[id] = results[i]?.count || 0; });
+  cacheSet(cacheKey, counts);
   return counts;
 }
 
@@ -461,10 +469,14 @@ async function getSubjectCountsForModules(moduleIds) {
     moduleIds.forEach(id => { counts[id] = grouped[id] || 0; });
     return counts;
   }
+  const cacheKey = `subject_counts_module_${moduleIds.slice().sort().join('_')}`;
+  const cached = cacheGet(cacheKey, CONTENT_COUNTS_TTL);
+  if (cached !== null) return { ...counts, ...cached };
   const results = await Promise.all(moduleIds.map(id =>
     sb.from('subjects').select('id', { count: 'exact', head: true }).eq('module_id', id)
   ));
   moduleIds.forEach((id, i) => { counts[id] = results[i]?.count || 0; });
+  cacheSet(cacheKey, counts);
   return counts;
 }
 
@@ -498,17 +510,6 @@ function _notifAlive(n) {
   const end = n.expires_at ? new Date(n.expires_at).getTime() : new Date(n.created_at).getTime() + 48 * 3600 * 1000;
   return end > Date.now();
 }
-
-function _fetchAnnouncementsCached() {
-  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();   // the longest the admin can choose
-    return _cachedQuery('announcements', CONTENT_COUNTS_TTL, () =>
-    sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce error').then(r => {
-    if (r.data) r.data = r.data.filter(_notifAlive);
-    return r;
-  });
-}
-
-
 
 // ==================== DEDICATED MODULES TAB ====================
 export async function renderModulesScreen() {
@@ -622,17 +623,17 @@ export async function renderHome() {
   try {
 
   const myYearName = window.currentUser?.year_of_study || null;
-  const [{ data: years }, stats, annoRes] = await Promise.all([
+  const [{ data: years }, stats] = await Promise.all([
     _fetchYearsCached(),
-    getUserStats(),
-    _fetchAnnouncementsCached()
+    getUserStats()
   ]);
+  const cachedAnnouncements = cacheGet('announcements', CONTENT_COUNTS_TTL) || [];
   // Bug fix: target_college was saved when an announcement was created but
   // never actually checked here, so every "targeted" announcement was shown
   // to all students regardless of college. Filter it the same way the
   // notification bell already does, then keep the latest 3.
   const myYearForFilter = await _getMyYear();
-  const announcements = (annoRes.data || []).filter(a =>
+  const announcements = cachedAnnouncements.filter(a =>
     (!a.target_college || a.target_college === window.currentUser.college) &&
     (!a.target_year_id || a.target_year_id === myYearForFilter?.id)
   ).slice(0, 3);
@@ -769,7 +770,6 @@ export async function renderHome() {
     <div style="height:16px"></div>`;
 
   _animateHeaderStats();
-  checkNewNotifications();
   } catch(e) {
     console.error('renderHome error:', e);
     document.getElementById('homePageWrap').innerHTML = `<div class="card"><p>Failed to load. <button class="btn btn-primary btn-sm mt-2" onclick="renderHome()">Retry</button></p></div>`;
@@ -1753,7 +1753,7 @@ if ('serviceWorker' in navigator) {
 
 
 
-const NOTIFICATION_FETCH_TTL = 15 * 60 * 1000;
+const NOTIFICATION_FETCH_TTL = 30 * 60 * 1000;
 const NOTIFICATION_BASELINE_VERSION = '2026-10-10-v1';
 let _notificationFetchAt = 0;
 let _notificationFetchPromise = null;
@@ -1828,6 +1828,8 @@ function dismissNotification(source, id) {
   // Cap at the most recent 200 so this can never grow unbounded.
   localStorage.setItem('dismissed_notif_ids', JSON.stringify([...ids].slice(-200)));
   window._appNotifs = (window._appNotifs || []).filter(n => `${n._source}:${n.id}` !== key);
+  if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
+  _refreshNotificationBadge();
   openNotificationBell(true);
 }
 window.dismissNotification = dismissNotification;
@@ -1840,20 +1842,16 @@ function _inboxSeenId() { return parseInt(localStorage.getItem('lum_inbox_seen_i
 window._inboxSeenId = _inboxSeenId;
 window.checkNewNotifications = checkNewNotifications;   // (function declaration, so it is available from here)
 
-// Live delivery: when the admin sends a message the bell updates (and an open Inbox shows it) within a moment instead of
-// waiting for the next poll. Needs Realtime enabled for inbox_messages (see the SQL notes); without it the polling
-// below simply carries on as before.
-function _subscribeInbox() {
-  if (window._inboxSub || !window.currentUser || typeof sb.channel !== 'function') return;
-  try {
-    window._inboxSub = sb.channel('inbox-' + window.currentUser.email)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inbox_messages', filter: 'user_email=eq.' + window.currentUser.email }, () => {
-        checkNewNotifications();
-        if (typeof window._ibPoll === 'function') window._ibPoll();
-      })
-      .subscribe();
-  } catch (e) { window._inboxSub = null; }
+function _refreshNotificationBadge(notifs = window._appNotifs || []) {
+  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+  const unread = notifs.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
+  const badge = document.getElementById('notifBellBadge');
+  if (badge) {
+    badge.style.display = unread > 0 ? 'flex' : 'none';
+    badge.textContent = unread > 9 ? '9+' : unread;
+  }
 }
+window._refreshNotificationBadge = _refreshNotificationBadge;
 
 async function checkNewNotifications(force = false) {
   if (!window.currentUser || localStorage.getItem('notif_enabled') === 'false') return;
@@ -1865,14 +1863,22 @@ async function checkNewNotifications(force = false) {
   }
   if (!force && window._appNotifs && Date.now() - _notificationFetchAt < NOTIFICATION_FETCH_TTL) return;
   if (_notificationFetchPromise) return _notificationFetchPromise;
+  const notificationCacheKey = `notifications_${currentFetchUser}`;
+  const cachedNotifs = cacheGet(notificationCacheKey, NOTIFICATION_FETCH_TTL);
+  if (cachedNotifs !== null) {
+    const seenInboxId = _inboxSeenId();
+    window._appNotifs = cachedNotifs.filter(n => n._source !== 'inbox' || Number(n.id) > seenInboxId);
+    window._inboxUnread = window._appNotifs.filter(n => n._source === 'inbox').length;
+    _notificationFetchAt = Date.now();
+    _refreshNotificationBadge();
+    return;
+  }
   _notificationFetchPromise = (async () => {
-    _subscribeInbox();
     const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-    const [notifRes, announceRes, replyRes, inboxRes] = await Promise.all([
+    const [notifRes, announceRes, inboxRes] = await Promise.all([
       db(sb.from('app_notifications').select('id,title,body,created_at,expires_at,target_college,target_year_id').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
       db(sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
-      db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at').eq('user_email', window.currentUser.email).eq('status', 'replied').gte('replied_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString()).order('replied_at', { ascending: false }).limit(20), 'Reply notif load failed'),
-      sb.from('inbox_messages').select('id,kind,body,image_url,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', _inboxSeenId()).order('id', { ascending: false }).limit(20)
+      db(sb.from('inbox_messages').select('id,kind,body,image_url,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', _inboxSeenId()).order('id', { ascending: false }).limit(20), 'Inbox notification load failed')
     ]);
     const notifs = (notifRes.data || []).filter(_notifAlive);
     const announces = (announceRes.data || []).filter(_notifAlive);
@@ -1884,11 +1890,6 @@ async function checkNewNotifications(force = false) {
     const merged = [
       ...notifs.map(n => ({ ...n, _source: 'notif' })),
       ...announces.map(a => ({ ...a, _source: 'announce' })),
-      ...(inboxOk ? [] : (replyRes.data || []).map(r => ({
-        id: r.id, _source: 'report_reply', created_at: r.replied_at,
-        title: '📬 Your report got a reply',
-        body: (r.admin_reply || '').substring(0, 140) + ((r.admin_reply || '').length > 140 ? '…' : '')
-      }))),
       ...inboxItems.map(m => ({
         id: m.id, _source: 'inbox', created_at: m.created_at,
         title: m.kind === 'reply' ? '📬 Reply to your report' : '✉️ New message from admin',
@@ -1900,6 +1901,10 @@ async function checkNewNotifications(force = false) {
       !dismissed.has(`${n._source}:${n.id}`)
     ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     window._appNotifs = merged;
+    if (!notifRes.error && !announceRes.error && inboxOk) {
+      cacheSet(notificationCacheKey, merged);
+      cacheSet('announcements', announces);
+    }
 
     const baselineKey = _notificationStorageKey('notification_baseline');
     const shownIds = _shownNotificationIds();
@@ -1921,11 +1926,7 @@ async function checkNewNotifications(force = false) {
     _saveShownNotificationIds(shownIds);
     _notificationFetchAt = Date.now();
 
-    const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
-    const unread = merged.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
-    const badge = document.getElementById('notifBellBadge');
-    if (badge) badge.style.display = unread > 0 ? 'flex' : 'none';
-    if (badge) badge.textContent = unread > 9 ? '9+' : unread;
+    _refreshNotificationBadge(merged);
   })();
   try { await _notificationFetchPromise; }
   finally { _notificationFetchPromise = null; }
@@ -3389,9 +3390,8 @@ window.onload = async function() {
   } else {
     showScreen('splash', false);
   }
-  // 3. Start notification polling if logged in as a (non-admin) student with a completed profile
+  // Notification data is fetched only when the student opens the bell.
   if (window.currentUser && !window.currentUser.is_admin && window.currentUser.profile_completed) {
-    checkNewNotifications();
     checkWhatsNew();
     window._notificationAuthReady = true;
     await _flushPendingNotificationOpen();
