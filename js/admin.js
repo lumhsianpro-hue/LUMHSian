@@ -4284,17 +4284,21 @@ let _elPage = 0;
 async function adminErrorLogs(token = window._adminRenderToken, page) {
   _elPage = (typeof page === 'number') ? page : 0;
   const content = document.getElementById('adminContent');
+  if (!content) return;
   content.innerHTML = `<div class="spinner" style="margin:40px auto"></div>`;
   window._elSelected = new Set();
   const from = _elPage * ERRORLOG_PAGE_SIZE;
   const to = from + ERRORLOG_PAGE_SIZE - 1;
   const { data, count } = await db(sb.from('error_logs').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(from, to), 'Error logs load failed');
-  if (_renderStale(token)) return;
+  if (_renderStale(token) || !document.body.contains(content)) return;
   const totalPages = count ? Math.max(1, Math.ceil(count / ERRORLOG_PAGE_SIZE)) : 1;
   content.innerHTML = `
     <div class="flex-between mb-3">
       <div class="fw-700">🐞 Error Logs</div>
-      <span class="badge ${count ? 'badge-amber' : 'badge-green'}">${count || 0} total</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="badge ${count ? 'badge-amber' : 'badge-green'}">${count || 0} total</span>
+        <button class="btn btn-danger btn-xs" style="width:auto" onclick="adminDeleteAllErrorLogs()" ${count ? '' : 'disabled'}>Clear all</button>
+      </div>
     </div>
     ${data?.length ? `
     <div class="flex-between" style="background:var(--surface-3);border:1px solid var(--border);border-radius:var(--radius-md);padding:9px 12px;margin-bottom:10px">
@@ -4376,6 +4380,17 @@ async function adminDeleteSelectedErrorLogs() {
   }, `Delete ${ids.length}`, true);
 }
 window.adminDeleteSelectedErrorLogs = adminDeleteSelectedErrorLogs;
+
+
+async function adminDeleteAllErrorLogs() {
+  showConfirm('Delete every error log entry?', async () => {
+    const { error } = await db(sb.from('error_logs').delete().gte('id', 0), 'Clear failed');
+    if (error) return;
+    showToast('All error logs cleared');
+    adminErrorLogs();
+  }, 'Clear all', true);
+}
+window.adminDeleteAllErrorLogs = adminDeleteAllErrorLogs;
 
 
 

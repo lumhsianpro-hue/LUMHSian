@@ -243,6 +243,7 @@ export function rateLimited(key, maxAttempts, windowMs) {
 // ==================== UTILS ====================
 export function showToast(msg, dur = 3000) {
   const t = document.getElementById('toast');
+  if (!t) return;
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
@@ -254,11 +255,14 @@ window.showToast = showToast;
 
 export function showLoading(v, msg = 'Loading...') {
   const ol = document.getElementById('loadingOverlay');
+  if (!ol) return;
   if (v) {
     // Delay showing spinner by 200ms — fast operations won't flash a spinner at all
     clearTimeout(window._loadingTimer);
     window._loadingTimer = setTimeout(() => {
-      ol.querySelector('.loading-text').textContent = msg;
+      const text = ol.querySelector('.loading-text');
+      if (!text) return;
+      text.textContent = msg;
       ol.classList.add('show');
     }, 200);
   } else {

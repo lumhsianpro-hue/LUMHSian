@@ -63,7 +63,7 @@ export function showScreen(id, pushToStack = true, preserveHistory = false) {
   if (typeof saveAppStateDebounced === 'function') saveAppStateDebounced();
   else if (typeof saveAppState === 'function') saveAppState();
   const showNavFor = ['home','modules','search','stats','ranking','profile','bookmarks','wrongattempts','planner','savedtests','support'];
-  document.getElementById('bottomNav').classList.toggle('show', showNavFor.includes(id));
+  document.getElementById('bottomNav')?.classList.toggle('show', showNavFor.includes(id));
 }
 window.showScreen = showScreen;
 

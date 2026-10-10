@@ -13,7 +13,7 @@ import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON
 // forced back to the login screen once (e.g. after a meaningful update).
 // They do NOT need to sign up again — their account stays, this only clears
 // the saved auto-login session so they re-enter their password once.
-export const APP_VERSION = '2026-07-06.1';
+export const APP_VERSION = '2026-10-10.1';
 
 
 
@@ -31,11 +31,20 @@ const _loggedErrorSignatures = new Set();
 
 async function logClientError(message, stack, source) {
   try {
-    if (_errorLogCount >= 20) return;
-    const sig = source + ':' + String(message || '').slice(0, 150);
+    if (!navigator.onLine || _errorLogCount >= 5) return;
+    const sig = String(message || '').slice(0, 150);
     if (_loggedErrorSignatures.has(sig)) return;
+    const userKey = window.currentUser?.auth_uid || window.currentUser?.email || 'anonymous';
+    const storageKey = `lum_error_log_${encodeURIComponent(userKey)}_${encodeURIComponent(sig)}`;
+    const lastLogged = Number(localStorage.getItem(storageKey) || 0);
+    if (Date.now() - lastLogged < 10 * 60 * 1000) return;
+    const sessionKey = `lum_error_log_count_${encodeURIComponent(userKey)}`;
+    const sessionCount = Number(sessionStorage.getItem(sessionKey) || 0);
+    if (sessionCount >= 5) return;
     _loggedErrorSignatures.add(sig);
     _errorLogCount++;
+    localStorage.setItem(storageKey, String(Date.now()));
+    sessionStorage.setItem(sessionKey, String(sessionCount + 1));
     await sb.from('error_logs').insert({
       message: String(message || 'Unknown error').slice(0, 2000),
       stack: stack ? String(stack).slice(0, 4000) : null,
