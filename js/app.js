@@ -4,7 +4,7 @@ import { goBack, restoreNavigationStack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
 import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
 import { _hasStoredSupabaseSession, _showReconnecting, db, getSessionWithRetry, sb } from './supabase.js';
-import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, ICON_X_CIRCLE, _debounce, attemptBadgeHtml, attemptLineHtml, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
+import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, ICON_X_CIRCLE, _debounce, attemptBadgeHtml, attemptLineHtml, cacheClear, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
 
 
@@ -377,6 +377,21 @@ async function _loadContentCounts() {
     _refreshContentCounts();
     return stale;
   }
+  return _refreshContentCounts();
+}
+
+export async function refreshQuestionCounts() {
+  if (_contentCountsPromise) await _contentCountsPromise;
+  _contentCounts = null;
+  _contentCountsFetchedAt = 0;
+  _contentCountsUnavailable = false;
+  cacheClear(CONTENT_COUNTS_CACHE_KEY);
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.includes('_content_counts_fallback_')) localStorage.removeItem(key);
+    }
+  } catch (e) {}
   return _refreshContentCounts();
 }
 

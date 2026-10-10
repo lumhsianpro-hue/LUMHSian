@@ -1,4 +1,4 @@
-import { _renderStale, getQuestionCountsBy, getSetting, loadAppSettings, loadYearScreen, renderHome, saveAppState } from './app.js';
+import { _renderStale, getQuestionCountsBy, getSetting, loadAppSettings, loadYearScreen, refreshQuestionCounts, renderHome, saveAppState } from './app.js';
 import { showScreen } from './navigation.js';
 import { inboxThreadHtml, loadInboxThread } from './profile.js';
 import { callAIRaw } from './quiz.js';
@@ -2353,6 +2353,7 @@ window.adminDeletePastPaper = adminDeletePastPaper;
 // it to that subject's own practice-test list instead. Mirrors Past Papers above —
 // same shape, just grouped by Module+Subject instead of Module+College.
 async function adminPracticeTests() {
+  if (!window.currentUser?.is_admin) return showToast('Admin access required');
   // Everything is loaded in a handful of requests, then grouped client-side:
   // Year → Module → Subject → Practice Tests (whole-module tests get their own section inside each module).
   const [tree, { data: allTests }, { data: allSubjects }] = await Promise.all([
@@ -2373,16 +2374,22 @@ async function adminPracticeTests() {
   const qCounts = await getQuestionCountsBy('practice_test_id', (allTests || []).map(t => t.id));
 
   const testRowHtml = (t) => `
-        <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
-          <div>
-            <div class="text-sm fw-600">${esc(t.title)} ${t.is_active ? '' : '<span class="badge badge-amber" style="font-size:9px">Hidden</span>'}</div>
-            <div class="text-xs text-muted">${qCounts[t.id] || 0} questions</div>
+        <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div class="flex-between">
+            <div>
+              <div class="text-sm fw-600">${esc(t.title)} ${t.is_active ? '' : '<span class="badge badge-amber" style="font-size:9px">Hidden</span>'}</div>
+              <div class="text-xs text-muted">${qCounts[t.id] || 0} questions</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+              <button class="btn btn-secondary btn-xs" onclick="adminDownloadPracticeTest(${t.id},'${escJs(t.title)}')">Download</button>
+              <button class="btn btn-secondary btn-xs" onclick="document.getElementById('pt_replace_${t.id}').click()">Replace</button>
+              <input id="pt_replace_${t.id}" type="file" accept=".json,application/json" style="display:none" onchange="adminReplacePracticeTest(this,${t.id},'${escJs(t.title)}')">
+              <button class="btn btn-secondary btn-xs" onclick="startReplaceAllQuestions('test',${t.id},'${escJs(t.title)}',${qCounts[t.id] || 0})">🔁 Replace Qs</button>
+              <button class="btn btn-secondary btn-xs" onclick="adminEditPracticeTest(${t.id})">✏️</button>
+              <button class="btn btn-danger btn-xs" onclick="adminDeletePracticeTest(${t.id})">🗑</button>
+            </div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-secondary btn-xs" onclick="startReplaceAllQuestions('test',${t.id},'${escJs(t.title)}',${qCounts[t.id] || 0})">🔁 Replace Qs</button>
-            <button class="btn btn-secondary btn-xs" onclick="adminEditPracticeTest(${t.id})">✏️</button>
-            <button class="btn btn-danger btn-xs" onclick="adminDeletePracticeTest(${t.id})">🗑</button>
-          </div>
+          <div id="pt_replace_status_${t.id}" class="text-xs" style="display:none;color:var(--red);white-space:pre-line;margin-top:6px"></div>
         </div>`;
   const sectionHead = (label, n, danger) => `<div class="admin-sub-head"${danger ? ' style="color:var(--red)"' : ''}><span>${label}</span><span>${n}</span></div>`;
 
@@ -2433,6 +2440,165 @@ async function adminPracticeTests() {
     ${tree.modules.length ? _yearModuleFolds(tree, 'pt', moduleFn, { unit: 'test' }) : '<div class="card"><p class="text-muted">Add a module first.</p></div>'}`;
 }
 window.adminPracticeTests = adminPracticeTests;
+
+
+async function adminDownloadPracticeTest(id, title) {
+  if (!window.currentUser?.is_admin) return showToast('Admin access required');
+  showLoading(true, 'Preparing practice test download...');
+  try {
+    const { data: questions, error } = await db(sb.from('questions').select('text,options,correct_answer,explanation,image_url,explanation_image_url,difficulty,tags').eq('practice_test_id', id).order('id'), 'Load failed');
+    if (error) return;
+    if (!questions?.length) return showToast('No questions to download yet');
+    const payload = questions.map(q => ({
+      text: q.text,
+      options: Array.isArray(q.options) ? q.options : [],
+      correct_answer: q.correct_answer,
+      explanation: q.explanation || '',
+      image_url: q.image_url || null,
+      explanation_image_url: q.explanation_image_url || null,
+      difficulty: q.difficulty || 'medium',
+      tags: Array.isArray(q.tags) ? q.tags : []
+    }));
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeTitle = (title || 'practice_test').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'practice_test';
+    a.href = url;
+    a.download = `${safeTitle}_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Practice test downloaded ✓');
+  } catch (err) {
+    console.error('Practice test download failed:', err);
+    showToast('Download failed. Please try again.');
+  } finally {
+    showLoading(false);
+  }
+}
+window.adminDownloadPracticeTest = adminDownloadPracticeTest;
+
+
+async function adminReplacePracticeTest(input, testId, testTitle) {
+  if (!window.currentUser?.is_admin) return showToast('Admin access required');
+  const status = document.getElementById(`pt_replace_status_${testId}`);
+  const showError = message => {
+    if (status) {
+      status.textContent = message;
+      status.style.display = 'block';
+    }
+  };
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (status) { status.textContent = ''; status.style.display = 'none'; }
+  if (file.size > 10 * 1024 * 1024) {
+    showError('File is too large (maximum 10 MB).');
+    input.value = '';
+    return;
+  }
+
+  let fileText;
+  try {
+    fileText = await file.text();
+  } catch (err) {
+    showError('Could not read this file. Please choose a downloaded practice-test JSON file.');
+    input.value = '';
+    return;
+  }
+  input.value = '';
+  let rows;
+  try {
+    rows = JSON.parse(fileText);
+  } catch (err) {
+    showError('Invalid JSON file. Please choose a downloaded practice-test JSON file.');
+    return;
+  }
+  const errors = [];
+  const questions = [];
+  if (!Array.isArray(rows)) errors.push('File must contain a JSON array of questions.');
+  else if (!rows.length) errors.push('File contains no questions.');
+  else if (rows.length > 2000) errors.push(`File has ${rows.length} questions; the limit is 2000.`);
+  else rows.forEach((q, index) => {
+    const number = index + 1;
+    if (!q || typeof q !== 'object' || Array.isArray(q)) {
+      errors.push(`Question ${number}: must be an object.`);
+      return;
+    }
+    const text = typeof q.text === 'string' ? q.text.trim() : '';
+    const explanation = typeof q.explanation === 'string' ? q.explanation.trim() : '';
+    const options = Array.isArray(q.options) ? q.options : [];
+    let valid = true;
+    if (!text) { errors.push(`Question ${number}: question text is required.`); valid = false; }
+    else if (text.length > 5000) { errors.push(`Question ${number}: question text exceeds 5000 characters.`); valid = false; }
+    if (options.length < 2) { errors.push(`Question ${number}: at least two options are required.`); valid = false; }
+    else if (options.some(option => typeof option !== 'string' || !option.trim())) { errors.push(`Question ${number}: every option must contain text.`); valid = false; }
+    else if (options.some(option => option.length > 1000)) { errors.push(`Question ${number}: an option exceeds 1000 characters.`); valid = false; }
+    if (!Number.isInteger(q.correct_answer) || q.correct_answer < 0 || q.correct_answer >= options.length) {
+      errors.push(`Question ${number}: correct_answer must be the zero-based index of exactly one option.`);
+      valid = false;
+    }
+    if (!explanation) { errors.push(`Question ${number}: explanation is required.`); valid = false; }
+    else if (explanation.length > 5000) { errors.push(`Question ${number}: explanation exceeds 5000 characters.`); valid = false; }
+    if (q.image_url != null && typeof q.image_url !== 'string') { errors.push(`Question ${number}: image_url must be text or null.`); valid = false; }
+    if (q.explanation_image_url != null && typeof q.explanation_image_url !== 'string') { errors.push(`Question ${number}: explanation_image_url must be text or null.`); valid = false; }
+    if (q.difficulty != null && !['easy', 'medium', 'hard'].includes(q.difficulty)) { errors.push(`Question ${number}: difficulty must be easy, medium, or hard.`); valid = false; }
+    if (q.tags != null && (!Array.isArray(q.tags) || q.tags.some(tag => typeof tag !== 'string'))) { errors.push(`Question ${number}: tags must be an array of text values.`); valid = false; }
+    if (valid) questions.push({
+      text, options: options.map(option => option.trim()), correct_answer: q.correct_answer, explanation,
+      image_url: q.image_url || null, explanation_image_url: q.explanation_image_url || null,
+      difficulty: q.difficulty || 'medium', tags: q.tags || []
+    });
+  });
+  if (errors.length) {
+    showError(errors.join('\n'));
+    input.value = '';
+    return;
+  }
+  if (status) { status.textContent = ''; status.style.display = 'none'; }
+
+  showLoading(true, 'Checking current practice test...');
+  let oldCount;
+  try {
+    const result = await db(sb.from('questions').select('id', { count: 'exact', head: true }).eq('practice_test_id', testId), 'Load failed');
+    if (result.error) { showError('Could not check the existing question count. Please try again.'); return; }
+    oldCount = result.count || 0;
+  } catch (err) {
+    showError('Could not check the existing question count. Please try again.');
+    return;
+  } finally {
+    showLoading(false);
+  }
+  showConfirm(`Replace the <b>${oldCount}</b> existing MCQs in <b>${esc(testTitle || 'this practice test')}</b> with <b>${questions.length}</b> uploaded MCQs?`, async () => {
+    showLoading(true, 'Replacing practice-test questions...');
+    let succeeded = false;
+    try {
+      const { data, error } = await adminRPC('admin_replace_practice_test_questions', {
+        p_test_id: testId,
+        p_questions: questions
+      });
+      if (error) throw error;
+      cacheClear(`questions_test_${testId}`);
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key?.startsWith('lum_cache_') && key.includes('_questions_tests_')) localStorage.removeItem(key);
+        }
+      } catch (err) {}
+      try { await refreshQuestionCounts(); }
+      catch (err) { console.warn('Practice-test count refresh failed:', err); }
+      succeeded = true;
+      showToast(`Practice test replaced ✓ (${data?.new_count ?? questions.length} questions)`);
+    } catch (err) {
+      console.error('Practice-test replacement failed:', err);
+      showError(`Replace failed: ${[err.message, err.details, err.hint].filter(Boolean).join(' · ') || 'Unknown error'}`);
+      showToast('Replace failed. No changes were saved.');
+    } finally {
+      showLoading(false);
+      input.value = '';
+    }
+    if (succeeded) await adminPracticeTests();
+  }, 'Replace Questions', true);
+}
+window.adminReplacePracticeTest = adminReplacePracticeTest;
 
 
 
