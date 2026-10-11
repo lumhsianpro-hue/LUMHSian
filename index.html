@@ -83,6 +83,14 @@ try {
       <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg></span>
       <span class="nav-item-label">Modules</span>
     </button>
+    <button class="nav-item" onclick="openPastPapersRoot()" id="nav-pastpapers">
+      <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M4 4.5v15M8 7h8M8 11h8"/></svg></span>
+      <span class="nav-item-label">Past Papers</span>
+    </button>
+    <button class="nav-item" onclick="openCustomTestBuilder()" id="nav-buildtest">
+      <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><rect x="4" y="4" width="16" height="16" rx="3"/></svg></span>
+      <span class="nav-item-label">Build Test</span>
+    </button>
     <button class="nav-item" onclick="navGo('search')" id="nav-search">
       <span class="nav-item-icon"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span>
       <span class="nav-item-label">Search</span>
@@ -215,6 +223,16 @@ try {
 <!-- MODULE DETAIL -->
 <div id="screen-module" class="screen">
   <div class="page-wrap" id="modulePageWrap"></div>
+</div>
+
+<!-- PAST PAPERS -->
+<div id="screen-pastpapers" class="screen">
+  <div class="page-wrap" id="pastPapersPageWrap"></div>
+</div>
+
+<!-- BUILD TEST -->
+<div id="screen-buildtest" class="screen">
+  <div class="page-wrap" id="buildTestPageWrap"></div>
 </div>
 
 <!-- TEST -->

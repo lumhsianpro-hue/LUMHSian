@@ -115,11 +115,11 @@ p{font-size:14px;color:var(--ink-3);line-height:1.65}
 .bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--overlay-bg);backdrop-filter:blur(12px);border-top:1px solid var(--border);display:none;z-index:200;padding:8px 0 max(8px,env(safe-area-inset-bottom,0px))}
 .bottom-nav.show{display:flex}
 .nav-items{display:flex;width:100%;max-width:500px;margin:0 auto}
-.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;cursor:pointer;border:none;background:transparent;color:var(--ink-4);transition:all var(--transition)}
+.nav-item{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;cursor:pointer;border:none;background:transparent;color:var(--ink-4);transition:all var(--transition)}
 .nav-item.active{color:var(--gold-600)}
 .nav-item-icon{font-size:20px;transition:transform var(--transition)}
 .nav-item.active .nav-item-icon{transform:translateY(-1px)}
-.nav-item-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.nav-item-label{font-size:clamp(7px,1.8vw,10px);font-weight:600;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap}
 
 /* ===== DESKTOP LAYOUT =====
    Below ~900px this app is deliberately still the same single-column mobile
@@ -148,6 +148,13 @@ p{font-size:14px;color:var(--ink-3);line-height:1.65}
 
   body:has(.bottom-nav.show) .page-wrap{margin-left:232px;padding-bottom:32px}
   .page-wrap{max-width:920px;padding:max(28px,env(safe-area-inset-top)) 32px 40px}
+}
+
+@media (max-width:370px){
+  .bottom-nav{padding-top:5px}
+  .nav-item{padding-left:0;padding-right:0}
+  .nav-item-icon{font-size:18px}
+  .nav-item-label{font-size:7px;letter-spacing:0}
 }
 
 /* ===== SCROLLBAR ===== */

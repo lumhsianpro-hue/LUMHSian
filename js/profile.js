@@ -119,7 +119,9 @@ export async function loadInboxThread(email, { limit = 200 } = {}) {
     sb.from('inbox_messages').select('*').eq('user_email', email).order('created_at', { ascending: false }).limit(limit),
     sb.from('reports_feedback').select('id,type,question_id,message,admin_reply,replied_at,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(limit)
   ]);
-  const tableOk = !inboxRes.error;
+  if (inboxRes.error) console.warn('Inbox messages load failed', inboxRes.error);
+  if (repRes.error) console.warn('Inbox report replies load failed', repRes.error);
+  const tableOk = !inboxRes.error && !repRes.error;
   const rows = (inboxRes.data || []).slice().reverse();
   const has = (sender, refId, kind) => rows.some(m => String(m.ref_id) === String(refId) && m.sender === sender && (!kind || m.kind === kind));
   const hidden = _inboxHidden();
@@ -205,35 +207,53 @@ export async function renderInbox(target = null) {
   if (window.currentUser?.email !== email || document.querySelector('.screen.active')?.id !== 'screen-inbox') return;
   window._inbox = { messages, tableOk };
   _ibDraw(true);
-  _ibSeen();
+  if (!tableOk) showToast('Some Inbox messages could not be loaded. Unread notifications were left unchanged.');
+  let targetMessage = null;
   if (target && ['inbox', 'report_reply'].includes(target.source) && Number.isSafeInteger(Number(target.id)) && Number(target.id) > 0) {
     const wantedId = String(Number(target.id));
-    const targetMessage = target.source === 'report_reply'
+    targetMessage = target.source === 'report_reply'
       ? messages.find(message => String(message._reportId ?? message.ref_id ?? '') === wantedId && message.sender === 'admin')
       : messages.find(message => String(message.id) === wantedId);
-    if (targetMessage) document.getElementById(`ib_${targetMessage.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    else showToast('That message is no longer available in your Inbox.');
+    if (targetMessage) {
+      const targetElement = document.getElementById(`ib_${targetMessage.id}`);
+      if (targetElement) targetElement.scrollIntoView({ behavior: 'auto', block: 'center' });
+      else targetMessage = null;
+    }
+    if (targetMessage) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      if (!document.getElementById(`ib_${targetMessage.id}`)) targetMessage = null;
+    }
+    if (!targetMessage) {
+      showToast('That message is no longer available in your Inbox.');
+    }
+  }
+  if (tableOk) {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    if (targetMessage) await _ibSeen([targetMessage]);
+    else await _ibSeen();
   }
   clearInterval(window._ibTimer);
   window._ibTimer = setInterval(_ibPoll, 8000);
 }
 window.renderInbox = renderInbox;
 
-// Opening the inbox counts as reading: remember the newest admin message id so the bell and Profile badge clear
-function _ibSeen() {
+async function _ibSeen(targetMessages = null) {
   const S = window._inbox;
-  if (!S) return;
-  const top = Math.max(0, ...S.messages.filter(m => m.sender === 'admin' && typeof m.id === 'number').map(m => m.id));
-  if (top > (window._inboxSeenId ? window._inboxSeenId() : 0)) {
-    const userKey = encodeURIComponent(window.currentUser?.auth_uid || window.currentUser?.email || 'anonymous');
-    localStorage.setItem(`lum_inbox_seen_id_${userKey}`, String(top));
-  }
-  const seenReportIds = new Set();
-  S.messages.filter(m => m.sender === 'admin' && m._reportId != null).forEach(m => seenReportIds.add(String(m._reportId)));
-  S.messages.filter(m => m.sender === 'admin' && m.kind === 'reply' && m.ref_id != null).forEach(m => seenReportIds.add(String(m.ref_id)));
-  window._markReportRepliesRead?.([...seenReportIds]);
-  window._inboxUnread = 0;
-  window._refreshNotificationBadge?.();
+  if (!S || !S.tableOk) return;
+  const thread = document.getElementById('ibThread');
+  if (!thread) return;
+  const visible = targetMessages || S.messages.filter(message => {
+    if (message.sender !== 'admin') return false;
+    const el = document.getElementById(`ib_${message.id}`);
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const threadRect = thread.getBoundingClientRect();
+    return rect.bottom > Math.max(0, threadRect.top) && rect.top < Math.min(window.innerHeight, threadRect.bottom);
+  });
+  const viewed = visible.filter(message =>
+    message.sender === 'admin' && document.getElementById(`ib_${message.id}`)
+  );
+  if (viewed.length) await window._clearViewedMessageNotifications?.(viewed);
 }
 
 async function _ibPoll() {
@@ -251,7 +271,7 @@ async function _ibPoll() {
     if (before === next.map(m => String(m.id)).join(',')) return;
     S.messages = next;
     _ibDraw(true);
-    _ibSeen();
+    await _ibSeen();
   } catch (error) {
     console.warn('Inbox refresh failed', error);
   }
@@ -744,9 +764,10 @@ export async function renderAnnouncements(selectedId = null) {
   window._profileSubPage = 'announcements';
   wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(3, false)}`;
   const announcements = (await getStudentAnnouncements()).filter(notificationIsAlive);
+  window._studentAnnouncements = announcements;
   const selected = selectedId == null ? null : announcements.find(item => Number(item.id) === Number(selectedId));
-  if (selected) markNotificationAsRead({ ...selected, _source: 'announce' });
-  else if (selectedId != null) showToast('That announcement is no longer available.');
+  const selectedNotification = selected ? { ...selected, _source: 'announce' } : null;
+  if (!selected && selectedId != null) showToast('That announcement is no longer available.');
 
   const unreadState = item => notificationIsUnread({ ...item, _source: 'announce' });
   const detail = selected ? `
@@ -774,6 +795,8 @@ export async function renderAnnouncements(selectedId = null) {
     ${detail}
     ${!selected ? (list || '<div class="card text-center"><div style="font-size:36px">📭</div><p class="text-sm text-muted mt-2">No announcements right now.</p></div>') : ''}
     <div style="height:24px"></div>`;
+  if (selectedNotification) await markNotificationAsRead(selectedNotification);
+  window._refreshNotificationBadge?.();
 }
 window.renderAnnouncements = renderAnnouncements;
 
@@ -784,6 +807,8 @@ export async function renderProfile() {
   checkExpiredAttemptOnRender();
   const wrap = document.getElementById('profilePageWrap');
   wrap.innerHTML = `${skeletonList(4)}`;
+  try { await window.checkNewNotifications?.(true); }
+  catch (error) { console.warn('Profile notification badges could not be refreshed', error); }
   const stats = await getUserStats();
   const acc = stats.total_questions ? Math.round((stats.total_correct / stats.total_questions) * 100) : 0;
 
@@ -906,9 +931,13 @@ export async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_key_set','') === 'true' ? '✅ Tap to ask a question' : '⚠️ Not set up by admin yet'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
+    <div class="list-item" onclick="openNotificationBell()">
+      <div class="list-item-left"><div class="list-item-icon">🔔</div><div><div class="list-item-title">Notifications</div><div class="list-item-sub">Updates and messages from the admin</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px"><span id="profileNotificationBadge" class="badge badge-red" style="display:none"></span><span style="color:var(--ink-4)">›</span></div>
+    </div>
     <div class="list-item" onclick="openAnnouncementSection()">
       <div class="list-item-left"><div class="list-item-icon">📢</div><div><div class="list-item-title">Announcements</div><div class="list-item-sub">Updates and important information from the admin</div></div></div>
-      <div style="display:flex;align-items:center;gap:8px">${(window._appNotifs || []).filter(n => n._source === 'announce' && notificationIsUnread(n)).length ? `<span class="badge badge-red">${(window._appNotifs || []).filter(n => n._source === 'announce' && notificationIsUnread(n)).length}</span>` : ''}<span style="color:var(--ink-4)">›</span></div>
+      <div style="display:flex;align-items:center;gap:8px"><span id="profileAnnouncementBadge" class="badge badge-red" style="display:none"></span><span style="color:var(--ink-4)">›</span></div>
     </div>
     <div class="list-item" onclick="openInbox()">
       <div class="list-item-left"><div class="list-item-icon">✉️</div><div><div class="list-item-title">Inbox for Reports &amp; Messages</div><div class="list-item-sub">Your reports, feedback, replies, and direct messages</div></div></div>
@@ -964,6 +993,7 @@ export async function renderProfile() {
     <button class="btn btn-danger" style="width:100%" onclick="confirmLogout()">🚪 Logout</button>
     <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--ink-4)">🔒 Your data is encrypted and never shared with third parties</div>
     <div style="height:24px"></div>`;
+  window._refreshNotificationBadge?.();
 }
 window.renderProfile = renderProfile;
 

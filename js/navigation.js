@@ -1,4 +1,4 @@
-import { getUserStats, isFeatureEnabled, openModule, openPastPapersRoot, renderHome, renderModulesScreen, renderSavedTests, renderSearch, saveAppState, saveAppStateDebounced } from './app.js';
+import { getUserStats, isFeatureEnabled, openCustomTestBuilder, openModule, openPastPapersRoot, renderHome, renderModulesScreen, renderSavedTests, renderSearch, saveAppState, saveAppStateDebounced } from './app.js';
 import { renderBookmarks, renderPlanner, renderProfile, renderStats } from './profile.js';
 import { leaveFinishedTest, requestExitTest } from './quiz.js';
 import { showToast } from './utils.js';
@@ -39,7 +39,7 @@ function _createScreen(id) {
 }
 
 export function showScreen(id, pushToStack = true, preserveHistory = false) {
-  if (id !== 'module') window._cancelPendingModuleLoad?.();
+  if (!['module', 'pastpapers'].includes(id)) window._cancelPendingModuleLoad?.();
   if (id !== 'test') window._cancelPendingTestStart?.();
   window._cancelPendingQuestionFolderLoad?.(id);
   // Only touch screens that need to change — avoids DOM thrashing
@@ -64,7 +64,7 @@ export function showScreen(id, pushToStack = true, preserveHistory = false) {
   updateBottomNav(id);
   if (typeof saveAppStateDebounced === 'function') saveAppStateDebounced();
   else if (typeof saveAppState === 'function') saveAppState();
-  const showNavFor = ['home','modules','search','stats','profile','bookmarks','planner','savedtests','support'];
+  const showNavFor = ['home','modules','pastpapers','buildtest','search','stats','profile','bookmarks','planner','savedtests','support'];
   document.getElementById('bottomNav')?.classList.toggle('show', showNavFor.includes(id));
 }
 window.showScreen = showScreen;
@@ -87,7 +87,7 @@ window.restoreNavigationStack = restoreNavigationStack;
 
 function updateBottomNav(id) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  const map = { home: 'nav-home', modules: 'nav-modules', search: 'nav-search', stats: 'nav-stats', profile: 'nav-profile' };
+  const map = { home: 'nav-home', modules: 'nav-modules', pastpapers: 'nav-pastpapers', buildtest: 'nav-buildtest', search: 'nav-search', stats: 'nav-stats', profile: 'nav-profile' };
   if (map[id]) document.getElementById(map[id])?.classList.add('active');
 }
 
@@ -102,7 +102,7 @@ function updateBottomNav(id) {
 // as-is, which is correct within the same session and a reasonable fallback
 // after a full app restart.
 export function _returnToScreen(id) {
-  const target = id || 'home';
+  const target = id === 'module' && window._moduleScreenMode === 'pastpapers' ? 'pastpapers' : (id || 'home');
   const stack = window.navStack;
   const targetIndex = stack.lastIndexOf(target);
   const historyDepth = targetIndex >= 0 ? stack.length - targetIndex - 1 : 0;
@@ -111,7 +111,8 @@ export function _returnToScreen(id) {
   // map at parse time (before that block has run) would throw. Evaluating it
   // lazily, only when _returnToScreen() is actually called, is safe.
   const renderers = {
-    home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, search: renderSearch, bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests,
+    home: renderHome, modules: renderModulesScreen, pastpapers: openPastPapersRoot,
+    profile: renderProfile, stats: renderStats, search: renderSearch, bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests,
     module: () => {
       if (window._moduleScreenMode === 'pastpapers') {
         // Return to the same Past Papers level used to launch the test.
@@ -180,7 +181,7 @@ window.goBack = goBack;
 
 
 function _backWithinScreen(cur) {
-  if (cur === 'module' && window._moduleScreenMode === 'pastpapers' && window._lastOpenedPastPapers?.level === 'college') {
+  if ((cur === 'pastpapers' || cur === 'module') && window._moduleScreenMode === 'pastpapers' && window._lastOpenedPastPapers?.level === 'college') {
     window.renderPastPapersCollegeList?.();
     return true;
   }
@@ -239,7 +240,7 @@ function navGo(id) {
   }
   const renders = {
     home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
-    profile: renderProfile,
+    profile: renderProfile, pastpapers: openPastPapersRoot, buildtest: openCustomTestBuilder,
     bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests
   };
   if (renders[id]) renders[id]();

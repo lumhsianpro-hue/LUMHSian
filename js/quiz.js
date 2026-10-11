@@ -1448,16 +1448,14 @@ async function submitReport(btn, questionId, context) {
   if (message.length > 2000) return showToast('That message is too long (max 2000 characters).');
   const rl = rateLimited('submit_report', 5, 15 * 60 * 1000);
   if (!rl.allowed) return showToast(`Too many messages sent. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
-  // Optimistic: the form closes and confirms at once and the send continues in the background, so the app never
-  // waits on the network. If it does fail, the text is put back in the form so nothing is lost.
+  btn.disabled = true;
+  const res = await sendStudentMessage({ type: questionId ? 'question_report' : 'feedback', question_id: questionId, message: context === 'support' ? '[Support] ' + message : message });
+  if (!res.ok) {
+    btn.disabled = false;
+    return showToast('⚠️ Could not send. Your text is still here; please try again.', 4500);
+  }
   overlay.remove();
   showToast(questionId ? '🚩 Report sent ✓' : '💬 Message sent ✓');
-  const res = await sendStudentMessage({ type: questionId ? 'question_report' : 'feedback', question_id: questionId, message: context === 'support' ? '[Support] ' + message : message });
-  if (res.ok) return;
-  showToast('⚠️ Could not send. Your text was kept, please try again', 4500);
-  if (questionId) openReportModal(questionId); else if (typeof window.openFeedbackModal === 'function') window.openFeedbackModal(context);
-  const again = document.getElementById('_rpt_msg');
-  if (again) again.value = message;
 }
 window.submitReport = submitReport;
 

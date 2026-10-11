@@ -4324,7 +4324,11 @@ async function adminReports(filter = 'all', token = window._adminRenderToken, pa
   if (filter === 'pending') query = query.eq('status', 'pending');
   if (filter === 'question_report') query = query.eq('type', 'question_report');
   if (filter === 'feedback') query = query.eq('type', 'feedback');
-  const { data, count } = await db(query, 'Reports load failed');
+  const { data, count, error } = await db(query, 'Reports load failed');
+  if (error) {
+    content.innerHTML = `<div class="card"><p>Reports and feedback could not be loaded. Please retry.</p><button class="btn btn-primary mt-2" onclick="adminReports('${filter}')">Retry</button></div>`;
+    return;
+  }
   const pendingCount = await getPendingReportsCount();
   updateReportsBadge(pendingCount);
   const totalPages = count ? Math.max(1, Math.ceil(count / REPORTS_PAGE_SIZE)) : 1;
@@ -4337,16 +4341,24 @@ async function adminReports(filter = 'all', token = window._adminRenderToken, pa
   const qIds = [...new Set((data || []).map(r => r.question_id).filter(Boolean))];
   let qMap = {};
   if (qIds.length) {
-    const { data: qs } = await db(sb.from('questions').select('id,text').in('id', qIds), 'Questions load failed');
+    const { data: qs, error: questionsError } = await db(sb.from('questions').select('id,text').in('id', qIds), 'Questions load failed');
+    if (questionsError) {
+      content.innerHTML = `<div class="card"><p>Question details could not be loaded. Please retry.</p><button class="btn btn-primary mt-2" onclick="adminReports('${filter}')">Retry</button></div>`;
+      return;
+    }
     (qs || []).forEach(q => { qMap[q.id] = q; });
   }
   const reportEmails = [...new Set((data || []).map(r => r.user_email).filter(Boolean))];
   const studentMap = {};
   if (reportEmails.length) {
-    const { data: students } = await db(
+    const { data: students, error: studentsError } = await db(
       sb.from('users').select('email,auth_uid').in('email', reportEmails),
       'Report student lookup failed'
     );
+    if (studentsError) {
+      content.innerHTML = `<div class="card"><p>Student identities could not be loaded. Please retry.</p><button class="btn btn-primary mt-2" onclick="adminReports('${filter}')">Retry</button></div>`;
+      return;
+    }
     (students || []).forEach(student => { studentMap[student.email] = student; });
   }
 
@@ -4468,7 +4480,9 @@ window.adminDeleteSelectedReports = adminDeleteSelectedReports;
 async function adminReplyToReport(id, filter) {
   const reply = document.getElementById(`_reply_${id}`)?.value.trim();
   if (!reply) return showToast('Please type a reply');
-  await db(sb.from('reports_feedback').update({ admin_reply: reply, status: 'replied', replied_at: new Date().toISOString() }).eq('id', id), 'Reply failed');
+  const { data, error } = await db(sb.from('reports_feedback').update({ admin_reply: reply, status: 'replied', replied_at: new Date().toISOString() }).eq('id', id).select('id').maybeSingle(), 'Reply failed');
+  if (error) return;
+  if (!data) return showToast('This report could not be found. No reply was sent.');
   showToast('Reply sent ✓');
   logAdminAction('Replied to a report/feedback', `Report #${id}`);
   adminReports(filter);
@@ -4778,7 +4792,8 @@ window.adminSendNotification = adminSendNotification;
 
 async function deleteSentNotification(id) {
   showConfirm('Delete this notification? Students will stop seeing it immediately.', async () => {
-    await db(sb.from('app_notifications').delete().eq('id', id), 'Delete failed');
+    const { error } = await db(sb.from('app_notifications').delete().eq('id', id), 'Delete failed');
+    if (error) return;
     showToast('Deleted');
     adminAnnouncements();
   }, 'Delete');
@@ -5885,7 +5900,7 @@ async function exportFullBackup() {
   showLoading(true, 'Preparing backup...');
   const tables = ['users','user_stats','colleges','years','modules','year_modules','subjects','past_papers',
     'questions','bookmarks','announcements','system_settings','feature_flags','reports_feedback',
-    'question_comments','custom_tests','subscription_plans','subscriptions'];
+    'question_comments','custom_tests','subscription_plans','subscriptions','notification_dismissals','notification_views'];
   const backup = { exported_at: new Date().toISOString(), app: 'LUMHSian' };
   const failedTables = [];
   try {

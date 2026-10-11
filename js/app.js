@@ -301,26 +301,6 @@ function buildModuleCardHtml(m, subjectCount, mAcc, yearId, yearName) {
     </div>`;
 }
 
-
-
-// Pinned card at the top of the Modules tab, styled like a module-card but
-// gold-tinted so it reads as distinct from the actual modules below it.
-// Opens the global Past Papers hierarchy (College → Year → Papers) — see
-// openPastPapersRoot() further down.
-function buildPastPapersCardHtml() {
-  return `
-    <div class="module-card" onclick="openPastPapersRoot()">
-      <div class="module-thumb" style="display:flex;align-items:center;justify-content:center;background:var(--gold-500);color:#fff;font-size:32px">📜</div>
-      <div class="module-info">
-        <div class="module-title">Past Papers</div>
-        <div class="module-sub">Solve real exam papers from any college</div>
-      </div>
-      <span style="color:var(--ink-4);font-size:18px">›</span>
-    </div>`;
-}
-
-
-
 // Fetches question counts for many rows in ONE request instead of one
 // .count() request per row — reused below for modules, past papers, and
 // practice tests, all of which used to fire one count query per item every
@@ -557,16 +537,8 @@ export async function renderModulesScreen() {
         <h2 style="margin:0">📚 Modules</h2>
         <span class="text-xs text-muted" onclick="changeYear()" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${myYearName||'Set Year'} ✏️</span>
       </div>
-      <p class="text-sm text-muted" style="margin-bottom:16px">Solve real previous exam papers below, or practice subject-by-subject with your year's modules.</p>
-      <div class="list-item" style="margin-bottom:18px" onclick="openCustomTestBuilder()">
-        <div class="list-item-left">
-          <div class="list-item-icon" style="background:var(--gold-50);color:var(--gold-600);font-size:20px">🛠️</div>
-          <div><div class="list-item-title">Build Your Own Test</div><div class="list-item-sub">Pick subjects, difficulty & question count</div></div>
-        </div>
-        <span style="color:var(--ink-4)">›</span>
-      </div>
+      <p class="text-sm text-muted" style="margin-bottom:16px">Practice subject-by-subject with your year's modules.</p>
       <div class="section-label">${myYearName || 'My Modules'}</div>
-      ${buildPastPapersCardHtml()}
       ${myYearHtml}
       <div style="height:16px"></div>`;
   } catch(e) {
@@ -622,17 +594,6 @@ export async function renderHome() {
     _fetchYearsCached(),
     getUserStats()
   ]);
-  const cachedAnnouncements = cacheGet('announcements', CONTENT_COUNTS_TTL) || [];
-  // Bug fix: target_college was saved when an announcement was created but
-  // never actually checked here, so every "targeted" announcement was shown
-  // to all students regardless of college. Filter it the same way the
-  // notification bell already does, then keep the latest 3.
-  const myYearForFilter = await _getMyYear();
-  const announcements = cachedAnnouncements.filter(a =>
-    (!a.target_college || a.target_college === window.currentUser.college) &&
-    (!a.target_year_id || a.target_year_id === myYearForFilter?.id)
-  ).slice(0, 3);
-
   // My year modules teaser (top 3) — parallel fetch
   const myYear = (years || []).find(y => y.name === myYearName);
   let myYearModuleHtml = '';
@@ -660,8 +621,6 @@ export async function renderHome() {
   const acc = stats.total_questions ? Math.round((stats.total_correct/stats.total_questions)*100) : 0;
   const greeting = (() => { const h=new Date().getHours(); if(h<12) return '🌅 Good morning'; if(h<17) return '☀️ Good afternoon'; return '🌙 Good evening'; })();
   const avatarEmoji = window.currentUser.gender==='female' ? '👩‍⚕️' : '👨‍⚕️';
-  const announceHtml = announcements.map(a=>`<div class="announce-bar" role="button" tabindex="0" onclick="openAnnouncementSection(${Number(a.id)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openAnnouncementSection(${Number(a.id)})}">${a.image_url ? `<img src="${esc(a.image_url)}" alt="" style="width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:16px">${esc(a.emoji)||'📢'}</span>`}<span><strong>${esc(a.title)||''}</strong>${a.title&&a.body?' · ':''}${esc(a.body)||''}</span></div>`).join('');
-
   wrap.innerHTML = `
     <style>
       @keyframes lumhsianPulseSweep { 0% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: -300; } }
@@ -712,8 +671,6 @@ export async function renderHome() {
         </div>
       </div>
     </div>
-
-    ${announceHtml}
 
     <div class="quick-row">
       <div class="quick-tile" onclick="navGo('modules')"><span class="quick-tile-icon">${ICON_BOOK}</span><span class="quick-tile-label">Modules</span></div>
@@ -950,9 +907,8 @@ window.backToModule = backToModule;
 // year-picker step and no "X Year" heading; tapping Past Papers goes straight
 // to a college list containing only that one year's papers. To check a
 // different year, switch year first (Home), then open Past Papers again.
-// Reuses the 'module' screen/modulePageWrap the same in-place way
-// openModule()'s old sub-views did, so Review/Solve still hand off to the
-// exact same startTest() used everywhere else — driven by paper_id alone
+// Reuses the existing Past Papers hierarchy and the same startTest() used
+// everywhere else — driven by paper_id alone
 // (see startTest()), since a single paper can still be tagged with any
 // number of modules via the past_paper_modules table (e.g. one exam paper
 // covering GIT + Endocrinology + Pharmacology), purely as a display label,
@@ -963,12 +919,12 @@ export async function openPastPapersRoot() {
   const sequence = ++_moduleLoadSequence;
   _moduleSubViewSequence++;
   const isCurrent = () => sequence === _moduleLoadSequence;
-  const wrap = document.getElementById('modulePageWrap');
-  window._lastOpenedPastPapers = { level: 'root' };
+  const wrap = document.getElementById('pastPapersPageWrap');
   window._moduleScreenMode = 'pastpapers';
+  window._lastOpenedPastPapers = { level: 'root' };
   window._moduleSubView = null;
   wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card-teal"><h2>Loading past papers...</h2></div>${[1,2].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
-  showScreen('module');
+  showScreen('pastpapers');
 
   try {
     // Plain selects + separate lookups, NOT embedded joins — PostgREST can't
@@ -1044,7 +1000,7 @@ function renderPastPapersCollegeList() {
   _moduleSubViewSequence++;
   window._lastOpenedPastPapers = { level: 'root' };
   window._moduleScreenMode = 'pastpapers';
-  const wrap = document.getElementById('modulePageWrap');
+  const wrap = document.getElementById('pastPapersPageWrap');
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_BUILDING} Past Papers</h2><p>Choose a college</p></div>
@@ -1141,7 +1097,7 @@ async function openPastPaperCollege(collegeKey) {
   window._moduleScreenMode = 'pastpapers';
   const title = g.collegeName || 'Other Colleges';
   const papers = [...g.papers].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-  const wrap = document.getElementById('modulePageWrap');
+  const wrap = document.getElementById('pastPapersPageWrap');
   wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back to Past Papers</button><div class="card-teal"><h2>Loading papers...</h2></div>${[1,2].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
   let stats, saved;
   try {
@@ -1378,38 +1334,48 @@ export async function getStudentAnnouncements() {
 
 
 
-async function openCustomTestBuilder() {
-  showLoading(true, 'Loading modules...');
+export async function openCustomTestBuilder() {
+  showScreen('buildtest');
+  const wrap = document.getElementById('buildTestPageWrap');
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(3, false)}`;
   const myYear = await _getMyYear();
   if (!myYear) {
-    showLoading(false);
-    showToast('Please set your year in Profile first to build a custom test.');
+    wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card"><h2>🛠️ Build Your Own Test</h2><p class="mt-2">Please set your year in Profile first to build a custom test.</p></div>`;
     return;
   }
-  const { data: yearModules } = await db(sb.from('year_modules').select('module_id').eq('year_id', myYear.id), 'Modules error');
+  const { data: yearModules, error: yearModulesError } = await db(sb.from('year_modules').select('module_id').eq('year_id', myYear.id), 'Modules error');
+  if (yearModulesError) {
+    wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card"><p>Could not load modules. Please try again.</p><button class="btn btn-primary mt-2" onclick="openCustomTestBuilder()">Retry</button></div>`;
+    return;
+  }
   const moduleIds = (yearModules || []).map(ym => ym.module_id);
-  const [{ data: modules }, { data: papers }, { data: savedTests }] = await Promise.all([
+  const [moduleResult, papersResult, savedTestsResult] = await Promise.all([
     moduleIds.length ? db(sb.from('modules').select('*').in('id', moduleIds), 'Modules fetch error') : Promise.resolve({ data: [] }),
     db(sb.from('past_papers').select('id,title').eq('is_active', true).eq('year_id', myYear.id).order('display_order'), 'Past papers error'),
     db(sb.from('custom_tests').select('*').eq('user_email', window.currentUser.email).order('created_at', { ascending: false }), 'Saved tests error')
   ]);
+  if (moduleResult.error || papersResult.error || savedTestsResult.error) {
+    wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card"><p>Could not load test-building options. Please try again.</p><button class="btn btn-primary mt-2" onclick="openCustomTestBuilder()">Retry</button></div>`;
+    return;
+  }
+  const modules = moduleResult.data;
+  const papers = papersResult.data;
+  const savedTests = savedTestsResult.data;
   const saved = getResumableSnapshot();
-  showLoading(false);
 
   const overlay = document.createElement('div');
   overlay.id = 'ctbOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.85);z-index:10006;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto">
+    <div class="custom-test-builder-card">
       <div class="flex-between mb-3">
         <span class="fw-700">🛠️ Build Your Own Test</span>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>
+        <button class="custom-test-builder-close" aria-label="Close test builder" onclick="goBack()">✕</button>
       </div>
       <p class="text-xs text-muted mb-3">Mix and match — pick any combination of modules, past papers, and practice tests below. Behaves like a real Attempt: answers are locked in until you finish, review comes after. It won't count toward your personal statistics.</p>
 
-      <div class="card" style="margin-bottom:14px;padding:12px 14px;cursor:pointer" onclick="document.getElementById('ctbOverlay')?.remove();openSavedTests()">
+      <button type="button" class="card custom-test-builder-saved" onclick="openSavedTests()">
         <div class="flex-between"><span class="fw-700 text-sm">📁 Saved Tests${savedTests?.length ? ` (${savedTests.length})` : ''}</span><span class="text-xs fw-600" style="color:var(--gold-600)">Open →</span></div>
-      </div>
+      </button>
 
       <div class="tab-bar" id="ctbSourceTabs" style="margin-bottom:14px">
         <button class="tab-btn active" onclick="ctbShowSource('modules')">📚 Modules</button>
@@ -1460,7 +1426,8 @@ async function openCustomTestBuilder() {
       </div>
       <button class="btn btn-ghost btn-sm mt-2" style="width:100%" onclick="buildCustomTest(true)">💾 Save for later (don't start yet)</button>
     </div>`;
-  document.body.appendChild(overlay);
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>`;
+  wrap.appendChild(overlay);
 }
 window.openCustomTestBuilder = openCustomTestBuilder;
 
@@ -1591,9 +1558,8 @@ async function buildCustomTest(saveOnly, mode) {
     if (res.error || !res.data) return; // db() already showed the specific error (e.g. paper_ids/test_ids not migrated yet — see schema note)
     savedId = res.data.id;
     showToast('Test saved ✓');
-    if (saveOnly) { document.getElementById('ctbOverlay')?.remove(); return; }
+    if (saveOnly) { openSavedTests(); return; }
   }
-  document.getElementById('ctbOverlay')?.remove();
   // savedId marks it as already saved, so the results/end-of-review "Save this test?" prompts don't ask again
   startCustomTest(moduleIds, subjectIds, count, timer, name, paperIds, testIds, mode, savedId);
 }
@@ -1653,7 +1619,6 @@ window.openSavedTests = openSavedTests;
 async function startSavedCustomTest(id, mode) {
   const { data: t } = await db(sb.from('custom_tests').select('*').eq('id', id).single(), 'Load failed');
   if (!t) return;
-  document.getElementById('ctbOverlay')?.remove();
   startCustomTest(t.module_ids, t.subject_ids, t.question_count, t.time_limit_minutes, t.name, t.paper_ids || [], t.test_ids || [], mode, t.id);
 }
 window.startSavedCustomTest = startSavedCustomTest;
@@ -1854,6 +1819,9 @@ let _notificationFetchAt = 0;
 let _notificationFetchPromise = null;
 let _notificationFetchPromiseUser = null;
 let _notificationFetchUser = null;
+let _notificationPanelSequence = 0;
+let _serverNotificationViewKeys = new Set();
+let _notificationPersistenceNoticeAt = 0;
 let _pendingNotificationOpen = new URLSearchParams(location.search).get('open') === 'notifications';
 
 function _notificationStorageKey(kind) {
@@ -1913,7 +1881,9 @@ function _showNotificationAnnouncement(items) {
   const detail = item._source === 'announce'
     ? [item.title, item.body].filter(Boolean).join(' · ')
     : (item.body || item.title || 'You have a new notification.');
-  preview.textContent = `${detail}${items.length > 1 ? ` · and ${items.length - 1} more update${items.length === 2 ? '' : 's'}` : ''}`;
+  const cleanDetail = detail.replace(/\s+/g, ' ').trim();
+  const shortDetail = cleanDetail.length > 120 ? `${cleanDetail.slice(0, 120).trimEnd()}...` : cleanDetail;
+  preview.textContent = `${shortDetail}${items.length > 1 ? ` · and ${items.length - 1} more update${items.length === 2 ? '' : 's'}` : ''}`;
   open.append(heading, preview);
   open.addEventListener('click', () => {
     banner.remove();
@@ -1952,82 +1922,46 @@ function checkWhatsNew() {
 
 
 
-// Students can delete a notification/announcement from their own bell
-// without it disappearing for anyone else — both are shared broadcast rows,
-// so "delete" here just means "never show me this one again," tracked
-// locally the same lightweight way last-seen already is, rather than
-// needing a new per-user table. Keyed by source+id since app_notifications
-// and announcements each have their own independent id sequence.
-function _getDismissedNotifIds() {
+function _getLocalDismissedNotifIds() {
   try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('dismissed_notif_ids')) || '[]')); }
   catch { return new Set(); }
 }
-let _notificationSelectedIds = new Set();
 function _notificationItemKey(source, id) { return `${source}:${id}`; }
-function _persistDismissedNotifications(ids) {
-  localStorage.setItem(_notificationStorageKey('dismissed_notif_ids'), JSON.stringify([...ids].slice(-500)));
+function _notificationPersistenceWarning(message) {
+  if (Date.now() - _notificationPersistenceNoticeAt < 60000) return;
+  _notificationPersistenceNoticeAt = Date.now();
+  showToast(message, 6000);
 }
-function dismissNotification(source, id, filter = 'all') {
-  if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0) return;
-  const ids = _getDismissedNotifIds();
+async function _persistNotificationDismissal(source, id) {
+  const userEmail = window.currentUser?.email;
+  if (!userEmail) throw new Error('Your student session is no longer available.');
+  const { error } = await sb.from('notification_dismissals').insert({
+    user_email: userEmail, source, notification_id: Number(id)
+  });
+  if (error && error.code !== '23505') throw error;
+}
+async function dismissNotification(source, id, filter = 'all', button = null) {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0 || !window.currentUser?.email) return;
+  if (button) button.disabled = true;
+  try {
+    await _persistNotificationDismissal(source, id);
+  } catch (error) {
+    console.warn('Could not dismiss notification', error);
+    showToast('Could not delete this notification. Please try again.');
+    if (button?.isConnected) button.disabled = false;
+    return;
+  }
   const key = _notificationItemKey(source, id);
+  const ids = _getLocalDismissedNotifIds();
   ids.add(key);
-  try { _persistDismissedNotifications(ids); }
-  catch (error) { console.warn('Could not dismiss notification', error); showToast('Could not remove notification on this device.'); return; }
-  _notificationSelectedIds.delete(key);
+  try { localStorage.setItem(_notificationStorageKey('dismissed_notif_ids'), JSON.stringify([...ids].slice(-500))); }
+  catch (error) { console.warn('Could not update local notification cache', error); }
   window._appNotifs = (window._appNotifs || []).filter(n => `${n._source}:${n.id}` !== key);
   if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
   _refreshNotificationBadge();
   openNotificationBell(true, filter);
 }
 window.dismissNotification = dismissNotification;
-
-function toggleNotificationSelection(source, id, selected, filter = 'all') {
-  const key = _notificationItemKey(source, id);
-  if (selected) _notificationSelectedIds.add(key);
-  else _notificationSelectedIds.delete(key);
-  openNotificationBell(true, filter);
-}
-window.toggleNotificationSelection = toggleNotificationSelection;
-
-function selectVisibleNotifications(filter, selected) {
-  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
-  const items = (window._appNotifs || []).filter(item =>
-    filter !== 'unread' || _notificationIsUnread(item, lastSeen)
-  );
-  items.forEach(item => {
-    const key = _notificationItemKey(item._source, item.id);
-    if (selected) _notificationSelectedIds.add(key);
-    else _notificationSelectedIds.delete(key);
-  });
-  openNotificationBell(true, filter);
-}
-window.selectVisibleNotifications = selectVisibleNotifications;
-
-function deleteSelectedNotifications(filter = 'all') {
-  const selected = new Set(_notificationSelectedIds);
-  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
-  const matching = (window._appNotifs || []).filter(item =>
-    selected.has(_notificationItemKey(item._source, item.id)) &&
-    (filter !== 'unread' || _notificationIsUnread(item, lastSeen))
-  );
-  if (!matching.length) return;
-  showConfirm(`Remove ${matching.length} selected notification${matching.length === 1 ? '' : 's'} from your bell? This won't delete the original content.`, () => {
-    const dismissed = _getDismissedNotifIds();
-    matching.forEach(item => dismissed.add(_notificationItemKey(item._source, item.id)));
-    try { _persistDismissedNotifications(dismissed); }
-    catch (error) { console.warn('Could not remove selected notifications', error); showToast('Could not remove notifications on this device.'); return; }
-    matching.forEach(item => _notificationSelectedIds.delete(_notificationItemKey(item._source, item.id)));
-    const dismissedKeys = new Set(matching.map(item => _notificationItemKey(item._source, item.id)));
-    window._appNotifs = (window._appNotifs || []).filter(item => !dismissedKeys.has(_notificationItemKey(item._source, item.id)));
-    if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
-    _refreshNotificationBadge();
-    openNotificationBell(true, filter);
-  }, 'Remove');
-}
-window.deleteSelectedNotifications = deleteSelectedNotifications;
-
-
 
 // Admin messages the student hasn't opened yet. "Seen" is tracked on this device as the highest message id they have
 // opened, so no database write is needed just to mark something read.
@@ -2042,6 +1976,16 @@ function _inboxSeenId() {
   }
   return legacy;
 }
+function _seenInboxMessageIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('seen_inbox_message_ids')) || '[]').map(String)); }
+  catch { return new Set(); }
+}
+function _markInboxMessagesRead(ids) {
+  if (!ids.length) return;
+  const seen = _seenInboxMessageIds();
+  ids.forEach(id => seen.add(String(id)));
+  localStorage.setItem(_notificationStorageKey('seen_inbox_message_ids'), JSON.stringify([...seen].slice(-500)));
+}
 function _seenReportReplyIds() {
   try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('seen_report_replies')) || '[]').map(String)); }
   catch { return new Set(); }
@@ -2054,6 +1998,15 @@ function _markBroadcastNotificationsRead(items) {
   const seen = _seenBroadcastNotificationIds();
   items.forEach(item => seen.add(`${item._source}:${item.id}`));
   localStorage.setItem(_notificationStorageKey('seen_broadcast_notifications'), JSON.stringify([...seen].slice(-500)));
+}
+async function _persistNotificationView(item) {
+  const userEmail = window.currentUser?.email;
+  if (!userEmail) throw new Error('Your student session is no longer available.');
+  const { error } = await sb.from('notification_views').insert({
+    user_email: userEmail, source: item._source, notification_id: Number(item.id)
+  });
+  if (error && error.code !== '23505') throw error;
+  _serverNotificationViewKeys.add(_notificationItemKey(item._source, item.id));
 }
 function _migrateBroadcastReadState(items, complete) {
   const key = _notificationStorageKey('broadcast_read_state_migrated');
@@ -2076,9 +2029,9 @@ function _markReportRepliesRead(ids) {
   _saveSeenReportReplyIds(seen);
 }
 function _notificationIsUnread(item, lastSeen) {
-  if (item._source === 'inbox') return Number(item.id) > _inboxSeenId();
+  if (item._source === 'inbox') return Number(item.id) > _inboxSeenId() && !_seenInboxMessageIds().has(String(item.id));
   if (item._source === 'report_reply') return !_seenReportReplyIds().has(String(item.id));
-  if (_seenBroadcastNotificationIds().has(`${item._source}:${item.id}`)) return false;
+  if (_seenBroadcastNotificationIds().has(`${item._source}:${item.id}`) || _serverNotificationViewKeys.has(_notificationItemKey(item._source, item.id))) return false;
   if (localStorage.getItem(_notificationStorageKey('broadcast_read_state_migrated')) === 'true') return true;
   return new Date(item.created_at).getTime() > lastSeen;
 }
@@ -2086,7 +2039,7 @@ export function notificationIsUnread(item) {
   const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
   return _notifAlive(item) && _notificationIsUnread(item, lastSeen);
 }
-export function markNotificationAsRead(item) {
+export async function markNotificationAsRead(item) {
   if (!item || !Number.isSafeInteger(Number(item.id)) || Number(item.id) <= 0) return;
   if (item._source === 'inbox') {
     const latestSeen = Math.max(_inboxSeenId(), Number(item.id));
@@ -2094,6 +2047,11 @@ export function markNotificationAsRead(item) {
   } else if (item._source === 'report_reply') {
     _markReportRepliesRead([item.id]);
   } else {
+    try { await _persistNotificationView(item); }
+    catch (error) {
+      console.warn('Could not save notification view state', error);
+      _notificationPersistenceWarning('Announcement read state is device-only until the notification dismissals SQL migration is run.');
+    }
     _markBroadcastNotificationsRead([item]);
   }
   window._inboxUnread = (window._appNotifs || []).filter(n =>
@@ -2107,13 +2065,66 @@ window._inboxSeenId = _inboxSeenId;
 window._markReportRepliesRead = _markReportRepliesRead;
 window.checkNewNotifications = checkNewNotifications;   // (function declaration, so it is available from here)
 
+async function clearViewedMessageNotifications(messages) {
+  const keys = new Map();
+  (messages || []).forEach(message => {
+    if (message.sender !== 'admin') return;
+    if (message.legacy && message._reportId != null) {
+      keys.set(_notificationItemKey('report_reply', message._reportId), { source: 'report_reply', id: message._reportId });
+    } else if (message.kind === 'reply' && message.ref_id != null) {
+      keys.set(_notificationItemKey('report_reply', message.ref_id), { source: 'report_reply', id: message.ref_id });
+      if (Number.isSafeInteger(Number(message.id)) && Number(message.id) > 0) {
+        keys.set(_notificationItemKey('inbox', message.id), { source: 'inbox', id: message.id });
+      }
+    } else if (Number.isSafeInteger(Number(message.id)) && Number(message.id) > 0) {
+      keys.set(_notificationItemKey('inbox', message.id), { source: 'inbox', id: message.id });
+    }
+  });
+  const cleared = [];
+  for (const entry of keys.values()) {
+    try {
+      await _persistNotificationDismissal(entry.source, entry.id);
+      cleared.push(entry);
+    } catch (error) {
+      console.warn('Could not clear viewed message notification', error);
+      _notificationPersistenceWarning('Message notification clearing requires the notification dismissals SQL migration.');
+    }
+  }
+  if (!cleared.length) return false;
+  const inboxIds = cleared.filter(entry => entry.source === 'inbox').map(entry => entry.id);
+  const replyIds = cleared.filter(entry => entry.source === 'report_reply').map(entry => entry.id);
+  _markInboxMessagesRead(inboxIds);
+  _markReportRepliesRead(replyIds);
+  const clearedKeys = new Set(cleared.map(entry => _notificationItemKey(entry.source, entry.id)));
+  window._appNotifs = (window._appNotifs || []).filter(item =>
+    !clearedKeys.has(_notificationItemKey(item._source, item.id))
+  );
+  if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
+  window._inboxUnread = window._appNotifs.filter(item =>
+    (item._source === 'inbox' || item._source === 'report_reply') && _notificationIsUnread(item, 0)
+  ).length;
+  _refreshNotificationBadge();
+  return cleared.length === keys.size;
+}
+window._clearViewedMessageNotifications = clearViewedMessageNotifications;
+
 function _refreshNotificationBadge(notifs = window._appNotifs || []) {
   const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
   const unread = notifs.filter(n => _notifAlive(n) && _notificationIsUnread(n, lastSeen)).length;
-  const badge = document.getElementById('notifBellBadge');
-  if (badge) {
+  const announcements = window._studentAnnouncements || notifs.filter(n => n._source === 'announce');
+  const announcementsUnread = new Set(announcements
+    .filter(item => _notifAlive(item) && _notificationIsUnread({ ...item, _source: 'announce' }, lastSeen))
+    .map(item => String(item.id))).size;
+  for (const badgeId of ['notifBellBadge', 'profileNotificationBadge']) {
+    const badge = document.getElementById(badgeId);
+    if (!badge) continue;
     badge.style.display = unread > 0 ? 'flex' : 'none';
     badge.textContent = String(unread);
+  }
+  const announcementBadge = document.getElementById('profileAnnouncementBadge');
+  if (announcementBadge) {
+    announcementBadge.style.display = announcementsUnread > 0 ? 'flex' : 'none';
+    announcementBadge.textContent = String(announcementsUnread);
   }
 }
 window._refreshNotificationBadge = _refreshNotificationBadge;
@@ -2125,6 +2136,7 @@ async function checkNewNotifications(force = false) {
     _notificationFetchUser = currentFetchUser;
     _notificationFetchAt = 0;
     window._appNotifs = null;
+    _serverNotificationViewKeys = new Set();
   }
   if (!force && window._appNotifs && Date.now() - _notificationFetchAt < NOTIFICATION_FETCH_TTL) return;
   if (_notificationFetchPromise && _notificationFetchPromiseUser === currentFetchUser) return _notificationFetchPromise;
@@ -2132,6 +2144,7 @@ async function checkNewNotifications(force = false) {
   const cachedNotifs = force ? null : cacheGet(notificationCacheKey, NOTIFICATION_FETCH_TTL);
   if (cachedNotifs !== null) {
     window._appNotifs = cachedNotifs.filter(_notifAlive);
+    window._studentAnnouncements = cacheGet('announcements', NOTIFICATION_FETCH_TTL) || window._studentAnnouncements || [];
     const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
     window._inboxUnread = window._appNotifs.filter(n =>
       (n._source === 'inbox' || n._source === 'report_reply') && _notificationIsUnread(n, lastSeen)
@@ -2142,15 +2155,27 @@ async function checkNewNotifications(force = false) {
   }
   const fetchPromise = (async () => {
     const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-    const [notifRes, announceRes, inboxRes, replyRes] = await Promise.all([
+    const [notifRes, announceRes, inboxRes, replyRes, dismissedRes, viewsRes] = await Promise.all([
       db(sb.from('app_notifications').select('id,title,body,image_url,created_at,expires_at,target_college,target_year_id').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
       db(sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
       db(sb.from('inbox_messages').select('id,kind,body,image_url,ref_id,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').order('id', { ascending: false }).limit(20), 'Inbox notification load failed'),
-      db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at,created_at').eq('user_email', window.currentUser.email).not('admin_reply', 'is', null).order('replied_at', { ascending: false }).limit(40), 'Report reply notification load failed')
+      db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at,created_at').eq('user_email', window.currentUser.email).not('admin_reply', 'is', null).order('replied_at', { ascending: false }).limit(40), 'Report reply notification load failed'),
+      db(sb.from('notification_dismissals').select('source,notification_id').eq('user_email', window.currentUser.email), 'Notification dismissal load failed'),
+      db(sb.from('notification_views').select('source,notification_id').eq('user_email', window.currentUser.email), 'Notification view state load failed')
     ]);
     if ((window.currentUser.auth_uid || window.currentUser.email) !== currentFetchUser) return;
+    if (dismissedRes.error) {
+      console.warn('Per-user notification dismissals could not be loaded', dismissedRes.error);
+      _notificationPersistenceWarning('Notification deletion and cross-device read state require the notification dismissals SQL migration.');
+    }
+    if (viewsRes.error) {
+      console.warn('Per-user notification views could not be loaded', viewsRes.error);
+      _notificationPersistenceWarning('Announcement read state is device-only until the notification dismissals SQL migration is run.');
+    }
+    _serverNotificationViewKeys = new Set((viewsRes.data || []).map(row => _notificationItemKey(row.source, row.notification_id)));
     const notifs = (notifRes.data || []).filter(_notifAlive);
     const announces = (announceRes.data || []).filter(_notifAlive);
+    if (!announceRes.error) window._studentAnnouncements = announces;
     const inboxOk = !inboxRes.error;
     const inboxItems = inboxOk ? (inboxRes.data || []) : [];
     const replies = replyRes.data || [];
@@ -2159,7 +2184,8 @@ async function checkNewNotifications(force = false) {
       .filter(m => m.kind === 'reply' && m.ref_id != null && Number(m.id) <= _inboxSeenId())
       .map(m => m.ref_id));
     const inboxItemsWithoutReportReplies = inboxItems.filter(m => !(m.kind === 'reply' && m.ref_id != null && replyIds.has(String(m.ref_id))));
-    const dismissed = _getDismissedNotifIds();
+    const dismissed = _getLocalDismissedNotifIds();
+    for (const row of dismissedRes.data || []) dismissed.add(_notificationItemKey(row.source, row.notification_id));
     const myYearForFilter = await _getMyYear();
     if ((window.currentUser.auth_uid || window.currentUser.email) !== currentFetchUser) return;
     const merged = [
@@ -2186,7 +2212,7 @@ async function checkNewNotifications(force = false) {
     window._inboxUnread = merged.filter(n =>
       (n._source === 'inbox' || n._source === 'report_reply') && _notificationIsUnread(n, lastSeen)
     ).length;
-    if (!notifRes.error && !announceRes.error && inboxOk && !replyRes.error) {
+    if (!notifRes.error && !announceRes.error && inboxOk && !replyRes.error && !dismissedRes.error && !viewsRes.error) {
       cacheSet(notificationCacheKey, merged);
       cacheSet('announcements', announces);
     }
@@ -2250,12 +2276,13 @@ function stopNotificationSync() {
   _notificationSyncTimer = null;
   _notificationSyncUser = null;
   document.getElementById('notificationAnnouncement')?.remove();
-  document.getElementById('notifBellOverlay')?.remove();
-  _notificationSelectedIds.clear();
+  closeNotificationBell(false);
   _notificationFetchUser = null;
   _notificationFetchAt = 0;
   window._appNotifs = null;
   window._inboxUnread = 0;
+  window._studentAnnouncements = null;
+  _serverNotificationViewKeys = new Set();
   _refreshNotificationBadge([]);
 }
 window._startNotificationSync = startNotificationSync;
@@ -2266,8 +2293,17 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-function closeNotificationBell() {
-  document.getElementById('notifBellOverlay')?.remove();
+function closeNotificationBell(animate = true) {
+  _notificationPanelSequence++;
+  const overlay = document.getElementById('notifBellOverlay');
+  if (!overlay) return;
+  if (!animate) {
+    overlay.remove();
+    return;
+  }
+  if (overlay.classList.contains('is-closing')) return;
+  overlay.classList.add('is-closing');
+  setTimeout(() => overlay.remove(), 160);
 }
 window.closeNotificationBell = closeNotificationBell;
 
@@ -2275,7 +2311,6 @@ function openNotificationTarget(source, id, options = {}) {
   const recordId = Number(id);
   if (!Number.isSafeInteger(recordId) || recordId <= 0) return;
   const item = (window._appNotifs || []).find(n => n._source === source && Number(n.id) === recordId);
-  if (item) markNotificationAsRead(item);
   if (source === 'announce') {
     closeNotificationBell();
     window.openAnnouncementSection?.(recordId);
@@ -2286,8 +2321,10 @@ function openNotificationTarget(source, id, options = {}) {
       : { source, id: recordId };
     window.openInbox?.(target);
   } else if (options.fromAnnouncement) {
+    if (item) markNotificationAsRead(item).catch(error => console.warn('Notification view state update failed', error));
     openNotificationBell();
   } else {
+    if (item) markNotificationAsRead(item).catch(error => console.warn('Notification view state update failed', error));
     openNotificationBell(true, window._notificationBellFilter || 'all');
   }
 }
@@ -2296,24 +2333,28 @@ window.openNotificationTarget = openNotificationTarget;
 async function openNotificationBell(isRerender = false, filter = 'all') {
   window._notificationBellFilter = filter;
   if (!isRerender) {
-    _notificationSelectedIds = new Set();
-    closeNotificationBell();
+    closeNotificationBell(false);
+  }
+  const sequence = ++_notificationPanelSequence;
+  if (isRerender) document.getElementById('notifBellOverlay')?.remove();
+  if (!isRerender) {
     const loading = document.createElement('div');
+    const loadingSequence = _notificationPanelSequence;
     loading.id = 'notifBellOverlay';
     loading.className = 'notification-overlay';
-    loading.innerHTML = '<div class="notification-panel notification-loading"><div class="spinner" style="margin:0 auto 12px"></div><p class="text-sm text-muted">Loading notifications...</p></div>';
+    loading.innerHTML = '<div class="notification-panel notification-panel-loading notification-loading" role="dialog" aria-modal="true" aria-label="Loading notifications"><button type="button" class="notification-panel-close" aria-label="Close notifications" onclick="closeNotificationBell()">×</button><div class="spinner" style="margin:0 auto 12px"></div><p class="text-sm text-muted">Loading notifications...</p></div>';
+    loading.addEventListener('click', event => { if (event.target === loading) closeNotificationBell(); });
     document.body.appendChild(loading);
     try { await checkNewNotifications(true); }
-    finally { loading.remove(); }
+    catch (error) { console.warn('Could not refresh notifications before opening the panel', error); }
+    finally { if (loading.isConnected) loading.remove(); }
+    if (sequence !== _notificationPanelSequence || loadingSequence !== _notificationPanelSequence) return;
   }
   const notifs = (window._appNotifs || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
   const isUnread = n => _notificationIsUnread(n, lastSeen);
   const unreadCount = notifs.filter(isUnread).length;
   const visible = filter === 'unread' ? notifs.filter(isUnread) : notifs;
-  const visibleKeys = visible.map(item => _notificationItemKey(item._source, item.id));
-  const allSelected = visibleKeys.length > 0 && visibleKeys.every(key => _notificationSelectedIds.has(key));
-  const selectedCount = visibleKeys.filter(key => _notificationSelectedIds.has(key)).length;
   const typeMeta = {
     announce: { label: 'Announcement', color: 'var(--gold-700)', bg: 'var(--gold-50)', icon: '📢' },
     report_reply: { label: 'Report reply', color: 'var(--green)', bg: 'var(--green-light)', icon: '📬' },
@@ -2327,25 +2368,25 @@ async function openNotificationBell(isRerender = false, filter = 'all') {
       : (typeMeta[item._source] || typeMeta.notif);
     const id = Number(item.id);
     const source = ['announce', 'inbox', 'report_reply', 'notif'].includes(item._source) ? item._source : 'notif';
-    const key = _notificationItemKey(source, id);
     const title = item._source === 'announce' ? (item.title || 'Announcement') : (item.title || meta.label);
-    const preview = String(item.body || '').trim();
-    const shortPreview = preview.length > 220 ? `${preview.slice(0, 220)}…` : preview;
-    const routeHint = source === 'announce' ? 'Open announcement →'
-      : source === 'inbox' || source === 'report_reply' ? 'Open Inbox →' : 'View update →';
+    const preview = String(item.body || '').replace(/\s+/g, ' ').trim();
+    const shortPreview = preview.length > 120 ? `${preview.slice(0, 120).trimEnd()}...` : preview;
+    const actionLabel = source === 'announce' ? 'Open Announcement'
+      : source === 'inbox' || source === 'report_reply' ? 'Open Inbox' : 'View Update';
     return `<article class="notification-item ${unread ? 'is-unread' : ''}" data-notification-source="${source}" data-notification-id="${id}" data-notification-filter="${filter}">
-      <input class="notification-select" type="checkbox" aria-label="Select ${esc(title)}" ${_notificationSelectedIds.has(key) ? 'checked' : ''} onchange="toggleNotificationSelection('${source}',${id},this.checked,'${filter}')">
-      <button type="button" class="notification-content" aria-label="${esc(`${meta.label}: ${title}`)}" onclick="openNotificationTarget('${source}',${id})">
+      <div class="notification-content">
         <span class="notification-icon" aria-hidden="true">${item._source === 'announce' ? esc(item.emoji || meta.icon) : meta.icon}</span>
         <span class="notification-copy">
           <span class="notification-type" style="color:${meta.color}">${meta.label}${unread ? ' · NEW' : ''}</span>
           <strong>${esc(title)}</strong>
           ${shortPreview ? `<span class="notification-preview">${esc(shortPreview)}</span>` : ''}
-          ${item.image_url ? `<img class="notification-thumbnail" src="${esc(item.image_url)}" alt="" loading="lazy">` : ''}
-          <span class="notification-meta">${esc(timeAgo(new Date(item.created_at).getTime()))} · ${routeHint}</span>
+          <span class="notification-meta">${esc(timeAgo(new Date(item.created_at).getTime()))}</span>
         </span>
-      </button>
-      <button type="button" class="notification-delete" aria-label="Delete ${esc(title)} from your notifications" title="Delete notification" onclick="event.stopPropagation();dismissNotification('${source}',${id},'${filter}')">🗑</button>
+      </div>
+      <div class="notification-actions">
+        <button type="button" class="btn btn-primary notification-open" onclick="event.stopPropagation();openNotificationTarget('${source}',${id})">${actionLabel}</button>
+        <button type="button" class="notification-delete" aria-label="Delete ${esc(title)} from your notifications" title="Delete notification" onclick="event.stopPropagation();dismissNotification('${source}',${id},'${filter}',this)">🗑</button>
+      </div>
     </article>`;
   };
   const overlay = document.createElement('div');
@@ -2362,10 +2403,7 @@ async function openNotificationBell(isRerender = false, filter = 'all') {
           <button class="tab-btn ${filter === 'all' ? 'active' : ''}" onclick="openNotificationBell(true,'all')">All (${notifs.length})</button>
           <button class="tab-btn ${filter === 'unread' ? 'active' : ''}" onclick="openNotificationBell(true,'unread')">Unread (${unreadCount})</button>
         </div>
-        <div class="notification-bulk-actions">
-          <label class="notification-select-all"><input type="checkbox" aria-label="Select all visible notifications" ${allSelected ? 'checked' : ''} onchange="selectVisibleNotifications('${filter}',this.checked)"> Select all</label>
-          <button type="button" class="btn btn-danger btn-xs" ${selectedCount ? '' : 'disabled'} onclick="deleteSelectedNotifications('${filter}')">Delete selected${selectedCount ? ` (${selectedCount})` : ''}</button>
-        </div>
+        <div class="notification-toolbar-hint">Open a notification or delete it from your list.</div>
       </div>
     </header>
     <div class="notification-list" aria-live="polite">
@@ -2374,20 +2412,6 @@ async function openNotificationBell(isRerender = false, filter = 'all') {
   </section>`;
   overlay.addEventListener('click', event => { if (event.target === overlay) closeNotificationBell(); });
   document.body.appendChild(overlay);
-  overlay.querySelectorAll('.notification-item').forEach(row => {
-    let startX = 0, startY = 0;
-    row.addEventListener('touchstart', event => {
-      startX = event.changedTouches[0].clientX;
-      startY = event.changedTouches[0].clientY;
-    }, { passive: true });
-    row.addEventListener('touchend', event => {
-      const dx = event.changedTouches[0].clientX - startX;
-      const dy = event.changedTouches[0].clientY - startY;
-      if (dx < -90 && Math.abs(dy) < 45) {
-        dismissNotification(row.dataset.notificationSource, row.dataset.notificationId, row.dataset.notificationFilter);
-      }
-    }, { passive: true });
-  });
 }
 window.openNotificationBell = openNotificationBell;
 
@@ -2472,7 +2496,7 @@ function _onAppForeground() {
 
     // All other screens — re-render in place
     const renders = {
-      home: renderHome, modules: renderModulesScreen, search: renderSearch,
+      home: renderHome, modules: renderModulesScreen, pastpapers: openPastPapersRoot, search: renderSearch,
       stats: renderStats, profile: renderProfile,
       bookmarks: renderBookmarks, planner: renderPlanner,
       module: () => {
@@ -2572,7 +2596,7 @@ const APP_STATE_KEY = 'lum_app_state';
 const APP_STATE_MAX_AGE = 24 * 3600 * 1000;
 
  // treat anything older than this as a fresh session
-const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','profile','bookmarks','planner','savedtests','admin','module','results','review'];
+const APP_STATE_RESTORABLE_SCREENS = ['home','modules','pastpapers','buildtest','search','stats','profile','bookmarks','planner','savedtests','admin','module','results','review'];
 
 
 
@@ -2590,7 +2614,7 @@ export function saveAppState() {
 
     // Extra state for screens that need data to re-render themselves on restore
     let moduleState = null, savedActiveTest = null, savedReviewState = null, pastPapersState = null;
-    if (screenId === 'module' && window._moduleScreenMode === 'pastpapers' && window._lastOpenedPastPapers) {
+    if ((screenId === 'pastpapers' || screenId === 'module') && window._moduleScreenMode === 'pastpapers' && window._lastOpenedPastPapers) {
       pastPapersState = window._lastOpenedPastPapers;
     } else if (screenId === 'module' && window._lastOpenedModule) {
       moduleState = window._lastOpenedModule;
@@ -2660,16 +2684,17 @@ export async function restoreAppState() {
     if (state.screenId !== 'admin' && window.currentUser?.is_admin) return false;
 
     // ---- module screen: re-run openModule, or re-open Past Papers, with saved params ----
-    if (state.screenId === 'module') {
+    if (state.screenId === 'pastpapers' || state.screenId === 'module') {
       if (state.pastPapersState) {
         // Deliberately resume to the college list (root) only, not deep into
         // a saved college — openPastPapersRoot() re-resolves "my year" fresh
         // each time, so this can never show a stale/wrong year's papers.
         await openPastPapersRoot();
-        restoreNavigationStack(state.navStack, state.screenId);
+        restoreNavigationStack(state.navStack, 'pastpapers');
         setTimeout(() => window.scrollTo(0, state.scrollY || 0), 300);
         return true;
       }
+      if (state.screenId === 'pastpapers') return false;
       if (!state.moduleState) return false; // can't restore without saved module params
       const m = state.moduleState;
       if (!await openModule(m.moduleId, m.moduleName, m.iconUrl || '', m.color || '')) return false;
@@ -2711,7 +2736,7 @@ export async function restoreAppState() {
     }
 
     const renders = {
-      home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
+      home: renderHome, modules: renderModulesScreen, pastpapers: openPastPapersRoot, buildtest: openCustomTestBuilder, search: renderSearch, stats: renderStats,
       profile: renderProfile, bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests,
       admin: () => renderAdminPanel(state.adminTab || 'overview')
     };
