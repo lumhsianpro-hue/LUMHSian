@@ -1,12 +1,3 @@
-/* ===== FONTS =====
-   'Inter' and 'Space Grotesk' were referenced throughout via --font-body/
-   --font-display but never actually loaded anywhere — no @font-face, no
-   <link> in the HTML shell, nothing — so every device was silently falling
-   back to its own default system font (Roboto on Android, -apple-system on
-   iOS) this whole time. Loading them for real here is what actually makes
-   the intended typography show up. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700;800&display=swap');
-
 /* ===== RESET & ROOT ===== */
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 

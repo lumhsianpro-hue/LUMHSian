@@ -27,7 +27,7 @@
 .explanation-box{background:var(--gold-50);border:1px solid var(--gold-200);border-left:4px solid var(--gold-500);border-radius:var(--radius-lg);padding:16px;margin-top:12px;display:none;font-size:14px;line-height:1.6}
 .explanation-box.show{display:block}
 .exp-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold-600);margin-bottom:8px}
-.exp-content{color:var(--gold-800);line-height:1.6}
+.exp-content{color:var(--gold-800);line-height:1.6;font-weight:500}
 
 /* ===== BOOKMARK (promoted to the single save action — Flag for Review was removed) ===== */
 
