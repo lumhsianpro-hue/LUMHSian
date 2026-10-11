@@ -167,13 +167,12 @@ textarea.input-field{border-radius:var(--radius-lg);padding:14px 18px;resize:ver
 
 /* Quick action tiles */
 
-.quick-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(43px,1fr);gap:4px;margin:0 -1px 14px;padding:3px 1px 4px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
-.quick-row::-webkit-scrollbar{display:none}
-.quick-tile{background:var(--surface);border:1px solid var(--gold-400);border-radius:var(--radius-md);padding:8px 1px 6px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;min-width:0}
+.quick-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,80px),1fr));gap:8px;margin:0 0 16px;padding:3px 1px 4px}
+.quick-tile{background:var(--surface);border:1px solid var(--gold-400);border-radius:var(--radius-md);padding:12px 6px 10px;text-align:center;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;min-width:0;min-height:76px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .quick-tile:hover{border-color:var(--gold-400);background:var(--surface-3);transform:translateY(-2px);box-shadow:var(--shadow-md)}
 .quick-tile:active{transform:scale(.96)}
-.quick-tile-icon{font-size:18px;margin-bottom:2px;display:block;line-height:1.2}
-.quick-tile-label{font-size:8.5px;font-weight:700;color:var(--ink-3);letter-spacing:0;line-height:1.15;display:flex;align-items:center;justify-content:center;min-height:2.3em;white-space:normal;text-align:center}
+.quick-tile-icon{font-size:22px;margin-bottom:4px;display:block;line-height:1.2}
+.quick-tile-label{font-size:11px;font-weight:700;color:var(--ink-3);letter-spacing:0;line-height:1.2;display:flex;align-items:center;justify-content:center;min-height:2.3em;white-space:normal;text-align:center}
 
 /* Support chip in the Home header corner */
 .home-support-chip{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#fff8dc,#ffe08a);color:#5e4600;font-size:14px;font-weight:800;padding:9px 16px;border-radius:999px;cursor:pointer;line-height:1;white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.22);letter-spacing:.1px}

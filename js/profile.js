@@ -564,7 +564,7 @@ async function showAboutPage(standalone = false) {
       </div>
       <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="font-size:20px;flex-shrink:0">🔖</div>
-        <div><div class="fw-700 text-sm">Bookmarks & Wrong Questions</div><div class="text-xs text-muted" style="line-height:1.5">Save tough questions and revisit everything you have gotten wrong until it sticks</div></div>
+        <div><div class="fw-700 text-sm">Bookmarks</div><div class="text-xs text-muted" style="line-height:1.5">Save and revisit questions you want to study again</div></div>
       </div>
       <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="font-size:20px;flex-shrink:0">📅</div>
@@ -798,10 +798,6 @@ export async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">${ICON_BOOK}</div><div><div class="list-item-title">Saved Questions</div><div class="list-item-sub">Your bookmarks</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>
-    <div class="list-item" onclick="navGo('wrongattempts')">
-      <div class="list-item-left"><div class="list-item-icon">❌</div><div><div class="list-item-title">Wrong Questions</div><div class="list-item-sub">Sorted by module, subject & test</div></div></div>
-      <span style="color:var(--ink-4)">›</span>
-    </div>
     <div class="list-item" onclick="openSavedTests()">
       <div class="list-item-left"><div class="list-item-icon">📁</div><div><div class="list-item-title">Saved Tests</div><div class="list-item-sub">Your Make Your Own tests</div></div></div>
       <span style="color:var(--ink-4)">›</span>
@@ -977,44 +973,37 @@ window.saveName = saveName;
 
 
 
-// ==================== SAVED-QUESTION FOLDERS (Bookmarks + Wrong Questions) ====================
-// Bookmarks and Wrong Questions share ONE folder browser, so both are classified the same way and never mixed:
+// ==================== BOOKMARK FOLDERS ====================
 //   Module → Subject → Practice Test → questions        (Make Your Own Test questions sit under their original test)
 //   Past Papers → Paper → questions
-// What lands in each:
-//   • Wrong Questions — only questions ATTEMPTED and answered wrong in an Attempt/Practice. Skipped ones never are,
-//     and Review mode never saves anything.
-//   • Bookmarks — whatever the student saved with the Bookmark button.
+// Bookmarks contain questions saved with the Bookmark button.
 // Opening a question from either list starts it un-ticked: the student picks an option themselves, and "Show
 // Explanation" is available straight away without ticking anything.
-// The folder being viewed lives in window._qf[kind].path (loaded data in .data) so Back, Remove and "View Question"
+// The folder being viewed lives in window._qf.bm.path (loaded data in .data) so Back, Remove and "View Question"
 // always return to the same folder.
-const WA_BATCH = 150;
+const BM_BATCH = 150;
 const QF = {
-  wrong: { wrapId: 'wrongAttemptsPageWrap', icon: '❌', title: 'Wrong Questions', noun: 'Wrong attempt questions', badge: 'badge-red',
-    blurb: 'you attempted and got wrong', singular: 'wrong question', emptyIcon: '✅', emptyTitle: 'No Wrong Questions',
-    emptyText: 'Questions you answer incorrectly in an Attempt are saved here, sorted by module, subject and test, so you can revise them. Skipped questions and Review mode are never saved.' },
   bm: { wrapId: 'bookmarksPageWrap', icon: '📖', title: 'Bookmarks', noun: 'Bookmarked questions', badge: 'badge-teal',
     blurb: 'you saved', singular: 'bookmarked question', emptyIcon: '📖', emptyTitle: 'No Bookmarks Yet',
     emptyText: 'Tap the Bookmark button during a test to save questions here. They are sorted by module, subject and test.' }
 };
-window._qf = window._qf || { wrong: { data: null, path: '' }, bm: { data: null, path: '' } };
+window._qf = window._qf || { bm: { data: null, path: '' } };
 
 async function _qfLoad(kind) {
   const email = window.currentUser.email;
-  const { data: rows0 } = kind === 'wrong'
-    ? await db(sb.from('wrong_attempts').select('question_id,wrong_count,last_wrong_at').eq('email', email).order('last_wrong_at', { ascending: false }), 'Wrong questions load failed')
-    : await db(sb.from('bookmarks').select('*').eq('email', email).order('added_at', { ascending: false }), 'Bookmarks load failed');
-  const rows = rows0 || [];
+  const rowsResult = await db(sb.from('bookmarks').select('*').eq('email', email).order('added_at', { ascending: false }), 'Bookmarks load failed');
+  if (rowsResult.error) throw rowsResult.error;
+  const rows = rowsResult.data || [];
   const data = { items: [], modules: {}, subjects: {}, tests: {}, papers: {} };
   if (!rows.length) return data;
 
   // Plain selects + separate lookups (not embedded joins) so a missing relationship can never blank the whole screen
   const qMap = {};
   const ids = rows.map(r => r.question_id);
-  for (let i = 0; i < ids.length; i += WA_BATCH) {
-    const { data: qs } = await db(sb.from('questions').select('id,text,module_id,subject_id,paper_id,practice_test_id').in('id', ids.slice(i, i + WA_BATCH)), 'Questions load failed');
-    for (const q of (qs || [])) qMap[q.id] = q;
+  for (let i = 0; i < ids.length; i += BM_BATCH) {
+    const questionResult = await db(sb.from('questions').select('id,text,module_id,subject_id,paper_id,practice_test_id').in('id', ids.slice(i, i + BM_BATCH)), 'Questions load failed');
+    if (questionResult.error) throw questionResult.error;
+    for (const q of (questionResult.data || [])) qMap[q.id] = q;
   }
   const uniq = arr => [...new Set(arr.filter(Boolean))];
   const qList = Object.values(qMap);
@@ -1024,6 +1013,7 @@ async function _qfLoad(kind) {
     testIds.length ? db(sb.from('practice_tests').select('id,title,module_id,subject_id').in('id', testIds), 'Tests load failed') : Promise.resolve({ data: [] }),
     paperIds.length ? db(sb.from('past_papers').select('*').in('id', paperIds), 'Papers load failed') : Promise.resolve({ data: [] })
   ]);
+  if (tRes.error || pRes.error) throw tRes.error || pRes.error;
   for (const t of (tRes.data || [])) data.tests[t.id] = t;
   for (const p of (pRes.data || [])) data.papers[p.id] = p;
 
@@ -1033,13 +1023,14 @@ async function _qfLoad(kind) {
     modIds.length ? db(sb.from('modules').select('id,name').in('id', modIds), 'Modules load failed') : Promise.resolve({ data: [] }),
     subIds.length ? db(sb.from('subjects').select('id,name').in('id', subIds), 'Subjects load failed') : Promise.resolve({ data: [] })
   ]);
+  if (mRes.error || sRes.error) throw mRes.error || sRes.error;
   for (const m of (mRes.data || [])) data.modules[m.id] = m;
   for (const s of (sRes.data || [])) data.subjects[s.id] = s;
 
   for (const r of rows) {
     const q = qMap[r.question_id];
     if (!q) continue; // the admin deleted this question
-    const item = { qid: q.id, text: q.text || '', count: r.wrong_count || 1, status: r.was_correct };
+    const item = { qid: q.id, text: q.text || '', status: r.was_correct };
     if (q.paper_id && data.papers[q.paper_id]) {
       item.paperId = q.paper_id;
     } else {
@@ -1097,9 +1088,7 @@ function _qfFolder(kind, icon, name, sub, count, path) {
 
 function _qfQuestionCards(kind, items) {
   return items.map(it => {
-    const extra = kind === 'wrong'
-      ? (it.count > 1 ? ` <span class="badge badge-red">Missed ${it.count}×</span>` : '')
-      : (it.status === false ? ' <span class="badge badge-red">Was wrong</span>' : it.status === true ? ' <span class="badge badge-green">Was correct</span>' : '');
+    const extra = it.status === false ? ' <span class="badge badge-red">Was wrong</span>' : it.status === true ? ' <span class="badge badge-green">Was correct</span>' : '';
     const txt = it.text.length > 120 ? esc(it.text.substring(0, 120)) + '...' : esc(it.text);
     return `<div class="card" style="margin-bottom:8px">
       <div style="font-size:14px;font-weight:600;line-height:1.5;margin-bottom:10px">${txt || 'Question'}${extra}</div>
@@ -1116,7 +1105,7 @@ function qfOpen(kind, path) {
   const S = window._qf[kind];
   const D = S && S.data;
   const wrap = document.getElementById(cfg.wrapId);
-  if (!D || !wrap) return kind === 'wrong' ? renderWrongAttempts() : renderBookmarks();
+  if (!D || !wrap) return renderBookmarks();
 
   // If a folder just emptied (its last question was removed), climb to the nearest folder that still has questions
   let cur = path || '';
@@ -1186,44 +1175,62 @@ function qfOpen(kind, path) {
   window.scrollTo(0, 0);
 }
 window.qfOpen = qfOpen;
-window.waOpen = (path) => qfOpen('wrong', path);
 window.bmOpen = (path) => qfOpen('bm', path);
 
 
 
+let _qfLoadToken = 0;
+window._cancelPendingQuestionFolderLoad = screenId => {
+  if (screenId !== 'bookmarks') _qfLoadToken++;
+};
+
 async function _qfRoot(kind) {
   const wrap = document.getElementById(QF[kind].wrapId);
   if (!wrap) return;
+  const token = ++_qfLoadToken;
   wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(3)}`;
-  window._qf[kind] = { data: await _qfLoad(kind), path: '' };
-  qfOpen(kind, '');
+  try {
+    const data = await _qfLoad(kind);
+    if (token !== _qfLoadToken) return;
+    window._qf[kind] = { data, path: '' };
+    qfOpen(kind, '');
+  } catch (error) {
+    if (token !== _qfLoadToken) return;
+    console.error(`${QF[kind].title} load failed:`, error);
+    wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card text-center"><h3>Could not load ${QF[kind].title.toLowerCase()}</h3><p class="mt-2 text-sm">Check your connection and try again. Your saved data has not been changed.</p><button class="btn btn-primary mt-3" onclick="renderBookmarks()">Retry</button></div>`;
+  }
 }
 
 export async function renderBookmarks() { return _qfRoot('bm'); }
 window.renderBookmarks = renderBookmarks;
 
-export async function renderWrongAttempts() { return _qfRoot('wrong'); }
-window.renderWrongAttempts = renderWrongAttempts;
-
-
-
-// ---------- one question, opened from a Bookmarks / Wrong Questions folder ----------
+// ---------- one question, opened from a Bookmarks folder ----------
 // Nothing is pre-marked: the options start neutral, the student ticks one and only then sees right/wrong. "Show
 // Explanation" is there from the start and works whether or not an option was ticked.
 async function qfView(kind, qid) {
   if (!qid) return showToast('Question not found');
-  const [{ data: q }, { data: existingBm }] = await Promise.all([
-    db(sb.from('questions').select('*').eq('id', qid).single(), 'Question load failed'),
-    db(sb.from('bookmarks').select('id').eq('email', window.currentUser.email).eq('question_id', qid).maybeSingle(), 'Bookmark check failed')
-  ]);
+  const questionResult = await db(sb.from('questions').select('*').eq('id', qid).single(), 'Question load failed');
+  if (questionResult.error) {
+    console.error('Question load failed:', questionResult.error);
+    return showToast('Could not load this question. Check your connection and try again.');
+  }
+  const q = questionResult.data;
   if (!q) return showToast('Question not found');
-  const opts = Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]');
-  window._qp = { kind, q, opts, picked: null, showExp: false, bookmarked: !!existingBm };
+  let opts;
+  try {
+    opts = Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]');
+    if (!Array.isArray(opts) || !Number.isInteger(q.correct_answer) || q.correct_answer < 0 || q.correct_answer >= opts.length) {
+      throw new Error('Question answer data is invalid');
+    }
+  } catch (error) {
+    console.error('Question could not be displayed:', error);
+    return showToast('This question has invalid answer data and cannot be displayed.');
+  }
+  window._qp = { kind, q, opts, picked: null, showExp: false };
   _qpDraw();
   window.scrollTo(0, 0);
 }
 window.qfView = qfView;
-window.showWrongQ = (qid) => qfView('wrong', qid);
 window.showBookmarkedQ = (qid) => qfView('bm', qid);
 
 function _qpDraw() {
@@ -1250,7 +1257,6 @@ function _qpDraw() {
     : picked === q.correct_answer
       ? '<div class="fw-700" style="color:var(--green);margin:2px 2px 10px">✅ Correct!</div>'
       : `<div class="fw-700" style="color:var(--red);margin:2px 2px 10px">❌ Not quite. The correct answer is ${letters[q.correct_answer]}.</div>`;
-  const parentPath = window._qf[kind].path || '';
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-elevated" style="margin-bottom:16px">
@@ -1271,9 +1277,8 @@ function _qpDraw() {
     <div class="btn-row mt-3">
       ${isAIEnabled() ? `<button class="btn btn-ghost" onclick="openAITutor('${escJs(q.text)}','${escJs(q.explanation || '')}')">🤖 Explain with AI</button>` : ''}
       <button class="btn btn-ghost" onclick="openReportModal(${q.id})">🚩 Report</button>
-      ${kind === 'wrong' ? `<button class="btn btn-secondary" onclick="qpToggleBookmark()">${s.bookmarked ? '🔖 Saved ✓' : '📖 Save'}</button>` : ''}
     </div>
-    <button class="btn btn-ghost mt-2" style="color:var(--red);width:100%" onclick="qfRemove('${kind}',${q.id})">🗑 ${kind === 'wrong' ? 'Remove from Wrong Questions' : 'Remove Bookmark'}</button>
+    <button class="btn btn-ghost mt-2" style="color:var(--red);width:100%" onclick="qfRemove('${kind}',${q.id})">🗑 Remove Bookmark</button>
   `;
 }
 
@@ -1291,42 +1296,20 @@ window.qpRetry = qpRetry;
 function qpToggleExp() { if (window._qp) { window._qp.showExp = !window._qp.showExp; _qpDraw(); } }
 window.qpToggleExp = qpToggleExp;
 
-async function qpToggleBookmark() {
-  const s = window._qp;
-  if (!s) return;
-  const email = window.currentUser.email;
-  if (s.bookmarked) {
-    await db(sb.from('bookmarks').delete().eq('email', email).eq('question_id', s.q.id), 'Remove bookmark failed');
-    s.bookmarked = false;
-    showToast('Bookmark removed');
-  } else {
-    await db(sb.from('bookmarks').upsert({ email, question_id: s.q.id, added_at: Date.now() }, { onConflict: 'email,question_id' }), 'Bookmark save failed');
-    s.bookmarked = true;
-    showToast('📖 Bookmarked!');
-  }
-  window._qf.bm = { data: null, path: '' };   // the Bookmarks list reloads next time it is opened
-  _qpDraw();
-}
-window.qpToggleBookmark = qpToggleBookmark;
-
-
-
 function qfRemove(kind, qid) {
-  showConfirm(kind === 'wrong' ? 'Remove this question from Wrong Questions?' : 'Remove this question from your bookmarks?', async () => {
-    if (kind === 'wrong') await db(sb.from('wrong_attempts').delete().eq('email', window.currentUser.email).eq('question_id', qid), 'Remove failed');
-    else await db(sb.from('bookmarks').delete().eq('email', window.currentUser.email).eq('question_id', qid), 'Remove failed');
-    showToast(kind === 'wrong' ? 'Removed from Wrong Questions' : 'Bookmark removed');
+  showConfirm('Remove this question from your bookmarks?', async () => {
+    await db(sb.from('bookmarks').delete().eq('email', window.currentUser.email).eq('question_id', qid), 'Remove failed');
+    showToast('Bookmark removed');
     const S = window._qf[kind];
     if (S && S.data) {
       S.data.items = S.data.items.filter(i => i.qid !== qid);
       qfOpen(kind, S.path || '');   // stays in the same folder (or the nearest one that still has questions)
     } else {
-      (kind === 'wrong' ? renderWrongAttempts : renderBookmarks)();
+      renderBookmarks();
     }
   }, 'Remove', true);
 }
 window.qfRemove = qfRemove;
-window.confirmRemoveWrongAttempt = (qid) => qfRemove('wrong', qid);
 window.confirmRemoveBookmark = (qid) => qfRemove('bm', qid);
 
 
