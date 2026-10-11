@@ -1,5 +1,5 @@
 import { timeAgo } from './admin.js';
-import { APP_VERSION, _isStandalone, areNotificationAnnouncementsEnabled, getSetting, getUserStats, isAIEnabled, renderHome, setNotificationAnnouncementsEnabled } from './app.js';
+import { APP_VERSION, _isStandalone, areNotificationAnnouncementsEnabled, getSetting, getStudentAnnouncements, getUserStats, isAIEnabled, markNotificationAsRead, notificationIsAlive, notificationIsUnread, renderHome, setNotificationAnnouncementsEnabled } from './app.js';
 import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
 import { checkExpiredAttemptOnRender, getResumableSnapshot } from './quiz.js';
@@ -180,14 +180,15 @@ function _ibDraw(scroll) {
 }
 
 // Opened from Profile and from the bell (a new message notification lands here)
-export async function openInbox() {
+export async function openInbox(target = null) {
+  document.getElementById('notifBellOverlay')?.remove();
   showScreen('inbox');
-  await renderInbox();
+  await renderInbox(target);
 }
 window.openInbox = openInbox;
 window.openMyReports = openInbox;   // older entry point
 
-export async function renderInbox() {
+export async function renderInbox(target = null) {
   const wrap = document.getElementById('inboxPageWrap');
   if (!wrap) return;
   const email = window.currentUser.email;
@@ -205,6 +206,14 @@ export async function renderInbox() {
   window._inbox = { messages, tableOk };
   _ibDraw(true);
   _ibSeen();
+  if (target && ['inbox', 'report_reply'].includes(target.source) && Number.isSafeInteger(Number(target.id)) && Number(target.id) > 0) {
+    const wantedId = String(Number(target.id));
+    const targetMessage = target.source === 'report_reply'
+      ? messages.find(message => String(message._reportId ?? message.ref_id ?? '') === wantedId && message.sender === 'admin')
+      : messages.find(message => String(message.id) === wantedId);
+    if (targetMessage) document.getElementById(`ib_${targetMessage.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else showToast('That message is no longer available in your Inbox.');
+  }
   clearInterval(window._ibTimer);
   window._ibTimer = setInterval(_ibPoll, 8000);
 }
@@ -221,9 +230,9 @@ function _ibSeen() {
   }
   const seenReportIds = new Set();
   S.messages.filter(m => m.sender === 'admin' && m._reportId != null).forEach(m => seenReportIds.add(String(m._reportId)));
+  S.messages.filter(m => m.sender === 'admin' && m.kind === 'reply' && m.ref_id != null).forEach(m => seenReportIds.add(String(m.ref_id)));
   window._markReportRepliesRead?.([...seenReportIds]);
   window._inboxUnread = 0;
-  window._appNotifs = (window._appNotifs || []).filter(n => n._source !== 'inbox' && n._source !== 'report_reply');
   window._refreshNotificationBadge?.();
 }
 
@@ -717,6 +726,59 @@ window.showTermsPage = showTermsPage;
 
 
 
+export async function openAnnouncementSection(announcementId = null) {
+  const id = announcementId == null ? null : Number(announcementId);
+  if (id !== null && (!Number.isSafeInteger(id) || id <= 0)) {
+    showToast('That announcement is not available.');
+    return;
+  }
+  document.getElementById('notifBellOverlay')?.remove();
+  if (document.querySelector('.screen.active')?.id !== 'screen-profile') showScreen('profile');
+  await renderAnnouncements(id);
+}
+window.openAnnouncementSection = openAnnouncementSection;
+
+export async function renderAnnouncements(selectedId = null) {
+  const wrap = document.getElementById('profilePageWrap');
+  if (!wrap) return;
+  window._profileSubPage = 'announcements';
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>${skeletonList(3, false)}`;
+  const announcements = (await getStudentAnnouncements()).filter(notificationIsAlive);
+  const selected = selectedId == null ? null : announcements.find(item => Number(item.id) === Number(selectedId));
+  if (selected) markNotificationAsRead({ ...selected, _source: 'announce' });
+  else if (selectedId != null) showToast('That announcement is no longer available.');
+
+  const unreadState = item => notificationIsUnread({ ...item, _source: 'announce' });
+  const detail = selected ? `
+    <div class="card announcement-detail">
+      <div class="text-xs text-muted mb-2">${new Date(selected.created_at).toLocaleString()}</div>
+      <h2 class="announcement-detail-title">${esc(selected.emoji || '📢')} ${esc(selected.title || 'Announcement')}</h2>
+      ${selected.image_url ? `<img class="announcement-detail-image" src="${esc(selected.image_url)}" alt="${esc(selected.title || 'Announcement image')}" onerror="this.style.display='none'">` : ''}
+      ${selected.body ? `<div class="announcement-detail-body">${esc(selected.body)}</div>` : ''}
+      <button class="btn btn-secondary btn-sm mt-3" onclick="openAnnouncementSection()">← All announcements</button>
+    </div>` : '';
+  const list = announcements.map(item => {
+    const unread = unreadState(item);
+    return `<button type="button" class="announcement-list-card ${unread ? 'is-unread' : ''}" onclick="openAnnouncementSection(${Number(item.id)})">
+      ${item.image_url ? `<img class="announcement-list-image" src="${esc(item.image_url)}" alt="" loading="lazy">` : `<span class="announcement-list-icon">${esc(item.emoji || '📢')}</span>`}
+      <span class="announcement-list-copy">
+        <span class="announcement-list-meta">${unread ? '<span class="badge badge-red">NEW</span>' : '<span class="text-xs text-muted">Viewed</span>'}<span class="text-xs text-muted">${new Date(item.created_at).toLocaleDateString()}</span></span>
+        <strong>${esc(item.title || 'Announcement')}</strong>
+        ${item.body ? `<span class="announcement-list-preview">${esc(item.body)}</span>` : ''}
+      </span>
+      <span aria-hidden="true" class="announcement-list-arrow">›</span>
+    </button>`;
+  }).join('');
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button>
+    <div class="card-teal announcement-section-heading"><h2>📢 Announcements</h2><p>Updates and important information from the admin</p></div>
+    ${detail}
+    ${!selected ? (list || '<div class="card text-center"><div style="font-size:36px">📭</div><p class="text-sm text-muted mt-2">No announcements right now.</p></div>') : ''}
+    <div style="height:24px"></div>`;
+}
+window.renderAnnouncements = renderAnnouncements;
+
+
+
 export async function renderProfile() {
   window._profileSubPage = null;
   checkExpiredAttemptOnRender();
@@ -844,6 +906,10 @@ export async function renderProfile() {
       <div class="list-item-left"><div class="list-item-icon">🤖</div><div><div class="list-item-title">AI Tutor</div><div class="list-item-sub">${getSetting('ai_key_set','') === 'true' ? '✅ Tap to ask a question' : '⚠️ Not set up by admin yet'}</div></div></div>
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
+    <div class="list-item" onclick="openAnnouncementSection()">
+      <div class="list-item-left"><div class="list-item-icon">📢</div><div><div class="list-item-title">Announcements</div><div class="list-item-sub">Updates and important information from the admin</div></div></div>
+      <div style="display:flex;align-items:center;gap:8px">${(window._appNotifs || []).filter(n => n._source === 'announce' && notificationIsUnread(n)).length ? `<span class="badge badge-red">${(window._appNotifs || []).filter(n => n._source === 'announce' && notificationIsUnread(n)).length}</span>` : ''}<span style="color:var(--ink-4)">›</span></div>
+    </div>
     <div class="list-item" onclick="openInbox()">
       <div class="list-item-left"><div class="list-item-icon">✉️</div><div><div class="list-item-title">Inbox for Reports &amp; Messages</div><div class="list-item-sub">Your reports, feedback, replies, and direct messages</div></div></div>
       <div style="display:flex;align-items:center;gap:8px">${(window._inboxUnread || 0) > 0 ? `<span class="badge badge-red">${window._inboxUnread}</span>` : ''}<span style="color:var(--ink-4)">›</span></div>

@@ -504,6 +504,7 @@ function _notifAlive(n) {
   const end = n.expires_at ? new Date(n.expires_at).getTime() : new Date(n.created_at).getTime() + 48 * 3600 * 1000;
   return end > Date.now();
 }
+export { _notifAlive as notificationIsAlive };
 
 // ==================== DEDICATED MODULES TAB ====================
 export async function renderModulesScreen() {
@@ -659,7 +660,7 @@ export async function renderHome() {
   const acc = stats.total_questions ? Math.round((stats.total_correct/stats.total_questions)*100) : 0;
   const greeting = (() => { const h=new Date().getHours(); if(h<12) return '🌅 Good morning'; if(h<17) return '☀️ Good afternoon'; return '🌙 Good evening'; })();
   const avatarEmoji = window.currentUser.gender==='female' ? '👩‍⚕️' : '👨‍⚕️';
-  const announceHtml = announcements.map(a=>`<div class="announce-bar">${a.image_url ? `<img src="${esc(a.image_url)}" style="width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:16px">${esc(a.emoji)||'📢'}</span>`}<span><strong>${esc(a.title)||''}</strong>${a.title&&a.body?' · ':''}${esc(a.body)||''}</span></div>`).join('');
+  const announceHtml = announcements.map(a=>`<div class="announce-bar" role="button" tabindex="0" onclick="openAnnouncementSection(${Number(a.id)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openAnnouncementSection(${Number(a.id)})}">${a.image_url ? `<img src="${esc(a.image_url)}" alt="" style="width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0">` : `<span style="font-size:16px">${esc(a.emoji)||'📢'}</span>`}<span><strong>${esc(a.title)||''}</strong>${a.title&&a.body?' · ':''}${esc(a.body)||''}</span></div>`).join('');
 
   wrap.innerHTML = `
     <style>
@@ -675,9 +676,9 @@ export async function renderHome() {
       <div style="position:absolute;top:-24px;right:-16px;font-size:88px;opacity:.07;line-height:1;transform:rotate(-8deg)">${ICON_STETHOSCOPE}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;position:relative">
         ${getSetting('donation_enabled','false') === 'true' ? `<div class="home-support-chip" onclick="showDonationPage()">💛 Support Us</div>` : '<span></span>'}
-        <div onclick="openNotificationBell()" style="cursor:pointer;font-size:19px;width:36px;height:36px;background:rgba(255,255,255,.16);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative">
+        <button type="button" aria-label="Open notifications" onclick="openNotificationBell()" style="cursor:pointer;font-size:19px;width:36px;height:36px;background:rgba(255,255,255,.16);border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;color:inherit">
           ${ICON_BELL}<span id="notifBellBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:var(--red);color:white;font-size:10px;font-weight:700;border-radius:10px;min-width:18px;height:18px;align-items:center;justify-content:center;padding:0 4px;border:2px solid #7a5c00">0</span>
-        </div>
+        </button>
       </div>
       <div class="flex-between" style="margin-bottom:8px;position:relative">
         <div>
@@ -1359,6 +1360,22 @@ async function _getMyYear() {
   return data || null;
 }
 
+export async function getStudentAnnouncements() {
+  if (!window.currentUser || window.currentUser.is_admin) return [];
+  const [result, myYear] = await Promise.all([
+    db(sb.from('announcements')
+      .select('id,title,body,emoji,image_url,target_college,target_year_id,type,is_active,created_at,expires_at')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false }), 'Announcement load failed'),
+    _getMyYear()
+  ]);
+  return (result.data || []).filter(item =>
+    _notifAlive(item) &&
+    (!item.target_college || item.target_college === window.currentUser.college) &&
+    (!item.target_year_id || item.target_year_id === myYear?.id)
+  );
+}
+
 
 
 async function openCustomTestBuilder() {
@@ -1870,28 +1887,47 @@ function _shownNotificationIds() {
 }
 
 function _saveShownNotificationIds(ids) {
-  try { localStorage.setItem(_notificationStorageKey('shown_notifications'), JSON.stringify([...ids].slice(-200))); }
+  try { localStorage.setItem(_notificationStorageKey('shown_notifications'), JSON.stringify([...ids].slice(-500))); }
   catch (e) { console.warn('Could not save notification history', e); }
 }
 
-function _showNotificationAnnouncement(count) {
-  if (!areNotificationAnnouncementsEnabled()) return;
-  const message = count === 1 ? 'You have a new notification.' : `You have ${count} new notifications.`;
-  const existing = document.getElementById('notificationAnnouncement');
-  existing?.remove();
-  const banner = document.createElement('button');
+function _showNotificationAnnouncement(items) {
+  if (!areNotificationAnnouncementsEnabled() || !items.length) return;
+  const item = items[0];
+  const title = item._source === 'announce' ? 'New Announcement'
+    : item._source === 'report_reply' || item.kind === 'reply' ? 'New Report Reply'
+      : item._source === 'inbox' ? 'New Admin Message' : 'New Update';
+  document.getElementById('notificationAnnouncement')?.remove();
+  const banner = document.createElement('div');
   banner.id = 'notificationAnnouncement';
-  banner.type = 'button';
+  banner.className = 'notification-announcement';
+  banner.setAttribute('role', 'status');
   banner.setAttribute('aria-live', 'polite');
-  banner.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:10010;display:flex;align-items:center;gap:10px;max-width:min(420px,calc(100vw - 24px));padding:12px 16px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--ink);box-shadow:0 8px 28px rgba(0,0,0,.2);font:600 14px var(--font-body);cursor:pointer';
-  banner.textContent = `🔔 ${message}`;
-  banner.addEventListener('click', () => {
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'notification-announcement-open';
+  open.setAttribute('aria-label', `${title}: ${item.title || item.body || 'Open update'}`);
+  const heading = document.createElement('strong');
+  heading.textContent = `${item._source === 'announce' ? (item.emoji || '📢') : item._source === 'inbox' ? '✉️' : '🔔'} ${title}`;
+  const preview = document.createElement('span');
+  const detail = item._source === 'announce'
+    ? [item.title, item.body].filter(Boolean).join(' · ')
+    : (item.body || item.title || 'You have a new notification.');
+  preview.textContent = `${detail}${items.length > 1 ? ` · and ${items.length - 1} more update${items.length === 2 ? '' : 's'}` : ''}`;
+  open.append(heading, preview);
+  open.addEventListener('click', () => {
     banner.remove();
-    openNotificationBell();
-  }, { once: true });
+    openNotificationTarget(item._source, item.id, { fromAnnouncement: true });
+  });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'notification-announcement-close';
+  close.setAttribute('aria-label', 'Dismiss notification announcement');
+  close.textContent = '×';
+  close.addEventListener('click', () => banner.remove());
+  banner.append(open, close);
   document.body.appendChild(banner);
-  clearTimeout(banner._timer);
-  banner._timer = setTimeout(() => banner.remove(), 5500);
+  banner._timer = setTimeout(() => banner.remove(), 6000);
 }
 
 
@@ -1926,18 +1962,70 @@ function _getDismissedNotifIds() {
   try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('dismissed_notif_ids')) || '[]')); }
   catch { return new Set(); }
 }
-function dismissNotification(source, id) {
+let _notificationSelectedIds = new Set();
+function _notificationItemKey(source, id) { return `${source}:${id}`; }
+function _persistDismissedNotifications(ids) {
+  localStorage.setItem(_notificationStorageKey('dismissed_notif_ids'), JSON.stringify([...ids].slice(-500)));
+}
+function dismissNotification(source, id, filter = 'all') {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0) return;
   const ids = _getDismissedNotifIds();
-  const key = `${source}:${id}`;
+  const key = _notificationItemKey(source, id);
   ids.add(key);
-  // Cap at the most recent 200 so this can never grow unbounded.
-  localStorage.setItem(_notificationStorageKey('dismissed_notif_ids'), JSON.stringify([...ids].slice(-200)));
+  try { _persistDismissedNotifications(ids); }
+  catch (error) { console.warn('Could not dismiss notification', error); showToast('Could not remove notification on this device.'); return; }
+  _notificationSelectedIds.delete(key);
   window._appNotifs = (window._appNotifs || []).filter(n => `${n._source}:${n.id}` !== key);
   if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
   _refreshNotificationBadge();
-  openNotificationBell(true);
+  openNotificationBell(true, filter);
 }
 window.dismissNotification = dismissNotification;
+
+function toggleNotificationSelection(source, id, selected, filter = 'all') {
+  const key = _notificationItemKey(source, id);
+  if (selected) _notificationSelectedIds.add(key);
+  else _notificationSelectedIds.delete(key);
+  openNotificationBell(true, filter);
+}
+window.toggleNotificationSelection = toggleNotificationSelection;
+
+function selectVisibleNotifications(filter, selected) {
+  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+  const items = (window._appNotifs || []).filter(item =>
+    filter !== 'unread' || _notificationIsUnread(item, lastSeen)
+  );
+  items.forEach(item => {
+    const key = _notificationItemKey(item._source, item.id);
+    if (selected) _notificationSelectedIds.add(key);
+    else _notificationSelectedIds.delete(key);
+  });
+  openNotificationBell(true, filter);
+}
+window.selectVisibleNotifications = selectVisibleNotifications;
+
+function deleteSelectedNotifications(filter = 'all') {
+  const selected = new Set(_notificationSelectedIds);
+  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+  const matching = (window._appNotifs || []).filter(item =>
+    selected.has(_notificationItemKey(item._source, item.id)) &&
+    (filter !== 'unread' || _notificationIsUnread(item, lastSeen))
+  );
+  if (!matching.length) return;
+  showConfirm(`Remove ${matching.length} selected notification${matching.length === 1 ? '' : 's'} from your bell? This won't delete the original content.`, () => {
+    const dismissed = _getDismissedNotifIds();
+    matching.forEach(item => dismissed.add(_notificationItemKey(item._source, item.id)));
+    try { _persistDismissedNotifications(dismissed); }
+    catch (error) { console.warn('Could not remove selected notifications', error); showToast('Could not remove notifications on this device.'); return; }
+    matching.forEach(item => _notificationSelectedIds.delete(_notificationItemKey(item._source, item.id)));
+    const dismissedKeys = new Set(matching.map(item => _notificationItemKey(item._source, item.id)));
+    window._appNotifs = (window._appNotifs || []).filter(item => !dismissedKeys.has(_notificationItemKey(item._source, item.id)));
+    if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
+    _refreshNotificationBadge();
+    openNotificationBell(true, filter);
+  }, 'Remove');
+}
+window.deleteSelectedNotifications = deleteSelectedNotifications;
 
 
 
@@ -1994,6 +2082,27 @@ function _notificationIsUnread(item, lastSeen) {
   if (localStorage.getItem(_notificationStorageKey('broadcast_read_state_migrated')) === 'true') return true;
   return new Date(item.created_at).getTime() > lastSeen;
 }
+export function notificationIsUnread(item) {
+  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+  return _notifAlive(item) && _notificationIsUnread(item, lastSeen);
+}
+export function markNotificationAsRead(item) {
+  if (!item || !Number.isSafeInteger(Number(item.id)) || Number(item.id) <= 0) return;
+  if (item._source === 'inbox') {
+    const latestSeen = Math.max(_inboxSeenId(), Number(item.id));
+    localStorage.setItem(_notificationStorageKey('inbox_seen_id'), String(latestSeen));
+  } else if (item._source === 'report_reply') {
+    _markReportRepliesRead([item.id]);
+  } else {
+    _markBroadcastNotificationsRead([item]);
+  }
+  window._inboxUnread = (window._appNotifs || []).filter(n =>
+    (n._source === 'inbox' || n._source === 'report_reply') && _notificationIsUnread(n, 0)
+  ).length;
+  _refreshNotificationBadge();
+}
+window.markNotificationAsRead = markNotificationAsRead;
+window.notificationIsUnread = notificationIsUnread;
 window._inboxSeenId = _inboxSeenId;
 window._markReportRepliesRead = _markReportRepliesRead;
 window.checkNewNotifications = checkNewNotifications;   // (function declaration, so it is available from here)
@@ -2034,7 +2143,7 @@ async function checkNewNotifications(force = false) {
   const fetchPromise = (async () => {
     const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
     const [notifRes, announceRes, inboxRes, replyRes] = await Promise.all([
-      db(sb.from('app_notifications').select('id,title,body,created_at,expires_at,target_college,target_year_id').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
+      db(sb.from('app_notifications').select('id,title,body,image_url,created_at,expires_at,target_college,target_year_id').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
       db(sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
       db(sb.from('inbox_messages').select('id,kind,body,image_url,ref_id,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').order('id', { ascending: false }).limit(20), 'Inbox notification load failed'),
       db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at,created_at').eq('user_email', window.currentUser.email).not('admin_reply', 'is', null).order('replied_at', { ascending: false }).limit(40), 'Report reply notification load failed')
@@ -2057,9 +2166,9 @@ async function checkNewNotifications(force = false) {
       ...notifs.map(n => ({ ...n, _source: 'notif' })),
       ...announces.map(a => ({ ...a, _source: 'announce' })),
       ...inboxItemsWithoutReportReplies.map(m => ({
-        id: m.id, _source: 'inbox', created_at: m.created_at,
+        id: m.id, _source: 'inbox', kind: m.kind, ref_id: m.ref_id, image_url: m.image_url, created_at: m.created_at,
         title: m.kind === 'reply' ? '📬 Reply to your report' : '✉️ New message from admin',
-        body: m.body ? (m.body.substring(0, 140) + (m.body.length > 140 ? '…' : '')) : (m.image_url ? '📷 Photo' : '')
+        body: m.body || (m.image_url ? '📷 Photo' : '')
       })),
       ...replies.map(r => ({
         id: r.id, _source: 'report_reply', created_at: r.replied_at || r.created_at,
@@ -2105,7 +2214,7 @@ async function checkNewNotifications(force = false) {
     _notificationFetchAt = Date.now();
 
     _refreshNotificationBadge(merged);
-    if (newItems.length) _showNotificationAnnouncement(newItems.length);
+    if (newItems.length) _showNotificationAnnouncement(newItems);
   })();
   _notificationFetchPromise = fetchPromise;
   _notificationFetchPromiseUser = currentFetchUser;
@@ -2141,6 +2250,8 @@ function stopNotificationSync() {
   _notificationSyncTimer = null;
   _notificationSyncUser = null;
   document.getElementById('notificationAnnouncement')?.remove();
+  document.getElementById('notifBellOverlay')?.remove();
+  _notificationSelectedIds.clear();
   _notificationFetchUser = null;
   _notificationFetchAt = 0;
   window._appNotifs = null;
@@ -2155,101 +2266,128 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-async function openNotificationBell(isRerender, filter) {
-  filter = filter || 'all';
+function closeNotificationBell() {
+  document.getElementById('notifBellOverlay')?.remove();
+}
+window.closeNotificationBell = closeNotificationBell;
+
+function openNotificationTarget(source, id, options = {}) {
+  const recordId = Number(id);
+  if (!Number.isSafeInteger(recordId) || recordId <= 0) return;
+  const item = (window._appNotifs || []).find(n => n._source === source && Number(n.id) === recordId);
+  if (item) markNotificationAsRead(item);
+  if (source === 'announce') {
+    closeNotificationBell();
+    window.openAnnouncementSection?.(recordId);
+  } else if (source === 'inbox' || source === 'report_reply') {
+    closeNotificationBell();
+    const target = source === 'inbox' && item?.kind === 'reply' && Number.isSafeInteger(Number(item.ref_id))
+      ? { source: 'report_reply', id: Number(item.ref_id) }
+      : { source, id: recordId };
+    window.openInbox?.(target);
+  } else if (options.fromAnnouncement) {
+    openNotificationBell();
+  } else {
+    openNotificationBell(true, window._notificationBellFilter || 'all');
+  }
+}
+window.openNotificationTarget = openNotificationTarget;
+
+async function openNotificationBell(isRerender = false, filter = 'all') {
+  window._notificationBellFilter = filter;
   if (!isRerender) {
-    document.getElementById('notifBellOverlay')?.remove();
+    _notificationSelectedIds = new Set();
+    closeNotificationBell();
     const loading = document.createElement('div');
     loading.id = 'notifBellOverlay';
-    loading.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
-    loading.innerHTML = '<div style="background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:var(--radius-xl);width:100%;max-width:420px;padding:28px;text-align:center"><div class="spinner" style="margin:0 auto 12px"></div><p class="text-sm text-muted">Loading notifications...</p></div>';
+    loading.className = 'notification-overlay';
+    loading.innerHTML = '<div class="notification-panel notification-loading"><div class="spinner" style="margin:0 auto 12px"></div><p class="text-sm text-muted">Loading notifications...</p></div>';
     document.body.appendChild(loading);
-    await checkNewNotifications(true);
-    loading.remove();
+    try { await checkNewNotifications(true); }
+    finally { loading.remove(); }
   }
-  const notifs = window._appNotifs || [];
-  let lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0');
-  const displayLastSeen = !isRerender && notifs.length
-    ? Math.max(lastSeen, ...notifs.filter(n => n._source !== 'inbox' && n._source !== 'report_reply').map(n => new Date(n.created_at).getTime()))
-    : lastSeen;
-  const isUnread = n => isRerender ? _notificationIsUnread(n, lastSeen) : false;
-
+  const notifs = (window._appNotifs || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+  const isUnread = n => _notificationIsUnread(n, lastSeen);
   const unreadCount = notifs.filter(isUnread).length;
   const visible = filter === 'unread' ? notifs.filter(isUnread) : notifs;
-
-  // A per-type accent (left border + icon chip color) instead of every card
-  // looking identical regardless of what kind of notification it is.
+  const visibleKeys = visible.map(item => _notificationItemKey(item._source, item.id));
+  const allSelected = visibleKeys.length > 0 && visibleKeys.every(key => _notificationSelectedIds.has(key));
+  const selectedCount = visibleKeys.filter(key => _notificationSelectedIds.has(key)).length;
   const typeMeta = {
-    announce: { color: 'var(--gold-700)', bg: 'var(--gold-50)' },
-    report_reply: { color: 'var(--green)', bg: 'var(--green-light)' },
-    inbox: { color: 'var(--green)', bg: 'var(--green-light)' },
-    notif: { color: 'var(--gold-700)', bg: 'var(--gold-50)' }
+    announce: { label: 'Announcement', color: 'var(--gold-700)', bg: 'var(--gold-50)', icon: '📢' },
+    report_reply: { label: 'Report reply', color: 'var(--green)', bg: 'var(--green-light)', icon: '📬' },
+    inbox: { label: 'Admin message', color: 'var(--green)', bg: 'var(--green-light)', icon: '✉️' },
+    notif: { label: 'Update', color: 'var(--gold-700)', bg: 'var(--gold-50)', icon: '🔔' }
   };
-
-  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-  const today = visible.filter(n => new Date(n.created_at).getTime() >= todayStart.getTime());
-  const earlier = visible.filter(n => new Date(n.created_at).getTime() < todayStart.getTime());
-
-  const cardHtml = (n) => {
-    const unread = isUnread(n);
-    const meta = typeMeta[n._source] || typeMeta.notif;
-    const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'inbox' ? '✉️' : (n._source === 'report_reply' ? '📬' : '🔔'));
-    const isReportReply = n._source === 'report_reply' || n._source === 'inbox';
-    return `
-      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${unread ? meta.bg : 'var(--surface)'};color:var(--ink);border:1px solid ${unread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openInbox()"` : ''}>
-        <div style="width:34px;height:34px;border-radius:50%;background:${meta.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;border:1px solid var(--border)">${icon}</div>
-        <div style="min-width:0;flex:1">
-          <div class="flex-between" style="align-items:flex-start;gap:6px">
-            <div class="fw-700 text-sm" style="min-width:0">${esc(n.title)}</div>
-            <button onclick="event.stopPropagation();dismissNotification('${n._source}',${n.id})" title="Remove" style="background:none;border:none;font-size:14px;cursor:pointer;color:var(--ink-4);flex-shrink:0;padding:0">🗑</button>
-          </div>
-          ${n.body ? `<div class="text-sm" style="margin-top:2px;color:var(--ink-3)">${esc(n.body)}</div>` : ''}
-          ${isReportReply ? `<div class="text-xs fw-600" style="color:${meta.color};margin-top:5px">Tap to open your Inbox →</div>` : ''}
-          ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
-          <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}${unread ? ' · <span style="color:'+meta.color+';font-weight:700">NEW</span>' : ''}</div>
-        </div>
-      </div>`;
+  const cardHtml = item => {
+    const unread = isUnread(item);
+    const meta = item._source === 'inbox' && item.kind === 'reply'
+      ? { ...typeMeta.report_reply, icon: '📬' }
+      : (typeMeta[item._source] || typeMeta.notif);
+    const id = Number(item.id);
+    const source = ['announce', 'inbox', 'report_reply', 'notif'].includes(item._source) ? item._source : 'notif';
+    const key = _notificationItemKey(source, id);
+    const title = item._source === 'announce' ? (item.title || 'Announcement') : (item.title || meta.label);
+    const preview = String(item.body || '').trim();
+    const shortPreview = preview.length > 220 ? `${preview.slice(0, 220)}…` : preview;
+    const routeHint = source === 'announce' ? 'Open announcement →'
+      : source === 'inbox' || source === 'report_reply' ? 'Open Inbox →' : 'View update →';
+    return `<article class="notification-item ${unread ? 'is-unread' : ''}" data-notification-source="${source}" data-notification-id="${id}" data-notification-filter="${filter}">
+      <input class="notification-select" type="checkbox" aria-label="Select ${esc(title)}" ${_notificationSelectedIds.has(key) ? 'checked' : ''} onchange="toggleNotificationSelection('${source}',${id},this.checked,'${filter}')">
+      <button type="button" class="notification-content" aria-label="${esc(`${meta.label}: ${title}`)}" onclick="openNotificationTarget('${source}',${id})">
+        <span class="notification-icon" aria-hidden="true">${item._source === 'announce' ? esc(item.emoji || meta.icon) : meta.icon}</span>
+        <span class="notification-copy">
+          <span class="notification-type" style="color:${meta.color}">${meta.label}${unread ? ' · NEW' : ''}</span>
+          <strong>${esc(title)}</strong>
+          ${shortPreview ? `<span class="notification-preview">${esc(shortPreview)}</span>` : ''}
+          ${item.image_url ? `<img class="notification-thumbnail" src="${esc(item.image_url)}" alt="" loading="lazy">` : ''}
+          <span class="notification-meta">${esc(timeAgo(new Date(item.created_at).getTime()))} · ${routeHint}</span>
+        </span>
+      </button>
+      <button type="button" class="notification-delete" aria-label="Delete ${esc(title)} from your notifications" title="Delete notification" onclick="event.stopPropagation();dismissNotification('${source}',${id},'${filter}')">🗑</button>
+    </article>`;
   };
-
   const overlay = document.createElement('div');
   overlay.id = 'notifBellOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:var(--radius-xl);width:100%;max-width:420px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden">
-      <div style="padding:16px 18px 12px;border-bottom:1px solid var(--border)">
-        <div class="flex-between mb-2">
-          <span class="fw-700" style="font-size:16px;font-family:var(--font-display)">🔔 Notifications</span>
-          <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink-4)">✕</button>
+  overlay.className = 'notification-overlay';
+  overlay.innerHTML = `<section class="notification-panel" role="dialog" aria-modal="true" aria-labelledby="notificationPanelTitle">
+    <header class="notification-panel-header">
+      <div class="flex-between">
+        <div><h2 id="notificationPanelTitle" class="notification-panel-title">🔔 Notifications</h2><div class="text-xs text-muted">${unreadCount} unread</div></div>
+        <button type="button" class="notification-panel-close" aria-label="Close notifications" onclick="closeNotificationBell()">×</button>
+      </div>
+      <div class="notification-toolbar">
+        <div class="tab-bar" style="margin:0">
+          <button class="tab-btn ${filter === 'all' ? 'active' : ''}" onclick="openNotificationBell(true,'all')">All (${notifs.length})</button>
+          <button class="tab-btn ${filter === 'unread' ? 'active' : ''}" onclick="openNotificationBell(true,'unread')">Unread (${unreadCount})</button>
         </div>
-        <div class="flex-between">
-          <div class="tab-bar" style="margin:0;flex:1">
-            <button class="tab-btn ${filter==='all'?'active':''}" onclick="openNotificationBell(true,'all')">All (${notifs.length})</button>
-            <button class="tab-btn ${filter==='unread'?'active':''}" onclick="openNotificationBell(true,'unread')">Unread (${unreadCount})</button>
-          </div>
+        <div class="notification-bulk-actions">
+          <label class="notification-select-all"><input type="checkbox" aria-label="Select all visible notifications" ${allSelected ? 'checked' : ''} onchange="selectVisibleNotifications('${filter}',this.checked)"> Select all</label>
+          <button type="button" class="btn btn-danger btn-xs" ${selectedCount ? '' : 'disabled'} onclick="deleteSelectedNotifications('${filter}')">Delete selected${selectedCount ? ` (${selectedCount})` : ''}</button>
         </div>
       </div>
-      <div style="padding:14px 18px 18px;overflow-y:auto">
-        ${visible.length ? `
-          ${today.length ? `<div class="text-xs fw-700 text-muted mb-2" style="text-transform:uppercase;letter-spacing:.5px">Today</div>${today.map(cardHtml).join('')}` : ''}
-          ${earlier.length ? `<div class="text-xs fw-700 text-muted mb-2" style="text-transform:uppercase;letter-spacing:.5px;margin-top:${today.length?'12px':'0'}">Earlier</div>${earlier.map(cardHtml).join('')}` : ''}
-        ` : `
-          <div style="text-align:center;padding:32px 0">
-            <div style="font-size:36px;margin-bottom:8px">🔕</div>
-            <p class="text-sm text-muted">${filter==='unread' ? "You're all caught up." : 'No notifications yet.'}</p>
-          </div>`}
-      </div>
-    </div>`;
-  document.getElementById('notifBellOverlay')?.remove();
+    </header>
+    <div class="notification-list" aria-live="polite">
+      ${visible.length ? visible.map(cardHtml).join('') : `<div class="notification-empty"><div style="font-size:40px;margin-bottom:8px">🔕</div><p class="text-sm text-muted">${filter === 'unread' ? "You're all caught up." : 'No notifications yet.'}</p></div>`}
+    </div>
+  </section>`;
+  overlay.addEventListener('click', event => { if (event.target === overlay) closeNotificationBell(); });
   document.body.appendChild(overlay);
-  if (!isRerender) {
-    if (displayLastSeen > lastSeen) localStorage.setItem(_notificationStorageKey('last_seen_notif_time'), String(displayLastSeen));
-    const latestInboxId = Math.max(0, ...notifs.filter(n => n._source === 'inbox' && typeof n.id === 'number').map(n => n.id));
-    if (latestInboxId > _inboxSeenId()) localStorage.setItem(_notificationStorageKey('inbox_seen_id'), String(latestInboxId));
-    _markReportRepliesRead(notifs.filter(n => n._source === 'report_reply').map(n => n.id));
-    _markBroadcastNotificationsRead(notifs.filter(n => n._source !== 'inbox' && n._source !== 'report_reply'));
-    window._inboxUnread = 0;
-    _refreshNotificationBadge(notifs);
-  }
+  overlay.querySelectorAll('.notification-item').forEach(row => {
+    let startX = 0, startY = 0;
+    row.addEventListener('touchstart', event => {
+      startX = event.changedTouches[0].clientX;
+      startY = event.changedTouches[0].clientY;
+    }, { passive: true });
+    row.addEventListener('touchend', event => {
+      const dx = event.changedTouches[0].clientX - startX;
+      const dy = event.changedTouches[0].clientY - startY;
+      if (dx < -90 && Math.abs(dy) < 45) {
+        dismissNotification(row.dataset.notificationSource, row.dataset.notificationId, row.dataset.notificationFilter);
+      }
+    }, { passive: true });
+  });
 }
 window.openNotificationBell = openNotificationBell;
 
