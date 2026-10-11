@@ -2080,6 +2080,11 @@ async function clearViewedMessageNotifications(messages) {
       keys.set(_notificationItemKey('inbox', message.id), { source: 'inbox', id: message.id });
     }
   });
+  const inboxIds = [...keys.values()].filter(entry => entry.source === 'inbox').map(entry => entry.id);
+  const replyIds = [...keys.values()].filter(entry => entry.source === 'report_reply').map(entry => entry.id);
+  _markInboxMessagesRead(inboxIds);
+  _markReportRepliesRead(replyIds);
+
   const cleared = [];
   for (const entry of keys.values()) {
     try {
@@ -2090,11 +2095,6 @@ async function clearViewedMessageNotifications(messages) {
       _notificationPersistenceWarning('Message notification clearing requires the notification dismissals SQL migration.');
     }
   }
-  if (!cleared.length) return false;
-  const inboxIds = cleared.filter(entry => entry.source === 'inbox').map(entry => entry.id);
-  const replyIds = cleared.filter(entry => entry.source === 'report_reply').map(entry => entry.id);
-  _markInboxMessagesRead(inboxIds);
-  _markReportRepliesRead(replyIds);
   const clearedKeys = new Set(cleared.map(entry => _notificationItemKey(entry.source, entry.id)));
   window._appNotifs = (window._appNotifs || []).filter(item =>
     !clearedKeys.has(_notificationItemKey(item._source, item.id))
@@ -2120,6 +2120,12 @@ function _refreshNotificationBadge(notifs = window._appNotifs || []) {
     if (!badge) continue;
     badge.style.display = unread > 0 ? 'flex' : 'none';
     badge.textContent = String(unread);
+  }
+  const inboxBadge = document.getElementById('profileInboxBadge');
+  if (inboxBadge) {
+    const inboxUnread = window._inboxUnread || 0;
+    inboxBadge.style.display = inboxUnread > 0 ? 'flex' : 'none';
+    inboxBadge.textContent = inboxUnread > 0 ? String(inboxUnread) : '';
   }
   const announcementBadge = document.getElementById('profileAnnouncementBadge');
   if (announcementBadge) {

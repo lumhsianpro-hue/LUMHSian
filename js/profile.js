@@ -188,21 +188,15 @@ window.openMyReports = openInbox;   // older entry point
 export async function renderInbox(target = null) {
   const wrap = document.getElementById('inboxPageWrap');
   if (!wrap) return;
+  if (window._ibScrollHandler) window.removeEventListener('scroll', window._ibScrollHandler);
   const email = window.currentUser.email;
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin:10px 0 6px"><h2>✉️ Inbox for Reports &amp; Messages</h2><p>Reports, feedback, replies, and direct messages with the admin</p></div>
     <div class="ib-thread" id="ibThread">${skeletonList(2, false)}</div>
     <div class="ib-composer">
-      <div class="ib-compose-mode">
-        <label for="ibMessageType">Send as</label>
-        <select id="ibMessageType" aria-label="Send as">
-          <option value="message">Direct message</option>
-          <option value="feedback">Report or feedback</option>
-        </select>
-      </div>
       <div class="ib-compose-input">
-        <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Write your message…" oninput="inboxGrow(this)"></textarea>
+        <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Write a message, report, or feedback…" oninput="inboxGrow(this)"></textarea>
         <button class="ib-send" id="ibSend" aria-label="Send" onclick="inboxSend()">➤</button>
       </div>
     </div>`;
@@ -210,7 +204,13 @@ export async function renderInbox(target = null) {
   if (window.currentUser?.email !== email || document.querySelector('.screen.active')?.id !== 'screen-inbox') return;
   window._inbox = { messages, tableOk };
   _ibDraw(true);
-  if (!tableOk) showToast('Some Inbox messages could not be loaded. Unread notifications were left unchanged.');
+  window._ibScrollHandler = () => {
+    if (document.querySelector('.screen.active')?.id === 'screen-inbox') {
+      _ibSeen().catch(error => console.warn('Could not mark viewed Inbox messages as read', error));
+    }
+  };
+  window.addEventListener('scroll', window._ibScrollHandler, { passive: true });
+  if (!tableOk) showToast('Some Inbox messages could not be loaded. Check the Inbox database setup.');
   let targetMessage = null;
   if (target && ['inbox', 'report_reply'].includes(target.source) && Number.isSafeInteger(Number(target.id)) && Number(target.id) > 0) {
     const wantedId = String(Number(target.id));
@@ -230,11 +230,9 @@ export async function renderInbox(target = null) {
       showToast('That message is no longer available in your Inbox.');
     }
   }
-  if (tableOk) {
-    await new Promise(resolve => requestAnimationFrame(resolve));
-    if (targetMessage) await _ibSeen([targetMessage]);
-    else await _ibSeen();
-  }
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  if (targetMessage) await _ibSeen([targetMessage]);
+  else await _ibSeen();
   clearInterval(window._ibTimer);
   window._ibTimer = setInterval(_ibPoll, 8000);
 }
@@ -242,21 +240,32 @@ window.renderInbox = renderInbox;
 
 async function _ibSeen(targetMessages = null) {
   const S = window._inbox;
-  if (!S || !S.tableOk) return;
+  if (!S) return;
+  if (S.reading) {
+    S.readAgain = true;
+    return S.reading;
+  }
   const thread = document.getElementById('ibThread');
   if (!thread) return;
-  const visible = targetMessages || S.messages.filter(message => {
-    if (message.sender !== 'admin') return false;
-    const el = document.getElementById(`ib_${message.id}`);
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const threadRect = thread.getBoundingClientRect();
-    return rect.bottom > Math.max(0, threadRect.top) && rect.top < Math.min(window.innerHeight, threadRect.bottom);
-  });
-  const viewed = visible.filter(message =>
-    message.sender === 'admin' && document.getElementById(`ib_${message.id}`)
-  );
-  if (viewed.length) await window._clearViewedMessageNotifications?.(viewed);
+  S.reading = (async () => {
+    do {
+      S.readAgain = false;
+      const visible = targetMessages || S.messages.filter(message => {
+        if (message.sender !== 'admin') return false;
+        const el = document.getElementById(`ib_${message.id}`);
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        const threadRect = thread.getBoundingClientRect();
+        return rect.bottom > Math.max(0, threadRect.top) && rect.top < Math.min(window.innerHeight, threadRect.bottom);
+      });
+      const viewed = visible.filter(message =>
+        message.sender === 'admin' && document.getElementById(`ib_${message.id}`)
+      );
+      if (viewed.length) await window._clearViewedMessageNotifications?.(viewed);
+    } while (S.readAgain && document.querySelector('.screen.active')?.id === 'screen-inbox');
+  })();
+  try { await S.reading; }
+  finally { S.reading = null; }
 }
 
 async function _ibPoll() {
@@ -286,75 +295,57 @@ window.inboxGrow = inboxGrow;
 
 async function _ibDeliver(tmp) {
   tmp._state = 'sending';
+  let result;
   try {
-    const { data, error } = await sb.from('inbox_messages').insert({
-      user_email: window.currentUser.email, sender: 'student', kind: 'message', body: tmp.body
-    }).select('id,created_at').single();
-    if (error) throw error;
-    Object.assign(tmp, data, { _state: null });
+    result = await sendStudentMessage({ type: 'feedback', message: tmp.body });
+    if (!result.ok) throw new Error(result.error || 'The report could not be saved.');
   } catch (error) {
-    console.warn('Direct message not sent', error);
+    console.warn('Inbox report/feedback not sent', error);
     tmp._state = 'failed';
-    showToast('⚠️ Message not sent. Tap Retry');
+    showToast('⚠️ Message not sent to Reports. Tap Retry');
+    _ibDraw(false);
+    return;
   }
+
+  Object.assign(tmp, {
+    id: result.inboxId ?? `r${result.reportId}`,
+    ref_id: result.reportId,
+    _reportId: result.reportId,
+    legacy: result.inboxId == null,
+    _state: null
+  });
+  const S = window._inbox;
+  if (S) {
+    try {
+      const { messages } = await loadInboxThread(window.currentUser.email);
+      const pending = S.messages.filter(message => message !== tmp && typeof message.id !== 'number' && !message.legacy);
+      const refreshed = messages.some(message => String(message.id) === String(tmp.id)) ? messages : [...messages, tmp];
+      S.messages = [...refreshed, ...pending].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    } catch (error) {
+      console.warn('Inbox refresh after report submission failed', error);
+    }
+  }
+  showToast('Message sent to the admin Reports ✓');
   _ibDraw(false);
 }
 
 async function inboxSend() {
   const input = document.getElementById('ibInput');
-  const mode = document.getElementById('ibMessageType')?.value || 'message';
   const button = document.getElementById('ibSend');
   const S = window._inbox;
   if (!input || !S) return;
   const text = input.value.trim();
   if (!text) return;
-  const isReport = mode === 'feedback';
-  const rl = rateLimited(isReport ? 'submit_report' : 'inbox_send', isReport ? 5 : 20, 15 * 60 * 1000);
+  const rl = rateLimited('inbox_send', 20, 15 * 60 * 1000);
   if (!rl.allowed) return showToast(`Too many messages. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
-
-  if (isReport) {
-    if (button?.disabled) return;
-    if (button) button.disabled = true;
-    let result;
-    try {
-      result = await sendStudentMessage({ type: 'feedback', message: text });
-    } catch (error) {
-      console.error('Report submission failed', error);
-      showToast('⚠️ Could not submit. Your text is still here; please try again.', 6000);
-      if (button) button.disabled = false;
-      return;
-    }
-    if (!result.ok) {
-      const detail = result.error ? ` ${String(result.error).slice(0, 180)}` : '';
-      showToast(`⚠️ Could not submit. Your text is still here; please try again.${detail}`, 6000);
-      if (button) button.disabled = false;
-      return;
-    }
-
-    input.value = '';
-    inboxGrow(input);
-    try {
-      const { messages, tableOk } = await loadInboxThread(window.currentUser.email);
-      if (window._inbox === S && window.currentUser?.email && document.querySelector('.screen.active')?.id === 'screen-inbox') {
-        const pending = S.messages.filter(message => typeof message.id !== 'number' && !message.legacy);
-        S.messages = [...messages, ...pending].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        S.tableOk = tableOk;
-        _ibDraw(true);
-      }
-    } catch (error) {
-      console.warn('Inbox refresh after report submission failed', error);
-    } finally {
-      if (button) button.disabled = false;
-    }
-    showToast('Report or feedback submitted to the admin ✓');
-    return;
-  }
-
-  const tmp = { id: 'tmp' + Date.now(), sender: 'student', kind: 'message', body: text, created_at: new Date().toISOString(), _state: 'sending' };
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
+  const tmp = { id: 'tmp' + Date.now(), sender: 'student', kind: 'feedback', body: text, created_at: new Date().toISOString(), _state: 'sending' };
   S.messages.push(tmp);
   input.value = ''; inboxGrow(input);
   _ibDraw(true);
-  _ibDeliver(tmp);   // not awaited: the app stays responsive while it sends
+  try { await _ibDeliver(tmp); }
+  finally { if (button) button.disabled = false; }
 }
 window.inboxSend = inboxSend;
 
@@ -986,7 +977,7 @@ export async function renderProfile() {
     </div>
     <div class="list-item" onclick="openInbox()">
       <div class="list-item-left"><div class="list-item-icon">✉️</div><div><div class="list-item-title">Inbox for Reports &amp; Messages</div><div class="list-item-sub">Your reports, feedback, replies, and direct messages</div></div></div>
-      <div style="display:flex;align-items:center;gap:8px">${(window._inboxUnread || 0) > 0 ? `<span class="badge badge-red">${window._inboxUnread}</span>` : ''}<span style="color:var(--ink-4)">›</span></div>
+      <div style="display:flex;align-items:center;gap:8px"><span id="profileInboxBadge" class="badge badge-red" style="${(window._inboxUnread || 0) > 0 ? '' : 'display:none'}">${window._inboxUnread || ''}</span><span style="color:var(--ink-4)">›</span></div>
     </div>
     ${getSetting('payment_enabled','false') === 'true' ? `
     <div class="list-item" onclick="showSubscriptionPlans()">
