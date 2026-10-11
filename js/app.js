@@ -757,6 +757,7 @@ export async function renderHome() {
     <div style="height:16px"></div>`;
 
   _animateHeaderStats();
+  window._refreshNotificationBadge?.();
   } catch(e) {
     console.error('renderHome error:', e);
     document.getElementById('homePageWrap').innerHTML = `<div class="card"><p>Failed to load. <button class="btn btn-primary btn-sm mt-2" onclick="renderHome()">Retry</button></p></div>`;
@@ -1830,10 +1831,11 @@ if ('serviceWorker' in navigator) {
 
 
 
-const NOTIFICATION_FETCH_TTL = 30 * 60 * 1000;
+const NOTIFICATION_FETCH_TTL = 60 * 1000;
 const NOTIFICATION_BASELINE_VERSION = '2026-10-10-v1';
 let _notificationFetchAt = 0;
 let _notificationFetchPromise = null;
+let _notificationFetchPromiseUser = null;
 let _notificationFetchUser = null;
 let _pendingNotificationOpen = new URLSearchParams(location.search).get('open') === 'notifications';
 
@@ -1841,6 +1843,26 @@ function _notificationStorageKey(kind) {
   const userKey = window.currentUser?.auth_uid || window.currentUser?.email || 'anonymous';
   return `lum_${kind}_${encodeURIComponent(userKey)}`;
 }
+
+export function areNotificationAnnouncementsEnabled() {
+  const key = _notificationStorageKey('notification_announcements_enabled');
+  const saved = localStorage.getItem(key);
+  if (saved !== null) return saved !== 'false';
+  const legacy = localStorage.getItem('notif_enabled');
+  if (legacy !== null) {
+    localStorage.setItem(key, legacy !== 'false' ? 'true' : 'false');
+    localStorage.removeItem('notif_enabled');
+    return legacy !== 'false';
+  }
+  return true;
+}
+window.areNotificationAnnouncementsEnabled = areNotificationAnnouncementsEnabled;
+
+export function setNotificationAnnouncementsEnabled(enabled) {
+  localStorage.setItem(_notificationStorageKey('notification_announcements_enabled'), enabled ? 'true' : 'false');
+  if (!enabled) document.getElementById('notificationAnnouncement')?.remove();
+}
+window.setNotificationAnnouncementsEnabled = setNotificationAnnouncementsEnabled;
 
 function _shownNotificationIds() {
   try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('shown_notifications')) || '[]')); }
@@ -1852,18 +1874,24 @@ function _saveShownNotificationIds(ids) {
   catch (e) { console.warn('Could not save notification history', e); }
 }
 
-async function _showServiceWorkerNotification(item) {
-  try {
-    if (!('Notification' in window) || !('serviceWorker' in navigator) || Notification.permission !== 'granted') return;
-    const registration = await navigator.serviceWorker.ready;
-    await registration.showNotification(item.title || 'LUMHSian', {
-      body: item.body || '',
-      tag: String(item.id),
-      data: { url: location.origin }
-    });
-  } catch (e) {
-    console.warn('Notification display failed', e);
-  }
+function _showNotificationAnnouncement(count) {
+  if (!areNotificationAnnouncementsEnabled()) return;
+  const message = count === 1 ? 'You have a new notification.' : `You have ${count} new notifications.`;
+  const existing = document.getElementById('notificationAnnouncement');
+  existing?.remove();
+  const banner = document.createElement('button');
+  banner.id = 'notificationAnnouncement';
+  banner.type = 'button';
+  banner.setAttribute('aria-live', 'polite');
+  banner.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:10010;display:flex;align-items:center;gap:10px;max-width:min(420px,calc(100vw - 24px));padding:12px 16px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--ink);box-shadow:0 8px 28px rgba(0,0,0,.2);font:600 14px var(--font-body);cursor:pointer';
+  banner.textContent = `🔔 ${message}`;
+  banner.addEventListener('click', () => {
+    banner.remove();
+    openNotificationBell();
+  }, { once: true });
+  document.body.appendChild(banner);
+  clearTimeout(banner._timer);
+  banner._timer = setTimeout(() => banner.remove(), 5500);
 }
 
 
@@ -1895,7 +1923,7 @@ function checkWhatsNew() {
 // needing a new per-user table. Keyed by source+id since app_notifications
 // and announcements each have their own independent id sequence.
 function _getDismissedNotifIds() {
-  try { return new Set(JSON.parse(localStorage.getItem('dismissed_notif_ids') || '[]')); }
+  try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('dismissed_notif_ids')) || '[]')); }
   catch { return new Set(); }
 }
 function dismissNotification(source, id) {
@@ -1903,7 +1931,7 @@ function dismissNotification(source, id) {
   const key = `${source}:${id}`;
   ids.add(key);
   // Cap at the most recent 200 so this can never grow unbounded.
-  localStorage.setItem('dismissed_notif_ids', JSON.stringify([...ids].slice(-200)));
+  localStorage.setItem(_notificationStorageKey('dismissed_notif_ids'), JSON.stringify([...ids].slice(-200)));
   window._appNotifs = (window._appNotifs || []).filter(n => `${n._source}:${n.id}` !== key);
   if (_notificationFetchUser) cacheSet(`notifications_${_notificationFetchUser}`, window._appNotifs);
   _refreshNotificationBadge();
@@ -1915,23 +1943,74 @@ window.dismissNotification = dismissNotification;
 
 // Admin messages the student hasn't opened yet. "Seen" is tracked on this device as the highest message id they have
 // opened, so no database write is needed just to mark something read.
-function _inboxSeenId() { return parseInt(localStorage.getItem('lum_inbox_seen_id') || '0'); }
+function _inboxSeenId() {
+  const key = _notificationStorageKey('inbox_seen_id');
+  const stored = localStorage.getItem(key);
+  if (stored !== null) return parseInt(stored, 10) || 0;
+  const legacy = parseInt(localStorage.getItem('lum_inbox_seen_id') || '0', 10) || 0;
+  if (legacy) {
+    localStorage.setItem(key, String(legacy));
+    localStorage.removeItem('lum_inbox_seen_id');
+  }
+  return legacy;
+}
+function _seenReportReplyIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('seen_report_replies')) || '[]').map(String)); }
+  catch { return new Set(); }
+}
+function _seenBroadcastNotificationIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(_notificationStorageKey('seen_broadcast_notifications')) || '[]').map(String)); }
+  catch { return new Set(); }
+}
+function _markBroadcastNotificationsRead(items) {
+  const seen = _seenBroadcastNotificationIds();
+  items.forEach(item => seen.add(`${item._source}:${item.id}`));
+  localStorage.setItem(_notificationStorageKey('seen_broadcast_notifications'), JSON.stringify([...seen].slice(-500)));
+}
+function _migrateBroadcastReadState(items, complete) {
+  const key = _notificationStorageKey('broadcast_read_state_migrated');
+  if (!complete || localStorage.getItem(key) === 'true') return;
+  const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+  if (lastSeen > 0) {
+    _markBroadcastNotificationsRead(items.filter(item =>
+      item._source !== 'inbox' && item._source !== 'report_reply' && new Date(item.created_at).getTime() <= lastSeen
+    ));
+  }
+  localStorage.setItem(key, 'true');
+}
+function _saveSeenReportReplyIds(ids) {
+  localStorage.setItem(_notificationStorageKey('seen_report_replies'), JSON.stringify([...ids].slice(-500)));
+}
+function _markReportRepliesRead(ids) {
+  if (!ids.length) return;
+  const seen = _seenReportReplyIds();
+  ids.forEach(id => seen.add(String(id)));
+  _saveSeenReportReplyIds(seen);
+}
+function _notificationIsUnread(item, lastSeen) {
+  if (item._source === 'inbox') return Number(item.id) > _inboxSeenId();
+  if (item._source === 'report_reply') return !_seenReportReplyIds().has(String(item.id));
+  if (_seenBroadcastNotificationIds().has(`${item._source}:${item.id}`)) return false;
+  if (localStorage.getItem(_notificationStorageKey('broadcast_read_state_migrated')) === 'true') return true;
+  return new Date(item.created_at).getTime() > lastSeen;
+}
 window._inboxSeenId = _inboxSeenId;
+window._markReportRepliesRead = _markReportRepliesRead;
 window.checkNewNotifications = checkNewNotifications;   // (function declaration, so it is available from here)
 
 function _refreshNotificationBadge(notifs = window._appNotifs || []) {
   const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
-  const unread = notifs.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
+  const unread = notifs.filter(n => _notifAlive(n) && _notificationIsUnread(n, lastSeen)).length;
   const badge = document.getElementById('notifBellBadge');
   if (badge) {
     badge.style.display = unread > 0 ? 'flex' : 'none';
-    badge.textContent = unread > 9 ? '9+' : unread;
+    badge.textContent = String(unread);
   }
 }
 window._refreshNotificationBadge = _refreshNotificationBadge;
 
 async function checkNewNotifications(force = false) {
-  if (!window.currentUser || localStorage.getItem('notif_enabled') === 'false') return;
+  if (!window.currentUser || window.currentUser.is_admin || !window.currentUser.profile_completed) return;
   const currentFetchUser = window.currentUser.auth_uid || window.currentUser.email;
   if (_notificationFetchUser !== currentFetchUser) {
     _notificationFetchUser = currentFetchUser;
@@ -1939,46 +2018,66 @@ async function checkNewNotifications(force = false) {
     window._appNotifs = null;
   }
   if (!force && window._appNotifs && Date.now() - _notificationFetchAt < NOTIFICATION_FETCH_TTL) return;
-  if (_notificationFetchPromise) return _notificationFetchPromise;
+  if (_notificationFetchPromise && _notificationFetchPromiseUser === currentFetchUser) return _notificationFetchPromise;
   const notificationCacheKey = `notifications_${currentFetchUser}`;
-  const cachedNotifs = cacheGet(notificationCacheKey, NOTIFICATION_FETCH_TTL);
+  const cachedNotifs = force ? null : cacheGet(notificationCacheKey, NOTIFICATION_FETCH_TTL);
   if (cachedNotifs !== null) {
-    const seenInboxId = _inboxSeenId();
-    window._appNotifs = cachedNotifs.filter(n => n._source !== 'inbox' || Number(n.id) > seenInboxId);
-    window._inboxUnread = window._appNotifs.filter(n => n._source === 'inbox').length;
+    window._appNotifs = cachedNotifs.filter(_notifAlive);
+    const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+    window._inboxUnread = window._appNotifs.filter(n =>
+      (n._source === 'inbox' || n._source === 'report_reply') && _notificationIsUnread(n, lastSeen)
+    ).length;
     _notificationFetchAt = Date.now();
     _refreshNotificationBadge();
     return;
   }
-  _notificationFetchPromise = (async () => {
+  const fetchPromise = (async () => {
     const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-    const [notifRes, announceRes, inboxRes] = await Promise.all([
+    const [notifRes, announceRes, inboxRes, replyRes] = await Promise.all([
       db(sb.from('app_notifications').select('id,title,body,created_at,expires_at,target_college,target_year_id').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Notif load failed'),
       db(sb.from('announcements').select('id,title,body,emoji,image_url,created_at,expires_at,target_college,target_year_id,is_active').eq('is_active', true).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(40), 'Announce load failed'),
-      db(sb.from('inbox_messages').select('id,kind,body,image_url,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', _inboxSeenId()).order('id', { ascending: false }).limit(20), 'Inbox notification load failed')
+      db(sb.from('inbox_messages').select('id,kind,body,image_url,ref_id,created_at').eq('user_email', window.currentUser.email).eq('sender', 'admin').order('id', { ascending: false }).limit(20), 'Inbox notification load failed'),
+      db(sb.from('reports_feedback').select('id,message,admin_reply,replied_at,created_at').eq('user_email', window.currentUser.email).not('admin_reply', 'is', null).order('replied_at', { ascending: false }).limit(40), 'Report reply notification load failed')
     ]);
+    if ((window.currentUser.auth_uid || window.currentUser.email) !== currentFetchUser) return;
     const notifs = (notifRes.data || []).filter(_notifAlive);
     const announces = (announceRes.data || []).filter(_notifAlive);
     const inboxOk = !inboxRes.error;
     const inboxItems = inboxOk ? (inboxRes.data || []) : [];
-    window._inboxUnread = inboxItems.length;
+    const replies = replyRes.data || [];
+    const replyIds = new Set(replies.map(r => String(r.id)));
+    _markReportRepliesRead(inboxItems
+      .filter(m => m.kind === 'reply' && m.ref_id != null && Number(m.id) <= _inboxSeenId())
+      .map(m => m.ref_id));
+    const inboxItemsWithoutReportReplies = inboxItems.filter(m => !(m.kind === 'reply' && m.ref_id != null && replyIds.has(String(m.ref_id))));
     const dismissed = _getDismissedNotifIds();
     const myYearForFilter = await _getMyYear();
+    if ((window.currentUser.auth_uid || window.currentUser.email) !== currentFetchUser) return;
     const merged = [
       ...notifs.map(n => ({ ...n, _source: 'notif' })),
       ...announces.map(a => ({ ...a, _source: 'announce' })),
-      ...inboxItems.map(m => ({
+      ...inboxItemsWithoutReportReplies.map(m => ({
         id: m.id, _source: 'inbox', created_at: m.created_at,
         title: m.kind === 'reply' ? '📬 Reply to your report' : '✉️ New message from admin',
         body: m.body ? (m.body.substring(0, 140) + (m.body.length > 140 ? '…' : '')) : (m.image_url ? '📷 Photo' : '')
+      })),
+      ...replies.map(r => ({
+        id: r.id, _source: 'report_reply', created_at: r.replied_at || r.created_at,
+        title: '📬 Reply to your report',
+        body: r.admin_reply ? r.admin_reply.substring(0, 140) + (r.admin_reply.length > 140 ? '…' : '') : ''
       }))
     ].filter(n =>
       (!n.target_college || n.target_college === window.currentUser.college) &&
       (!n.target_year_id || n.target_year_id === myYearForFilter?.id) &&
       !dismissed.has(`${n._source}:${n.id}`)
     ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    _migrateBroadcastReadState(merged, !notifRes.error && !announceRes.error && inboxOk && !replyRes.error);
     window._appNotifs = merged;
-    if (!notifRes.error && !announceRes.error && inboxOk) {
+    const lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0', 10);
+    window._inboxUnread = merged.filter(n =>
+      (n._source === 'inbox' || n._source === 'report_reply') && _notificationIsUnread(n, lastSeen)
+    ).length;
+    if (!notifRes.error && !announceRes.error && inboxOk && !replyRes.error) {
       cacheSet(notificationCacheKey, merged);
       cacheSet('announcements', announces);
     }
@@ -1988,28 +2087,73 @@ async function checkNewNotifications(force = false) {
     let baselineVersion = null;
     try { baselineVersion = localStorage.getItem(baselineKey); } catch (e) {}
     const isFirstLoad = baselineVersion !== NOTIFICATION_BASELINE_VERSION;
+    const newItems = [];
     if (isFirstLoad) {
       merged.forEach(n => shownIds.add(`${n._source}:${n.id}`));
-      try { localStorage.setItem(baselineKey, NOTIFICATION_BASELINE_VERSION); } catch (e) {}
+      if (!notifRes.error && !announceRes.error && inboxOk && !replyRes.error) {
+        try { localStorage.setItem(baselineKey, NOTIFICATION_BASELINE_VERSION); } catch (e) {}
+      }
     } else {
       for (const item of merged) {
         const idKey = `${item._source}:${item.id}`;
         if (shownIds.has(idKey)) continue;
         shownIds.add(idKey);
-        _saveShownNotificationIds(shownIds);
-        await _showServiceWorkerNotification(item);
+        newItems.push(item);
       }
     }
     _saveShownNotificationIds(shownIds);
     _notificationFetchAt = Date.now();
 
     _refreshNotificationBadge(merged);
+    if (newItems.length) _showNotificationAnnouncement(newItems.length);
   })();
-  try { await _notificationFetchPromise; }
-  finally { _notificationFetchPromise = null; }
+  _notificationFetchPromise = fetchPromise;
+  _notificationFetchPromiseUser = currentFetchUser;
+  try { await fetchPromise; }
+  finally {
+    if (_notificationFetchPromise === fetchPromise) {
+      _notificationFetchPromise = null;
+      _notificationFetchPromiseUser = null;
+    }
+  }
 }
 
-
+let _notificationSyncTimer = null;
+let _notificationSyncUser = null;
+function startNotificationSync() {
+  if (!window.currentUser || window.currentUser.is_admin || !window.currentUser.profile_completed) {
+    stopNotificationSync();
+    return;
+  }
+  const userKey = window.currentUser.auth_uid || window.currentUser.email;
+  if (_notificationSyncTimer && _notificationSyncUser === userKey) return;
+  if (_notificationSyncTimer) clearInterval(_notificationSyncTimer);
+  _notificationSyncUser = userKey;
+  checkNewNotifications(true).catch(e => console.warn('Notification sync failed', e));
+  _notificationSyncTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && navigator.onLine) {
+      checkNewNotifications(true).catch(e => console.warn('Notification sync failed', e));
+    }
+  }, NOTIFICATION_FETCH_TTL);
+}
+function stopNotificationSync() {
+  if (_notificationSyncTimer) clearInterval(_notificationSyncTimer);
+  _notificationSyncTimer = null;
+  _notificationSyncUser = null;
+  document.getElementById('notificationAnnouncement')?.remove();
+  _notificationFetchUser = null;
+  _notificationFetchAt = 0;
+  window._appNotifs = null;
+  window._inboxUnread = 0;
+  _refreshNotificationBadge([]);
+}
+window._startNotificationSync = startNotificationSync;
+window._stopNotificationSync = stopNotificationSync;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && window.currentUser && !window.currentUser.is_admin) {
+    checkNewNotifications(true).catch(e => console.warn('Notification sync failed', e));
+  }
+});
 
 async function openNotificationBell(isRerender, filter) {
   filter = filter || 'all';
@@ -2025,19 +2169,13 @@ async function openNotificationBell(isRerender, filter) {
   }
   const notifs = window._appNotifs || [];
   let lastSeen = parseInt(localStorage.getItem(_notificationStorageKey('last_seen_notif_time')) || '0');
-  if (!isRerender) {
-    const newest = notifs.length ? Math.max(...notifs.map(n => new Date(n.created_at).getTime())) : Date.now();
-    localStorage.setItem(_notificationStorageKey('last_seen_notif_time'), String(newest));
-    lastSeen = newest;
-    const latestInboxId = Math.max(0, ...notifs.filter(n => n._source === 'inbox' && typeof n.id === 'number').map(n => n.id));
-    if (latestInboxId > _inboxSeenId()) localStorage.setItem('lum_inbox_seen_id', String(latestInboxId));
-    document.getElementById('notifBellBadge')?.style && (document.getElementById('notifBellBadge').style.display = 'none');
-  } else {
-    document.getElementById('notifBellOverlay')?.remove();
-  }
+  const displayLastSeen = !isRerender && notifs.length
+    ? Math.max(lastSeen, ...notifs.filter(n => n._source !== 'inbox' && n._source !== 'report_reply').map(n => new Date(n.created_at).getTime()))
+    : lastSeen;
+  const isUnread = n => isRerender ? _notificationIsUnread(n, lastSeen) : false;
 
-  const unreadCount = notifs.filter(n => new Date(n.created_at).getTime() > lastSeen).length;
-  const visible = filter === 'unread' ? notifs.filter(n => new Date(n.created_at).getTime() > lastSeen) : notifs;
+  const unreadCount = notifs.filter(isUnread).length;
+  const visible = filter === 'unread' ? notifs.filter(isUnread) : notifs;
 
   // A per-type accent (left border + icon chip color) instead of every card
   // looking identical regardless of what kind of notification it is.
@@ -2053,12 +2191,12 @@ async function openNotificationBell(isRerender, filter) {
   const earlier = visible.filter(n => new Date(n.created_at).getTime() < todayStart.getTime());
 
   const cardHtml = (n) => {
-    const isUnread = new Date(n.created_at).getTime() > lastSeen;
+    const unread = isUnread(n);
     const meta = typeMeta[n._source] || typeMeta.notif;
     const icon = n._source === 'announce' ? (n.emoji || '📢') : (n._source === 'inbox' ? '✉️' : (n._source === 'report_reply' ? '📬' : '🔔'));
     const isReportReply = n._source === 'report_reply' || n._source === 'inbox';
     return `
-      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${isUnread ? meta.bg : 'var(--surface)'};color:var(--ink);border:1px solid ${isUnread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openInbox()"` : ''}>
+      <div style="display:flex;gap:10px;padding:12px;margin-bottom:8px;border-radius:var(--radius-lg);background:${unread ? meta.bg : 'var(--surface)'};color:var(--ink);border:1px solid ${unread ? meta.color : 'var(--border)'};${isReportReply ? 'cursor:pointer' : ''}" ${isReportReply ? `onclick="this.closest('[style*=fixed]').remove();openInbox()"` : ''}>
         <div style="width:34px;height:34px;border-radius:50%;background:${meta.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;border:1px solid var(--border)">${icon}</div>
         <div style="min-width:0;flex:1">
           <div class="flex-between" style="align-items:flex-start;gap:6px">
@@ -2068,7 +2206,7 @@ async function openNotificationBell(isRerender, filter) {
           ${n.body ? `<div class="text-sm" style="margin-top:2px;color:var(--ink-3)">${esc(n.body)}</div>` : ''}
           ${isReportReply ? `<div class="text-xs fw-600" style="color:${meta.color};margin-top:5px">Tap to open your Inbox →</div>` : ''}
           ${n.image_url ? `<img src="${esc(n.image_url)}" style="max-width:100%;border-radius:var(--radius-md);margin-top:6px">` : ''}
-          <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}${isUnread ? ' · <span style="color:'+meta.color+';font-weight:700">NEW</span>' : ''}</div>
+          <div class="text-xs text-muted mt-1">${timeAgo(new Date(n.created_at).getTime())}${unread ? ' · <span style="color:'+meta.color+';font-weight:700">NEW</span>' : ''}</div>
         </div>
       </div>`;
   };
@@ -2101,7 +2239,17 @@ async function openNotificationBell(isRerender, filter) {
           </div>`}
       </div>
     </div>`;
+  document.getElementById('notifBellOverlay')?.remove();
   document.body.appendChild(overlay);
+  if (!isRerender) {
+    if (displayLastSeen > lastSeen) localStorage.setItem(_notificationStorageKey('last_seen_notif_time'), String(displayLastSeen));
+    const latestInboxId = Math.max(0, ...notifs.filter(n => n._source === 'inbox' && typeof n.id === 'number').map(n => n.id));
+    if (latestInboxId > _inboxSeenId()) localStorage.setItem(_notificationStorageKey('inbox_seen_id'), String(latestInboxId));
+    _markReportRepliesRead(notifs.filter(n => n._source === 'report_reply').map(n => n.id));
+    _markBroadcastNotificationsRead(notifs.filter(n => n._source !== 'inbox' && n._source !== 'report_reply'));
+    window._inboxUnread = 0;
+    _refreshNotificationBadge(notifs);
+  }
 }
 window.openNotificationBell = openNotificationBell;
 
@@ -3462,10 +3610,11 @@ window.onload = async function() {
   } else {
     showScreen('splash', false);
   }
-  // Notification data is fetched only when the student opens the bell.
+  // Start account-scoped notification syncing after authentication is restored.
   if (window.currentUser && !window.currentUser.is_admin && window.currentUser.profile_completed) {
     checkWhatsNew();
     window._notificationAuthReady = true;
+    startNotificationSync();
     await _flushPendingNotificationOpen();
   }
   applyWallpaper();

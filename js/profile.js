@@ -1,8 +1,8 @@
 import { timeAgo } from './admin.js';
-import { APP_VERSION, _isStandalone, getSetting, getUserStats, isAIEnabled, renderHome } from './app.js';
+import { APP_VERSION, _isStandalone, areNotificationAnnouncementsEnabled, getSetting, getUserStats, isAIEnabled, renderHome, setNotificationAnnouncementsEnabled } from './app.js';
 import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
-import { checkExpiredAttemptOnRender, getResumableSnapshot, sendStudentMessage } from './quiz.js';
+import { checkExpiredAttemptOnRender, getResumableSnapshot } from './quiz.js';
 import { db, sb } from './supabase.js';
 import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, normalizePhone, rateLimited, renderAvatar, renderMd, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
@@ -113,23 +113,20 @@ function _inboxHide(id) {
   localStorage.setItem(INBOX_HIDDEN_KEY, JSON.stringify([...s].slice(-500)));
 }
 
-// Admin chat views also include older reports/replies; student views use the inbox table only.
+// Reports remain canonical in reports_feedback; inbox rows add direct messages and newer chat entries.
 export async function loadInboxThread(email, { limit = 200 } = {}) {
-  const isAdmin = !!window.currentUser?.is_admin;
   const [inboxRes, repRes] = await Promise.all([
     sb.from('inbox_messages').select('*').eq('user_email', email).order('created_at', { ascending: false }).limit(limit),
-    isAdmin
-      ? sb.from('reports_feedback').select('id,type,question_id,message,admin_reply,replied_at,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(60)
-      : Promise.resolve({ data: [], error: null })
+    sb.from('reports_feedback').select('id,type,question_id,message,admin_reply,replied_at,created_at').eq('user_email', email).order('created_at', { ascending: false }).limit(limit)
   ]);
   const tableOk = !inboxRes.error;
   const rows = (inboxRes.data || []).slice().reverse();
-  const has = (sender, refId, kind) => rows.some(m => m.ref_id === refId && m.sender === sender && (!kind || m.kind === kind));
+  const has = (sender, refId, kind) => rows.some(m => String(m.ref_id) === String(refId) && m.sender === sender && (!kind || m.kind === kind));
   const hidden = _inboxHidden();
   const legacy = [];
   for (const r of (repRes.data || [])) {
-    if (!has('student', r.id)) legacy.push({ id: 'r' + r.id, legacy: true, sender: 'student', kind: r.type === 'question_report' ? 'report' : 'message', body: r.message, created_at: r.created_at });
-    if (r.admin_reply && !has('admin', r.id, 'reply')) legacy.push({ id: 'rr' + r.id, legacy: true, sender: 'admin', kind: 'reply', body: r.admin_reply, quote: (r.message || '').slice(0, 120), created_at: r.replied_at || r.created_at });
+    if (!has('student', r.id)) legacy.push({ id: 'r' + r.id, legacy: true, _reportId: r.id, sender: 'student', kind: r.type === 'question_report' ? 'report' : 'feedback', body: r.message, created_at: r.created_at });
+    if (r.admin_reply && !has('admin', r.id, 'reply')) legacy.push({ id: 'rr' + r.id, legacy: true, _reportId: r.id, sender: 'admin', kind: 'reply', body: r.admin_reply, quote: (r.message || '').slice(0, 120), created_at: r.replied_at || r.created_at });
   }
   const messages = [...rows, ...legacy.filter(m => !hidden.has(m.id))].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return { messages, tableOk };
@@ -147,7 +144,9 @@ function _ibDay(d) {
 export function inboxBubbleHtml(m, viewer, delFn, retryFn) {
   const mine = m.sender === viewer;
   const time = new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const tag = m.kind === 'report' ? '<div class="ib-tag">🚩 Question report</div>' : (m.kind === 'reply' ? '<div class="ib-tag">📬 Reply to a report</div>' : '');
+  const tag = m.kind === 'report' ? '<div class="ib-tag">🚩 Question report</div>'
+    : m.kind === 'reply' ? '<div class="ib-tag">📬 Reply to a report</div>'
+      : m.kind === 'feedback' ? '<div class="ib-tag">💬 Feedback</div>' : '';
   const quote = m.quote ? `<div class="ib-quote">${esc(m.quote)}${m.quote.length >= 120 ? '…' : ''}</div>` : '';
   const src = m.image_url || m._previewUrl;
   const img = src ? `<img class="ib-img" src="${esc(src)}" alt="" loading="lazy" onclick="inboxViewImage('${escJs(src)}')" onerror="this.style.display='none'">` : '';
@@ -191,15 +190,18 @@ window.openMyReports = openInbox;   // older entry point
 export async function renderInbox() {
   const wrap = document.getElementById('inboxPageWrap');
   if (!wrap) return;
+  const email = window.currentUser.email;
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
-    <div class="card-teal" style="margin:10px 0 6px"><h2>✉️ Inbox</h2><p>Messages and replies from the admin</p></div>
+    <div class="card-teal" style="margin:10px 0 6px"><h2>✉️ Inbox for Reports &amp; Messages</h2><p>Reports, feedback, replies, and direct messages with the admin</p></div>
+    <button class="btn btn-secondary btn-sm" style="width:100%;margin:6px 0" onclick="openFeedbackModal()">📝 Submit a report or feedback</button>
     <div class="ib-thread" id="ibThread">${skeletonList(2, false)}</div>
     <div class="ib-composer">
-      <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Write to the admin…" oninput="inboxGrow(this)"></textarea>
+      <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Send a direct message to the admin…" oninput="inboxGrow(this)"></textarea>
       <button class="ib-send" id="ibSend" aria-label="Send" onclick="inboxSend()">➤</button>
     </div>`;
-  const { messages, tableOk } = await loadInboxThread(window.currentUser.email);
+  const { messages, tableOk } = await loadInboxThread(email);
+  if (window.currentUser?.email !== email || document.querySelector('.screen.active')?.id !== 'screen-inbox') return;
   window._inbox = { messages, tableOk };
   _ibDraw(true);
   _ibSeen();
@@ -213,24 +215,37 @@ function _ibSeen() {
   const S = window._inbox;
   if (!S) return;
   const top = Math.max(0, ...S.messages.filter(m => m.sender === 'admin' && typeof m.id === 'number').map(m => m.id));
-  if (top > (window._inboxSeenId ? window._inboxSeenId() : 0)) localStorage.setItem('lum_inbox_seen_id', String(top));
+  if (top > (window._inboxSeenId ? window._inboxSeenId() : 0)) {
+    const userKey = encodeURIComponent(window.currentUser?.auth_uid || window.currentUser?.email || 'anonymous');
+    localStorage.setItem(`lum_inbox_seen_id_${userKey}`, String(top));
+  }
+  const seenReportIds = new Set();
+  S.messages.filter(m => m.sender === 'admin' && m._reportId != null).forEach(m => seenReportIds.add(String(m._reportId)));
+  window._markReportRepliesRead?.([...seenReportIds]);
   window._inboxUnread = 0;
-  window._appNotifs = (window._appNotifs || []).filter(n => n._source !== 'inbox');
+  window._appNotifs = (window._appNotifs || []).filter(n => n._source !== 'inbox' && n._source !== 'report_reply');
   window._refreshNotificationBadge?.();
 }
 
 async function _ibPoll() {
   if (document.querySelector('.screen.active')?.id !== 'screen-inbox') { clearInterval(window._ibTimer); return; }
   const S = window._inbox;
-  if (!S || !S.tableOk) return;
-  const maxId = Math.max(0, ...S.messages.filter(m => typeof m.id === 'number').map(m => m.id));
-  const { data } = await sb.from('inbox_messages').select('*').eq('user_email', window.currentUser.email).eq('sender', 'admin').gt('id', maxId).order('id');
-  const known = new Set(S.messages.map(m => String(m.id)));
-  const fresh = (data || []).filter(m => !known.has(String(m.id)));
-  if (!fresh.length) return;
-  S.messages.push(...fresh);
-  _ibDraw(true);
-  _ibSeen();
+  if (!S) return;
+  try {
+    const email = window.currentUser.email;
+    const { messages, tableOk } = await loadInboxThread(email);
+    if (window._inbox !== S || window.currentUser?.email !== email || document.querySelector('.screen.active')?.id !== 'screen-inbox') return;
+    S.tableOk = tableOk;
+    const pending = S.messages.filter(m => typeof m.id !== 'number' && !m.legacy);
+    const before = S.messages.map(m => String(m.id)).join(',');
+    const next = [...messages, ...pending];
+    if (before === next.map(m => String(m.id)).join(',')) return;
+    S.messages = next;
+    _ibDraw(true);
+    _ibSeen();
+  } catch (error) {
+    console.warn('Inbox refresh failed', error);
+  }
 }
 window._ibPoll = _ibPoll;
 
@@ -239,9 +254,17 @@ window.inboxGrow = inboxGrow;
 
 async function _ibDeliver(tmp) {
   tmp._state = 'sending';
-  const res = await sendStudentMessage({ type: 'feedback', message: tmp.body });
-  if (res.ok) { if (res.inboxId) tmp.id = res.inboxId; tmp._state = null; }
-  else { tmp._state = 'failed'; showToast('⚠️ Message not sent. Tap Retry'); }
+  try {
+    const { data, error } = await sb.from('inbox_messages').insert({
+      user_email: window.currentUser.email, sender: 'student', kind: 'message', body: tmp.body
+    }).select('id,created_at').single();
+    if (error) throw error;
+    Object.assign(tmp, data, { _state: null });
+  } catch (error) {
+    console.warn('Direct message not sent', error);
+    tmp._state = 'failed';
+    showToast('⚠️ Message not sent. Tap Retry');
+  }
   _ibDraw(false);
 }
 
@@ -822,7 +845,7 @@ export async function renderProfile() {
       <span style="color:var(--ink-4)">›</span>
     </div>` : ''}
     <div class="list-item" onclick="openInbox()">
-      <div class="list-item-left"><div class="list-item-icon">✉️</div><div><div class="list-item-title">Inbox</div><div class="list-item-sub">Messages from admin, report replies</div></div></div>
+      <div class="list-item-left"><div class="list-item-icon">✉️</div><div><div class="list-item-title">Inbox for Reports &amp; Messages</div><div class="list-item-sub">Your reports, feedback, replies, and direct messages</div></div></div>
       <div style="display:flex;align-items:center;gap:8px">${(window._inboxUnread || 0) > 0 ? `<span class="badge badge-red">${window._inboxUnread}</span>` : ''}<span style="color:var(--ink-4)">›</span></div>
     </div>
     ${getSetting('payment_enabled','false') === 'true' ? `
@@ -842,10 +865,10 @@ export async function renderProfile() {
         <span class="toggle-knob"></span>
       </label>
     </div>
-    <div class="list-item no-hover" onclick="toggleNotifications(${localStorage.getItem('notif_enabled')==='false'})">
-      <div class="list-item-left"><div class="list-item-icon">🔔</div><div><div class="list-item-title">Notifications</div><div class="list-item-sub">${localStorage.getItem('notif_enabled')==='false'?'Off':'On'}</div></div></div>
+    <div class="list-item no-hover" onclick="toggleNotifications(${!areNotificationAnnouncementsEnabled()})">
+      <div class="list-item-left"><div class="list-item-icon">🔔</div><div><div class="list-item-title">Notification announcements</div><div class="list-item-sub">${areNotificationAnnouncementsEnabled()?'On':'Off'}</div></div></div>
       <label class="toggle-switch" onclick="event.preventDefault()">
-        <input type="checkbox" ${localStorage.getItem('notif_enabled')==='false'?'':'checked'} tabindex="-1">
+        <input type="checkbox" ${areNotificationAnnouncementsEnabled()?'checked':''} tabindex="-1">
         <span class="toggle-knob"></span>
       </label>
     </div>
@@ -1420,19 +1443,17 @@ window.renderPlanner = renderPlanner;
 
 
 
-// ==================== NOTIFICATIONS ====================
-export async function requestNotificationPermission() {
-  if (!('Notification' in window)) return;
-  if (localStorage.getItem('notif_enabled') === 'false') return; // student opted out
-  if (Notification.permission === 'default') await Notification.requestPermission();
-}
-
-
-
 function toggleNotifications(enabled) {
-  localStorage.setItem('notif_enabled', enabled ? 'true' : 'false');
-  if (enabled) requestNotificationPermission();
-  showToast(enabled ? 'Notifications turned on' : 'Notifications turned off');
+  if (!enabled) {
+    showConfirm('Are you sure you want to turn off notification announcements?', () => {
+      setNotificationAnnouncementsEnabled(false);
+      showToast('Notification announcements turned off');
+      renderProfile();
+    }, 'Turn off');
+    return;
+  }
+  setNotificationAnnouncementsEnabled(true);
+  showToast('Notification announcements turned on');
   renderProfile();
 }
 window.toggleNotifications = toggleNotifications;

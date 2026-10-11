@@ -1,7 +1,6 @@
 import { renderAdminPanel } from './admin.js';
 import { clearAppState, renderHome, restoreAppState, startHeartbeat, stopHeartbeat } from './app.js';
 import { _resetNavigationRoot, showScreen } from './navigation.js';
-import { requestNotificationPermission } from './profile.js';
 import { RESUME_KEY, _showResumeDialog, _showTimeExpiredResult, clearPersistedTest, isValidSessionSnapshot } from './quiz.js';
 import { ADMIN_EMAIL, USERS_SAFE_COLS, _showReconnecting, db, sb } from './supabase.js';
 import { cacheGet, cacheSet, normalizePhone, rateLimited, showLoading, showToast } from './utils.js';
@@ -199,7 +198,6 @@ async function _handleAuthedSessionInner(session) {
 
   if (window.maintenanceMode) { showToast('App is under maintenance. Please check back later.'); await sb.auth.signOut(); return; }
   startHeartbeat();
-  requestNotificationPermission();
 
   // Check for in-progress test (attempt or browse/review)
   const rawTest = localStorage.getItem(RESUME_KEY);
@@ -263,12 +261,14 @@ async function _handleAuthedSessionInner(session) {
   if (saved) window.selectedYear = JSON.parse(saved);
   if (await restoreAppState()) {
     window._notificationAuthReady = true;
+    window._startNotificationSync?.();
     window._flushPendingNotificationOpen?.().catch(e => console.warn('Could not open notifications', e));
     return;
   }
   // Always go to home — year_of_study is now stored on user profile, not in localStorage
   renderHome(); showScreen('home');
   window._notificationAuthReady = true;
+  window._startNotificationSync?.();
   window._flushPendingNotificationOpen?.().catch(e => console.warn('Could not open notifications', e));
 }
 
@@ -334,10 +334,10 @@ async function submitCreateAccount() {
   showLoading(false);
   showToast(`Welcome, Dr. ${name}! 🩺`);
   startHeartbeat();
-  requestNotificationPermission();
   _resetNavigationRoot();
   renderHome(); showScreen('home');
   window._notificationAuthReady = true;
+  window._startNotificationSync?.();
   window._flushPendingNotificationOpen?.().catch(e => console.warn('Could not open notifications', e));
 }
 window.submitCreateAccount = submitCreateAccount;
@@ -346,6 +346,7 @@ window.submitCreateAccount = submitCreateAccount;
 
 export async function logout() {
   stopHeartbeat();
+  window._stopNotificationSync?.();
   clearPersistedTest();
   clearAppState();
   localStorage.removeItem('lum_year');

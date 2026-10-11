@@ -521,7 +521,43 @@ function _admMsgDraw(scroll) {
   if (scroll) body.scrollTop = body.scrollHeight;
 }
 
+async function _admMsgMarkRead(messages, email) {
+  const unreadIds = messages.filter(m => m.sender === 'student' && typeof m.id === 'number').map(m => m.id);
+  if (!unreadIds.length) return;
+  const { error } = await sb.from('inbox_messages').update({ read_at: new Date().toISOString() })
+    .in('id', unreadIds).eq('user_email', email).eq('sender', 'student').is('read_at', null);
+  if (error) console.warn('Could not mark student messages as read', error);
+}
+
+async function _admMsgPoll() {
+  const S = window._admMsg;
+  if (!S || !document.getElementById('adminMsgOverlay')) {
+    clearInterval(window._admMsgTimer);
+    return;
+  }
+  if (S.polling) return;
+  S.polling = true;
+  try {
+    const { messages, tableOk } = await loadInboxThread(S.email);
+    if (window._admMsg !== S || !document.getElementById('adminMsgOverlay')) return;
+    S.tableOk = tableOk;
+    const known = new Set(S.thread.map(m => String(m.id)));
+    const fresh = messages.some(m => !known.has(String(m.id)));
+    const pending = S.thread.filter(m => typeof m.id !== 'number' && !m.legacy);
+    S.thread = [...messages, ...pending];
+    if (fresh) {
+      _admMsgDraw(true);
+      if (tableOk) await _admMsgMarkRead(messages, S.email);
+    }
+  } catch (error) {
+    console.warn('Admin inbox refresh failed', error);
+  } finally {
+    S.polling = false;
+  }
+}
+
 async function adminOpenMessages(email, name) {
+  clearInterval(window._admMsgTimer);
   document.getElementById('adminMsgOverlay')?.remove();
   window._admMsg = { email, name, file: null, thread: [], tableOk: true };
   const overlay = document.createElement('div');
@@ -548,14 +584,19 @@ async function adminOpenMessages(email, name) {
   document.body.appendChild(overlay);
   const { messages, tableOk } = await loadInboxThread(email);
   const S = window._admMsg;
-  if (!S || S.email !== email) return;
+  if (!S || S.email !== email || !document.getElementById('adminMsgOverlay')) return;
   S.thread = messages;
   S.tableOk = tableOk;
   _admMsgDraw(true);
+  if (tableOk) await _admMsgMarkRead(messages, email);
+  window._admMsgTimer = setInterval(_admMsgPoll, 8000);
 }
 window.adminOpenMessages = adminOpenMessages;
 
-function adminCloseMessages() { document.getElementById('adminMsgOverlay')?.remove(); }
+function adminCloseMessages() {
+  clearInterval(window._admMsgTimer);
+  document.getElementById('adminMsgOverlay')?.remove();
+}
 window.adminCloseMessages = adminCloseMessages;
 
 function _admMsgChip() {
@@ -746,6 +787,17 @@ async function adminViewStudentDetail(email) {
   document.body.appendChild(overlay);
 }
 window.adminViewStudentDetail = adminViewStudentDetail;
+
+async function adminViewStudentDetailByAuthUid(authUid) {
+  if (!window.currentUser?.is_admin || !authUid) return showToast('Admin access is required');
+  const { data: student } = await db(
+    sb.from('users').select('email').eq('auth_uid', authUid).maybeSingle(),
+    'Report student profile lookup failed'
+  );
+  if (!student?.email) return showToast('Student profile not found');
+  adminViewStudentDetail(student.email);
+}
+window.adminViewStudentDetailByAuthUid = adminViewStudentDetailByAuthUid;
 
 
 
@@ -4288,6 +4340,15 @@ async function adminReports(filter = 'all', token = window._adminRenderToken, pa
     const { data: qs } = await db(sb.from('questions').select('id,text').in('id', qIds), 'Questions load failed');
     (qs || []).forEach(q => { qMap[q.id] = q; });
   }
+  const reportEmails = [...new Set((data || []).map(r => r.user_email).filter(Boolean))];
+  const studentMap = {};
+  if (reportEmails.length) {
+    const { data: students } = await db(
+      sb.from('users').select('email,auth_uid').in('email', reportEmails),
+      'Report student lookup failed'
+    );
+    (students || []).forEach(student => { studentMap[student.email] = student; });
+  }
 
   if (_renderStale(token)) return;
   content.innerHTML = `
@@ -4311,6 +4372,7 @@ async function adminReports(filter = 'all', token = window._adminRenderToken, pa
     </div>` : ''}
     ${!data?.length ? '<div class="card text-center"><p>No reports here.</p></div>' : data.map(r => {
       const q = r.question_id ? qMap[r.question_id] : null;
+      const student = studentMap[r.user_email];
       return `
       <div class="card" style="margin-bottom:10px" id="_rfCard_${r.id}">
         <div class="flex-between mb-1">
@@ -4321,7 +4383,14 @@ async function adminReports(filter = 'all', token = window._adminRenderToken, pa
           </div>
           <button class="btn-icon" style="width:28px;height:28px" title="Delete this report" onclick="adminDeleteReport(${r.id},'${filter}')">🗑</button>
         </div>
-        <div class="text-xs text-muted mb-1">${esc(r.user_name) || 'Unknown'} (${esc(r.user_email)}) · ${timeAgo(new Date(r.created_at).getTime())}</div>
+        <div class="text-xs text-muted mb-1">
+          ${student?.auth_uid
+            ? `<button class="btn btn-ghost btn-xs" style="padding:0 4px" onclick="adminViewStudentDetailByAuthUid('${escJs(student.auth_uid)}')">👤 ${esc(r.user_name) || 'Student profile'}</button>`
+            : student?.email
+              ? `<button class="btn btn-ghost btn-xs" style="padding:0 4px" onclick="adminViewStudentDetail('${escJs(student.email)}')">👤 ${esc(r.user_name) || 'Student profile'}</button>`
+              : `${esc(r.user_name) || 'Unknown'}`}
+          (${esc(r.user_email)}) · ${timeAgo(new Date(r.created_at).getTime())}
+        </div>
         ${q?.text ? `<div class="text-xs" style="background:var(--surface-2);border-radius:8px;padding:6px 8px;margin-bottom:6px"><strong>Question #${q.id}:</strong> ${esc(q.text.substring(0,100))}${q.text.length>100?'...':''} <button class="btn btn-ghost btn-xs" style="padding:2px 6px" onclick="adminEditQuestion(${q.id})">✏️ Fix</button></div>` : ''}
         <div class="text-sm mb-2">${renderMd(r.message)}</div>
         ${r.admin_reply ? `<div style="background:var(--gold-50);border-radius:10px;padding:8px 10px;margin-bottom:6px"><div class="text-xs fw-700" style="color:var(--gold-700)">Your reply:</div><div class="text-sm">${renderMd(r.admin_reply)}</div></div>` : `
@@ -4401,11 +4470,6 @@ async function adminReplyToReport(id, filter) {
   if (!reply) return showToast('Please type a reply');
   await db(sb.from('reports_feedback').update({ admin_reply: reply, status: 'replied', replied_at: new Date().toISOString() }).eq('id', id), 'Reply failed');
   showToast('Reply sent ✓');
-  // Also drop the reply into the student's Inbox chat (in the background — the admin doesn't wait for it)
-  (async () => {
-    const { data: rep } = await sb.from('reports_feedback').select('user_email,message').eq('id', id).maybeSingle();
-    if (rep) await sb.from('inbox_messages').insert({ user_email: rep.user_email, sender: 'admin', kind: 'reply', body: reply, ref_id: id, quote: (rep.message || '').slice(0, 120) });
-  })().catch(() => {});
   logAdminAction('Replied to a report/feedback', `Report #${id}`);
   adminReports(filter);
 }
