@@ -2,7 +2,7 @@ import { renderAdminPanel } from './admin.js';
 import { clearAppState, renderHome, restoreAppState, startHeartbeat, stopHeartbeat } from './app.js';
 import { _resetNavigationRoot, showScreen } from './navigation.js';
 import { requestNotificationPermission } from './profile.js';
-import { RESUME_KEY, _showResumeDialog, _showTimeExpiredResult, clearPersistedTest } from './quiz.js';
+import { RESUME_KEY, _showResumeDialog, _showTimeExpiredResult, clearPersistedTest, isValidSessionSnapshot } from './quiz.js';
 import { ADMIN_EMAIL, USERS_SAFE_COLS, _showReconnecting, db, sb } from './supabase.js';
 import { cacheGet, cacheSet, normalizePhone, rateLimited, showLoading, showToast } from './utils.js';
 
@@ -206,7 +206,7 @@ async function _handleAuthedSessionInner(session) {
   if (rawTest) {
     try {
       const saved = JSON.parse(rawTest);
-      if (saved && !saved.submitted) {
+      if (isValidSessionSnapshot(saved)) {
         const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
         if (saved.mode === 'attempt') {
           const timeExpired = saved.timeLimit && elapsed >= saved.timeLimit;
@@ -255,10 +255,8 @@ async function _handleAuthedSessionInner(session) {
         } else {
           clearPersistedTest();
         }
-      } else {
-        clearPersistedTest();
       }
-    } catch { clearPersistedTest(); }
+    } catch (e) { console.warn('Ignoring an unreadable saved quiz session; its stored data was left untouched.', e); }
   }
 
   const saved = localStorage.getItem('lum_year');

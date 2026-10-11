@@ -39,6 +39,9 @@ function _createScreen(id) {
 }
 
 export function showScreen(id, pushToStack = true, preserveHistory = false) {
+  if (id !== 'module') window._cancelPendingModuleLoad?.();
+  if (id !== 'test') window._cancelPendingTestStart?.();
+  window._cancelPendingQuestionFolderLoad?.(id);
   // Only touch screens that need to change — avoids DOM thrashing
   const current = document.querySelector('.screen.active');
   const next = document.getElementById('screen-' + id) || _createScreen(id);
@@ -163,6 +166,7 @@ export function goBack(destination) {
   // Review (or Quick View): step back to Results / Search while keeping Results on the stack
   if (cur === 'review') {
     if (window._qvState && typeof window.closeQuickView === 'function') { window.closeQuickView(); return; }
+    if (!window.activeTest) { _returnToScreen('home'); return; }
   }
   if (stack.length > 1) {
     if (window.history.state?.screen === cur) window.history.back();
@@ -181,6 +185,7 @@ function _backWithinScreen(cur) {
     return true;
   }
   if (cur === 'module' && window._moduleSubView) {
+    window._cancelPendingTestStart?.();
     window._moduleSubView = null;
     window.backToModule?.();
     return true;
@@ -274,6 +279,7 @@ window.addEventListener('popstate', (event) => {
     return;
   }
   if (cur === 'review' && window._qvState) window._qvState = null;
+  if (cur === 'review' && !window.activeTest) { _returnToScreen('home'); return; }
   if (cur === 'results') window.activeTest = null;
   if (_backWithinScreen(cur)) {
     window.history.pushState({ screen: cur }, '');

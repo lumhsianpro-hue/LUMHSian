@@ -5,6 +5,10 @@ import { ICON_CHART, ICON_CHECK_CIRCLE, ICON_CLOCK, ICON_TARGET, ICON_X_CIRCLE, 
 
 
 const QUESTION_CACHE_TTL = 15 * 60 * 1000;
+let _testStartSequence = 0;
+window._cancelPendingTestStart = () => {
+  _testStartSequence++;
+};
 
 async function _fetchQuestionsCached(key, query, errorText) {
   const cacheKey = `questions_${key}`;
@@ -52,6 +56,7 @@ export async function _showTimeExpiredResult() {
 
 
 export function _showResumeDialog(saved, elapsed) {
+  if (!isValidSessionSnapshot(saved)) return;
   if (document.getElementById('_resumeOverlay')) return; // never stack a second copy of this dialog
   const isAttempt = saved.mode === 'attempt';
   const isPractice = saved.mode === 'practice';
@@ -101,7 +106,7 @@ export function _showResumeDialog(saved, elapsed) {
   window._doResume = () => {
     overlay.remove();
     const s = window._resumeSnapshot;
-    if (!s) return;
+    if (!isValidSessionSnapshot(s)) { showToast('This saved session cannot be resumed safely. Your saved data was left untouched.'); return; }
     window.activeTest = { ...s, bookmarked: new Set(s.bookmarked || []), timerInterval: null, submitted: false };
     if (window.activeTest.mode === 'attempt' && window.activeTest.timeLimit) startTimer();
     renderTestScreen();
@@ -141,9 +146,25 @@ export async function startCustomTest(moduleIds, subjectIds, count, timerMinutes
   return _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId);
 }
 
+function _mapQuizQuestion(q) {
+  const options = Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]');
+  if (!Array.isArray(options) || !options.length || !Number.isInteger(q.correct_answer) ||
+    q.correct_answer < 0 || q.correct_answer >= options.length) {
+    throw new Error(`Question ${q.id} has invalid answer data`);
+  }
+  return {
+    id: q.id, text: q.text, options, answer: q.correct_answer, explanation: q.explanation,
+    imageUrl: q.image_url, expImageUrl: q.explanation_image_url,
+    subjectId: q.subject_id, moduleId: q.module_id
+  };
+}
+
 async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes, name, paperIds, testIds, mode, customTestId) {
+  const sequence = ++_testStartSequence;
+  const isCurrent = () => sequence === _testStartSequence;
   const returnScreen = _currentReturnScreen();
-  showLoading(true, 'Building your test...');
+  showToast('Building your test...');
+  try {
   const queries = [];
   if (moduleIds?.length) {
     let q = sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('module_id', moduleIds);
@@ -160,6 +181,9 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
     queries.push(_fetchQuestionsCached(key, sb.from('questions').select('id,text,options,correct_answer,explanation,image_url,explanation_image_url,subject_id,module_id').in('practice_test_id', testIds), 'Failed to load test questions'));
   }
   const results = await Promise.all(queries);
+  if (!isCurrent()) return;
+  const failedResult = results.find(result => result.error);
+  if (failedResult) throw failedResult.error;
   // Pooled from every selected source, then deduplicated by id — the same
   // question could otherwise appear twice if it happens to belong to both a
   // selected module AND a selected practice test within it.
@@ -169,15 +193,11 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
     if (seen.has(q.id)) continue;
     seen.add(q.id); qs.push(q);
   }
-  if (!qs.length) { showLoading(false); showToast('No questions found for this selection.'); return; }
+  if (!qs.length) { showToast('No questions found for this selection.'); return; }
 
   const shuffled = shuffleArray([...qs]).slice(0, count);
-  const mapped = shuffled.map(q => ({
-    id: q.id, text: q.text, options: Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]'),
-    answer: q.correct_answer, explanation: q.explanation,
-    imageUrl: q.image_url, expImageUrl: q.explanation_image_url,
-    subjectId: q.subject_id, moduleId: q.module_id
-  }));
+  if (!shuffled.length) { showToast('Choose at least one question for this test.'); return; }
+  const mapped = shuffled.map(_mapQuizQuestion);
 
   // Build Your Own Test can now start as either a real Attempt (no instant
   // per-option feedback, review only at the end) or a Review (instant
@@ -187,9 +207,10 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
   // The timer stays optional in Attempt mode: set one and it counts down
   // like a normal attempt; leave it blank and it's simply untimed. Review
   // mode never has a timer, same as browsing anywhere else in the app.
+  const bookmarked = await loadBookmarkedIndexSet(mapped);
+  if (!isCurrent()) return;
   if (window.activeTest?.timerInterval) clearInterval(window.activeTest.timerInterval);
   clearPersistedTest();
-  const bookmarked = await loadBookmarkedIndexSet(mapped);
   window.activeTest = {
     questions: mapped, answers: new Array(mapped.length).fill(null),
     explanationShown: new Array(mapped.length).fill(false),
@@ -200,13 +221,18 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
     startTime: Date.now(), timeLimit: mode === 'attempt' && timerMinutes > 0 ? timerMinutes * 60 : null,
     timerInterval: null, submitted: false, returnScreen
   };
-  showLoading(false);
   // Only a timed Attempt has a clock. Review never does — starting the timer here for Review (just because a timer
   // value was saved with the test) is what made Review of a saved test auto-submit as "Time up!".
   if (window.activeTest.timeLimit) startTimer();
   persistActiveTest();
   renderTestScreen();
   showScreen('test');
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('Could not build custom test:', error);
+      showToast('Could not build this test. Please try again.');
+    }
+  }
 }
 
 
@@ -218,12 +244,15 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
 // exact test that IS paused: that asks "continue from Qn" vs "start fresh"
 // (see startTest() just below this function).
 async function _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
+  const sequence = ++_testStartSequence;
+  const isCurrent = () => sequence === _testStartSequence;
   // Remember where the student tapped in from (e.g. a module's paper list) so
   // finishing or exiting the test can return them there instead of always
   // dropping them back at Home.
   const returnScreen = document.querySelector('.screen.active')?.id.replace('screen-', '') || 'home';
   const safeReturnScreen = ['test', 'results', 'review'].includes(returnScreen) ? 'home' : returnScreen;
-  showLoading(true, mode === 'browse' ? 'Loading paper for review...' : 'Preparing test...');
+  showToast(mode === 'browse' ? 'Loading paper for review...' : 'Preparing test...');
+  try {
   // order('id') so Review mode reliably shows questions in the order they were
   // uploaded — without an explicit order, a database doesn't guarantee any
   // particular row order, so this could otherwise appear to shuffle itself.
@@ -255,22 +284,20 @@ async function _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, p
     if (subjectId) query = query.eq('subject_id', subjectId);
   }
   const questionKey = paperId ? `paper_${paperId}` : testId ? `test_${testId}` : `module_${moduleId}_subject_${subjectId || 'all'}`;
-  const { data: qs } = await _fetchQuestionsCached(questionKey, query, 'Failed to load questions');
-  if (!qs || qs.length === 0) { showLoading(false); showToast('No questions in this category yet.'); return; }
+  const { data: qs, error } = await _fetchQuestionsCached(questionKey, query, 'Failed to load questions');
+  if (!isCurrent()) return;
+  if (error) throw error;
+  if (!qs || qs.length === 0) { showToast('No questions in this category yet.'); return; }
 
   // Shuffle for practice AND timed attempts (a fresh order every time you take a test) —
   // "browse" mode (just reading through a paper for reference) keeps original numbering.
   const questions = (mode === 'practice' || mode === 'attempt') ? shuffleArray([...qs]) : qs;
-  const mapped = questions.map(q => ({
-    id: q.id, text: q.text, options: Array.isArray(q.options) ? q.options : JSON.parse(q.options || '[]'),
-    answer: q.correct_answer, explanation: q.explanation,
-    imageUrl: q.image_url, expImageUrl: q.explanation_image_url,
-    subjectId: q.subject_id, moduleId: q.module_id
-  }));
+  const mapped = questions.map(_mapQuizQuestion);
 
+  const bookmarked = await loadBookmarkedIndexSet(mapped);
+  if (!isCurrent()) return;
   if (window.activeTest?.timerInterval) clearInterval(window.activeTest.timerInterval);
   clearPersistedTest();
-  const bookmarked = await loadBookmarkedIndexSet(mapped);
   window.activeTest = {
     questions: mapped, answers: new Array(mapped.length).fill(null),
     explanationShown: new Array(mapped.length).fill(false),
@@ -281,11 +308,16 @@ async function _startTestFresh(mode, moduleId, moduleName, subjectId, paperId, p
     timerInterval: null, submitted: false, returnScreen: safeReturnScreen
   };
 
-  showLoading(false);
   if (mode === 'attempt') { startTimer(); persistActiveTest(); }
   else if (mode === 'practice') { persistActiveTest(); }
   renderTestScreen();
   showScreen('test');
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('Could not start quiz session:', error);
+      showToast('Could not start this quiz. Please try again.');
+    }
+  }
 }
 async function startTest(mode, moduleId, moduleName, subjectId, paperId, paperTitle, testId, testTitle) {
   if (mode === 'browse' || mode === 'practice') {
@@ -341,6 +373,25 @@ function startTimer() {
 // they'd answered so far.
 export const RESUME_KEY = 'lum_active_attempt';
 
+export function isValidSessionSnapshot(saved) {
+  if (!saved || typeof saved !== 'object' || saved.submitted) return false;
+  if (!['attempt', 'practice', 'browse'].includes(saved.mode)) return false;
+  if (!Array.isArray(saved.questions) || !saved.questions.length || !Array.isArray(saved.answers)) return false;
+  if (saved.answers.length !== saved.questions.length) return false;
+  if (!Number.isInteger(saved.currentIndex) || saved.currentIndex < 0 || saved.currentIndex >= saved.questions.length) return false;
+  if (!Number.isFinite(saved.startTime) || saved.startTime > Date.now() + 60000) return false;
+  if (saved.timeLimit != null && (!Number.isFinite(saved.timeLimit) || saved.timeLimit <= 0)) return false;
+  if (saved.bookmarked != null && (!Array.isArray(saved.bookmarked) ||
+    saved.bookmarked.some(i => !Number.isInteger(i) || i < 0 || i >= saved.questions.length))) return false;
+  if (saved.explanationShown != null && (!Array.isArray(saved.explanationShown) || saved.explanationShown.length !== saved.questions.length)) return false;
+  return saved.questions.every((q, i) =>
+    q && q.id != null && Array.isArray(q.options) && q.options.length > 0 &&
+    Number.isInteger(q.answer) && q.answer >= 0 && q.answer < q.options.length &&
+    (saved.answers[i] === null || (Number.isInteger(saved.answers[i]) && saved.answers[i] >= 0 && saved.answers[i] < q.options.length))
+  );
+}
+window.isValidSessionSnapshot = isValidSessionSnapshot;
+
 
 export function persistActiveTest(extra) {
   if (!window.activeTest || window.activeTest.submitted) return;
@@ -369,7 +420,7 @@ export function getResumableSnapshot() {
   if (!raw) return null;
   let saved;
   try { saved = JSON.parse(raw); } catch { return null; }
-  if (!saved || saved.submitted) return null;
+  if (!isValidSessionSnapshot(saved)) return null;
   const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
   if (saved.timeLimit && elapsed >= saved.timeLimit) return null;
   const maxAge = saved.mode === 'browse' ? 7 * 24 * 3600 : (saved.mode === 'practice' ? 48 * 3600 : 12 * 3600);
@@ -395,7 +446,7 @@ export function checkExpiredAttemptOnRender() {
   if (!raw) return;
   let saved;
   try { saved = JSON.parse(raw); } catch { return; }
-  if (!saved || saved.submitted || saved.mode !== 'attempt' || !saved.timeLimit) return;
+  if (!isValidSessionSnapshot(saved) || saved.mode !== 'attempt' || !saved.timeLimit) return;
   const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
   if (elapsed < saved.timeLimit) return;
   clearPersistedTest();
@@ -410,8 +461,8 @@ function checkResumableTest() {
   const raw = localStorage.getItem(RESUME_KEY);
   if (!raw) return;
   let saved;
-  try { saved = JSON.parse(raw); } catch { clearPersistedTest(); return; }
-  if (!saved || saved.submitted) { clearPersistedTest(); return; }
+  try { saved = JSON.parse(raw); } catch { return; }
+  if (!isValidSessionSnapshot(saved)) return;
   const elapsed = Math.floor((Date.now() - saved.startTime) / 1000);
   if (saved.timeLimit && elapsed >= saved.timeLimit) { clearPersistedTest(); return; }
   // Review has no time pressure, so an old session is kept around much longer
@@ -465,7 +516,7 @@ window.dismissResumableTest = dismissResumableTest;
 function resumeTest(btn) {
   const saved = window._resumeSnapshot;
   btn.closest('[style*=fixed]').remove();
-  if (!saved) return;
+  if (!isValidSessionSnapshot(saved)) { showToast('This saved session cannot be resumed safely. Your saved data was left untouched.'); return; }
   window.activeTest = { ...saved, bookmarked: new Set(saved.bookmarked || []), timerInterval: null, submitted: false };
   if (window.activeTest.timeLimit) startTimer(); // untimed tests (e.g. a no-timer custom test) have nothing to count down
   renderTestScreen();
@@ -1021,6 +1072,7 @@ async function submitTest() {
   const mins = Math.floor(timeTaken / 60), secs = timeTaken % 60;
   const timeStr = `${mins}m ${secs}s`;
 
+  try {
   // Build Your Own Test is excluded from personal totals and test history —
   // it's meant for free practice on a student's own custom question set, not
   // tracked performance. A test where the student answered zero questions is
@@ -1115,7 +1167,10 @@ async function submitTest() {
     stats.attempt_correct = (stats.attempt_correct || 0) + correct;
     await saveUserStats(stats);
   }
-
+  } catch (error) {
+    console.error('Could not save quiz session details:', error);
+    showToast('Your results are calculated, but some progress could not be saved. Check your connection and try again later.');
+  }
   renderResults();
 }
 
@@ -1213,15 +1268,25 @@ export function renderResults() {
 
 // ==================== REVIEW ====================
 async function startReview(wrongOnly = false) {
-  let questions = window.activeTest.questions, answers = window.activeTest.answers;
+  const test = window.activeTest;
+  if (!test || !Array.isArray(test.questions) || !Array.isArray(test.answers)) {
+    showToast('This quiz session is no longer available.');
+    return;
+  }
+  let questions = test.questions, answers = test.answers;
   if (wrongOnly) {
-    const idxs = questions.map((q, i) => i).filter(i => answers[i] !== questions[i].answer);
+    const idxs = questions.map((q, i) => i).filter(i => answers[i] !== null && answers[i] !== questions[i].answer);
     questions = idxs.map(i => questions[i]);
     answers = idxs.map(i => answers[i]);
+    if (!questions.length) {
+      showToast('There are no incorrect answers to review.');
+      return;
+    }
   }
   const { data: existingBm } = await db(sb.from('bookmarks').select('question_id').eq('email', window.currentUser.email).in('question_id', questions.map(q => q.id)), 'Bookmarks check failed');
+  if (window.activeTest !== test || document.querySelector('.screen.active')?.id !== 'screen-results') return;
   const bookmarked = new Set((existingBm || []).map(b => b.question_id));
-  window.reviewState = { questions, answers, currentIndex: 0, explanationShown: false, isCustom: !!window.activeTest.isCustom, bookmarked, label: (window.activeTest.testTitle || window.activeTest.paperTitle || window.activeTest.moduleName) + (wrongOnly ? ' · Wrong Only' : '') };
+  window.reviewState = { questions, answers, currentIndex: 0, explanationShown: false, isCustom: !!test.isCustom, bookmarked, label: (test.testTitle || test.paperTitle || test.moduleName) + (wrongOnly ? ' · Wrong Only' : '') };
   renderReview();
   showScreen('review');
 }
@@ -1277,7 +1342,7 @@ export function renderReview() {
   }).join('');
 
   document.getElementById('reviewPageWrap').innerHTML = `
-    <button class="back-btn" onclick="goBack()">← Back to Results</button>
+    <button class="back-btn" onclick="goBack()">${window.activeTest ? '← Back to Results' : '← Exit Review'}</button>
     <div class="flex-between" style="margin-bottom:12px">
       <div><span class="badge badge-teal">Reviewing: ${rs.label}</span></div>
       <div style="font-size:14px;font-weight:700">Q${rs.currentIndex + 1} / ${rs.questions.length}</div>

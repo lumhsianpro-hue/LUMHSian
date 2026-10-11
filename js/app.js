@@ -2,7 +2,7 @@ import { adminContentTab, adminShowTab, applyWallpaper, renderAdminPanel, timeAg
 import { handleAuthedSession } from './auth.js';
 import { goBack, restoreNavigationStack, showScreen } from './navigation.js';
 import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats } from './profile.js';
-import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
+import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, isValidSessionSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
 import { _hasStoredSupabaseSession, _showReconnecting, db, getSessionWithRetry, sb } from './supabase.js';
 import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, _debounce, attemptBadgeHtml, attemptLineHtml, cacheClear, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
@@ -782,15 +782,43 @@ function _isYearContentUnlocked(fromYearName) {
   return !fromYearName || fromYearName === window.currentUser?.year_of_study || !!window._isAdminPreview;
 }
 
+let _moduleLoadSequence = 0;
+let _moduleSubViewSequence = 0;
+window._cancelPendingModuleLoad = () => {
+  _moduleLoadSequence++;
+  _moduleSubViewSequence++;
+};
+window.retryOpenModule = () => {
+  const module = window._lastOpenedModule;
+  if (module) openModule(module.moduleId, module.moduleName, module.iconUrl, module.color, module.fromYearId, module.fromYearName);
+};
 
 export async function openModule(moduleId, moduleName, iconUrl, color, fromYearId, fromYearName) {
-  showLoading(true, 'Loading module...');
-  const [moduleRes, subjectsRes, qCountRes, moduleTestsRes] = await Promise.all([
-    db(sb.from('modules').select('name,icon_url,color').eq('id', moduleId).single(), 'Module error'),
-    _cachedQuery(`subjects_module_${moduleId}`, CONTENT_COUNTS_TTL, () => sb.from('subjects').select('id,name,module_id,display_order').eq('module_id', moduleId).order('display_order'), 'Subjects error'),
-    db(sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId).is('paper_id', null), 'Question count error'),
-    db(sb.from('practice_tests').select('id').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true), 'Tests error')
-  ]);
+  if (moduleId == null || moduleId === '') {
+    showToast('This module link is invalid. Please return to the module list and try again.');
+    return false;
+  }
+  const sequence = ++_moduleLoadSequence;
+  _moduleSubViewSequence++;
+  const isCurrent = () => sequence === _moduleLoadSequence;
+  const wrap = document.getElementById('modulePageWrap');
+  window._lastOpenedModule = { moduleId, moduleName, iconUrl: iconUrl || '', color: color || '', fromYearId: fromYearId || null, fromYearName: fromYearName || null };
+  window._moduleScreenMode = 'module';
+  window._moduleSubView = null;
+  window._currentModuleYearName = fromYearName || window.currentUser?.year_of_study || null;
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card-teal" style="margin-bottom:16px"><h2>Loading module...</h2><div class="skeleton" style="height:16px;width:45%;margin-top:12px"></div></div>${[1,2,3].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
+  showScreen('module');
+  try {
+    const [moduleRes, subjectsRes, qCountRes, moduleTestsRes] = await Promise.all([
+      db(sb.from('modules').select('name,icon_url,color').eq('id', moduleId).single(), 'Module error'),
+      _cachedQuery(`subjects_module_${moduleId}`, CONTENT_COUNTS_TTL, () => sb.from('subjects').select('id,name,module_id,display_order').eq('module_id', moduleId).order('display_order'), 'Subjects error'),
+      db(sb.from('questions').select('*', { count: 'exact', head: true }).eq('module_id', moduleId).is('paper_id', null), 'Question count error'),
+      db(sb.from('practice_tests').select('id').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true), 'Tests error')
+    ]);
+    if (!isCurrent()) return false;
+    if (moduleRes.error || subjectsRes.error || qCountRes.error || moduleTestsRes.error || !moduleRes.data) {
+      throw new Error('Module data could not be loaded');
+    }
   // Always trust the freshly-fetched row for name/icon/color — the passed-in
   // params can be a stale snapshot from whenever this module was first opened
   // this session (backToModule() and app-resume both replay that old value),
@@ -800,16 +828,11 @@ export async function openModule(moduleId, moduleName, iconUrl, color, fromYearI
   iconUrl = freshModule?.icon_url || iconUrl;
   color = freshModule?.color || color;
 
-  // Track so saveAppState can persist module screen state — stores the fresh
-  // values above, so later backToModule()/resume calls stay fresh from here too.
-  window._lastOpenedModule = { moduleId, moduleName, iconUrl: iconUrl || '', color: color || '', fromYearId: fromYearId || null, fromYearName: fromYearName || null };
-  window._moduleScreenMode = 'module';
-  window._moduleSubView = null;
   const subjects = subjectsRes.data || [];
   const totalQ = qCountRes.count || 0;
   const moduleTestCount = moduleTestsRes.data?.length || 0;
   const stats = await getUserStats();
-  showLoading(false);
+  if (!isCurrent()) return false;
 
   // Determine if this module belongs to the student's own year (their year_of_study).
   // If not, Attempt/Review are blocked with a friendly message — browsing structure is still allowed.
@@ -818,6 +841,11 @@ export async function openModule(moduleId, moduleName, iconUrl, color, fromYearI
 
   // Batch fetch test counts per subject — one request total instead of one per subject
   const subTestCounts = await getTestCountsBySubject(subjects.map(s => s.id));
+  if (!isCurrent()) return false;
+
+  window._lastOpenedModule = { moduleId, moduleName, iconUrl: iconUrl || '', color: color || '', fromYearId: fromYearId || null, fromYearName: fromYearName || null };
+  window._moduleScreenMode = 'module';
+  window._moduleSubView = null;
 
   let subjectHtml = '';
   for (const s of subjects) {
@@ -857,7 +885,6 @@ export async function openModule(moduleId, moduleName, iconUrl, color, fromYearI
       <span style="color:var(--ink-4)">›</span>
     </div>` : '';
 
-  const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
 
@@ -886,6 +913,16 @@ export async function openModule(moduleId, moduleName, iconUrl, color, fromYearI
     ${subjects.length ? `<div class="section-label">By Subject</div>${subjectHtml}` : ''}
   `;
   showScreen('module');
+    return true;
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('openModule failed:', error);
+      wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card text-center"><h3>Could not load this module</h3><p class="mt-2 text-sm">Check your connection and try again. Your progress has not been changed.</p><button class="btn btn-primary mt-3" onclick="retryOpenModule()">Retry</button></div>`;
+      showToast('Could not load this module. Please try again.', 8000,
+        () => openModule(moduleId, moduleName, iconUrl, color, fromYearId, fromYearName));
+    }
+    return false;
+  }
 }
 window.openModule = openModule;
 
@@ -921,65 +958,78 @@ window.backToModule = backToModule;
 let _pastPapersData = null; // { colleges, yearId, yearName } — cached per visit so drilling down/back never re-fetches
 
 export async function openPastPapersRoot() {
-  showLoading(true, 'Loading past papers...');
-  // Plain selects + separate lookups, NOT embedded joins — PostgREST can't
-  // always resolve those relationships for past_papers, and this sidesteps
-  // it entirely with simple, always-working queries run in parallel.
-  const [{ data: allPapers }, { data: allModules }, { data: allTags }, { data: allYears }] = await Promise.all([
-    _cachedQuery('active_past_papers', CONTENT_COUNTS_TTL, () => sb.from('past_papers').select('id,title,year_id,college_name,paper_year,display_order').eq('is_active', true).order('display_order'), 'Past papers error'),
-    _cachedQuery('module_names', CONTENT_COUNTS_TTL, () => sb.from('modules').select('id,name'), 'Modules error'),
-    _cachedQuery('past_paper_module_tags', CONTENT_COUNTS_TTL, () => sb.from('past_paper_modules').select('paper_id,module_id'), 'Paper-module tags error'),
-    db(sb.from('years').select('id,name,display_order').order('display_order'), 'Years error')
-  ]);
-  const moduleNameById = {};
-  for (const m of (allModules || [])) moduleNameById[m.id] = m.name;
-  const moduleIdsByPaper = {};
-  for (const t of (allTags || [])) {
-    if (!moduleIdsByPaper[t.paper_id]) moduleIdsByPaper[t.paper_id] = [];
-    moduleIdsByPaper[t.paper_id].push(t.module_id);
-  }
-  const myYear = (allYears || []).find(y => y.name === window.currentUser?.year_of_study) || null;
+  const sequence = ++_moduleLoadSequence;
+  _moduleSubViewSequence++;
+  const isCurrent = () => sequence === _moduleLoadSequence;
+  const wrap = document.getElementById('modulePageWrap');
   window._lastOpenedPastPapers = { level: 'root' };
   window._moduleScreenMode = 'pastpapers';
   window._moduleSubView = null;
-
-  if (!myYear) {
-    showLoading(false);
-    const wrap = document.getElementById('modulePageWrap');
-    wrap.innerHTML = `
-      <button class="back-btn" onclick="goBack()">← Back</button>
-      <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_BUILDING} Past Papers</h2></div>
-      <div class="card"><p>Set your academic year first, then come back here.</p></div>`;
-    showScreen('module');
-    return;
-  }
-
-  // Only THIS year's papers with at least one question — same rule the old
-  // grouping used, now scoped to one year instead of filtered out later.
-  // Question count + module tag are stashed on each paper (_qCount/
-  // _moduleTag) so drilling into a college never needs to re-fetch either.
-  // _moduleTag joins every module this paper is tagged with via
-  // past_paper_modules (any number, e.g. "GIT + Endocrinology +
-  // Pharmacology") — it's purely a display label admin sets, not a real
-  // relationship, and is blank if nothing is tagged.
-  const papers = (allPapers || []).filter(p => p.year_id === myYear.id);
-  const ppCounts = await getQuestionCountsBy('paper_id', papers.map(p => p.id));
-  showLoading(false);
-
-  const colleges = {};
-  for (const p of papers) {
-    const qCount = ppCounts[p.id] || 0;
-    if (!qCount) continue;
-    const collegeName = (p.college_name || '').trim();
-    const cKey = collegeName || '__general__';
-    if (!colleges[cKey]) colleges[cKey] = { collegeName, papers: [] };
-    const moduleTag = (moduleIdsByPaper[p.id] || []).map(id => moduleNameById[id]).filter(Boolean).join(' + ');
-    colleges[cKey].papers.push({ ...p, _qCount: qCount, _moduleTag: moduleTag });
-  }
-  _pastPapersData = { colleges, yearId: myYear.id, yearName: myYear.name };
-
-  renderPastPapersCollegeList();
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card-teal"><h2>Loading past papers...</h2></div>${[1,2].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
   showScreen('module');
+
+  try {
+    // Plain selects + separate lookups, NOT embedded joins — PostgREST can't
+    // always resolve those relationships for past_papers, and this sidesteps
+    // it entirely with simple queries run in parallel.
+    const [papersResult, modulesResult, tagsResult, yearsResult] = await Promise.all([
+      _cachedQuery('active_past_papers', CONTENT_COUNTS_TTL, () => sb.from('past_papers').select('id,title,year_id,college_name,paper_year,display_order').eq('is_active', true).order('display_order'), 'Past papers error'),
+      _cachedQuery('module_names', CONTENT_COUNTS_TTL, () => sb.from('modules').select('id,name'), 'Modules error'),
+      _cachedQuery('past_paper_module_tags', CONTENT_COUNTS_TTL, () => sb.from('past_paper_modules').select('paper_id,module_id'), 'Paper-module tags error'),
+      db(sb.from('years').select('id,name,display_order').order('display_order'), 'Years error')
+    ]);
+    if (!isCurrent()) return false;
+    if (papersResult.error || modulesResult.error || tagsResult.error || yearsResult.error) {
+      throw papersResult.error || modulesResult.error || tagsResult.error || yearsResult.error;
+    }
+
+    const allPapers = papersResult.data || [];
+    const allModules = modulesResult.data || [];
+    const allTags = tagsResult.data || [];
+    const allYears = yearsResult.data || [];
+    const moduleNameById = {};
+    for (const m of allModules) moduleNameById[m.id] = m.name;
+    const moduleIdsByPaper = {};
+    for (const t of allTags) {
+      if (!moduleIdsByPaper[t.paper_id]) moduleIdsByPaper[t.paper_id] = [];
+      moduleIdsByPaper[t.paper_id].push(t.module_id);
+    }
+    const myYear = allYears.find(y => y.name === window.currentUser?.year_of_study) || null;
+
+    if (!myYear) {
+      wrap.innerHTML = `
+        <button class="back-btn" onclick="goBack()">← Back</button>
+        <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_BUILDING} Past Papers</h2></div>
+        <div class="card"><p>Set your academic year first, then come back here.</p></div>`;
+      return false;
+    }
+
+    // Only THIS year's papers with at least one question — same rule the old
+    // grouping used, now scoped to one year instead of filtered out later.
+    const papers = allPapers.filter(p => p.year_id === myYear.id);
+    const ppCounts = await getQuestionCountsBy('paper_id', papers.map(p => p.id));
+    if (!isCurrent()) return false;
+
+    const colleges = {};
+    for (const p of papers) {
+      const qCount = ppCounts[p.id] || 0;
+      if (!qCount) continue;
+      const collegeName = (p.college_name || '').trim();
+      const cKey = collegeName || '__general__';
+      if (!colleges[cKey]) colleges[cKey] = { collegeName, papers: [] };
+      const moduleTag = (moduleIdsByPaper[p.id] || []).map(id => moduleNameById[id]).filter(Boolean).join(' + ');
+      colleges[cKey].papers.push({ ...p, _qCount: qCount, _moduleTag: moduleTag });
+    }
+    _pastPapersData = { colleges, yearId: myYear.id, yearName: myYear.name };
+    renderPastPapersCollegeList();
+    return true;
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('Past papers failed to load:', error);
+      wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card text-center"><p>Could not load past papers. Check your connection and try again.</p><button class="btn btn-primary mt-3" onclick="openPastPapersRoot()">Retry</button></div>`;
+    }
+    return false;
+  }
 }
 window.openPastPapersRoot = openPastPapersRoot;
 
@@ -989,6 +1039,7 @@ window.openPastPapersRoot = openPastPapersRoot;
 // This is now the FIRST screen Past Papers shows — no year picker, no "X
 // Year" heading, since the year is already implied by whose account this is.
 function renderPastPapersCollegeList() {
+  _moduleSubViewSequence++;
   window._lastOpenedPastPapers = { level: 'root' };
   window._moduleScreenMode = 'pastpapers';
   const wrap = document.getElementById('modulePageWrap');
@@ -1081,15 +1132,27 @@ function _pausedReviewNoteHtml(saved, idField, idValue) {
 async function openPastPaperCollege(collegeKey) {
   const g = _pastPapersData?.colleges?.[collegeKey];
   if (!g) { openPastPapersRoot(); return; }
+  const sequence = ++_moduleSubViewSequence;
+  const isCurrent = () => sequence === _moduleSubViewSequence &&
+    window._moduleScreenMode === 'pastpapers' && window._lastOpenedPastPapers?.collegeKey === collegeKey;
   window._lastOpenedPastPapers = { level: 'college', collegeKey };
   window._moduleScreenMode = 'pastpapers';
   const title = g.collegeName || 'Other Colleges';
   const papers = [...g.papers].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-
-  showLoading(true, 'Loading papers...');
-  const stats = await getUserStats();
-  const saved = getResumableSnapshot();
-  showLoading(false);
+  const wrap = document.getElementById('modulePageWrap');
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back to Past Papers</button><div class="card-teal"><h2>Loading papers...</h2></div>${[1,2].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
+  let stats, saved;
+  try {
+    stats = await getUserStats();
+    if (!isCurrent()) return;
+    saved = getResumableSnapshot();
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('Past paper group failed to load:', error);
+      wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back to Past Papers</button><div class="card text-center"><p>Could not load these papers. Check your connection and try again.</p><button class="btn btn-primary mt-3" onclick="openPastPaperCollege('${escJs(collegeKey)}')">Retry</button></div>`;
+    }
+    return;
+  }
 
   let html = '';
   for (const p of papers) {
@@ -1118,7 +1181,6 @@ async function openPastPaperCollege(collegeKey) {
       </div>`;
   }
 
-  const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back to Past Papers</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_BUILDING} ${esc(title)}</h2><p>${papers.length} paper${papers.length === 1 ? '' : 's'}</p></div>
@@ -1133,14 +1195,29 @@ window.openPastPaperCollege = openPastPaperCollege;
 // lists the whole-module tests admin created (e.g. "Head & Neck Practice Test 1/2/3"),
 // each with the same Review/Attempt actions used everywhere else in the app.
 async function openModuleTestGroup(moduleId, moduleName) {
+  const sequence = ++_moduleSubViewSequence;
+  const isCurrent = () => sequence === _moduleSubViewSequence &&
+    window._moduleScreenMode === 'module' && window._lastOpenedModule?.moduleId === moduleId;
   window._moduleSubView = 'moduleTests';
-  showLoading(true, 'Loading practice tests...');
-  const { data: tests } = await _cachedQuery(`module_tests_${moduleId}`, CONTENT_COUNTS_TTL, () => sb.from('practice_tests').select('id,title,display_order').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true).order('display_order'), 'Tests error');
-  const list = tests || [];
-  const counts = await getQuestionCountsBy('practice_test_id', list.map(t => t.id));
-  const stats = await getUserStats();
-  const saved = getResumableSnapshot();
-  showLoading(false);
+  const wrap = document.getElementById('modulePageWrap');
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card-teal"><h2>Loading practice tests...</h2></div>${[1,2].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
+  let list, counts, stats, saved;
+  try {
+    const testsResult = await _cachedQuery(`module_tests_${moduleId}`, CONTENT_COUNTS_TTL, () => sb.from('practice_tests').select('id,title,display_order').eq('module_id', moduleId).is('subject_id', null).eq('is_active', true).order('display_order'), 'Tests error');
+    if (!isCurrent()) return;
+    if (testsResult.error) throw testsResult.error;
+    list = testsResult.data || [];
+    counts = await getQuestionCountsBy('practice_test_id', list.map(t => t.id));
+    if (!isCurrent()) return;
+    stats = await getUserStats();
+    saved = getResumableSnapshot();
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('Module practice tests failed to load:', error);
+      wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card text-center"><p>Could not load these practice tests. Check your connection and try again.</p><button class="btn btn-primary mt-3" onclick="openModuleTestGroup(${moduleId},'${moduleName.replace(/'/g,"\\'")}')">Retry</button></div>`;
+    }
+    return;
+  }
 
   const fromYearName = window._lastOpenedModule?.fromYearName || null;
   const isOwnYear = _isYearContentUnlocked(fromYearName);
@@ -1173,7 +1250,6 @@ async function openModuleTestGroup(moduleId, moduleName) {
       </div>`;
   }
 
-  const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back to ${moduleName}</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>${ICON_TARGET} ${moduleName} Practice Tests</h2><p>${list.length} test${list.length === 1 ? '' : 's'}</p></div>
@@ -1188,14 +1264,29 @@ window.openModuleTestGroup = openModuleTestGroup;
 // subject's admin-created tests (e.g. "Gross Anatomy Practice Test 1/2/3"), each
 // with the same Review/Attempt actions used everywhere else in the app.
 async function openSubjectTestGroup(moduleId, moduleName, subjectId, subjectName) {
+  const sequence = ++_moduleSubViewSequence;
+  const isCurrent = () => sequence === _moduleSubViewSequence &&
+    window._moduleScreenMode === 'module' && window._lastOpenedModule?.moduleId === moduleId;
   window._moduleSubView = 'subjectTests';
-  showLoading(true, 'Loading practice tests...');
-  const { data: tests } = await _cachedQuery(`subject_tests_${moduleId}_${subjectId}`, CONTENT_COUNTS_TTL, () => sb.from('practice_tests').select('id,title,display_order').eq('module_id', moduleId).eq('subject_id', subjectId).eq('is_active', true).order('display_order'), 'Tests error');
-  const list = tests || [];
-  const counts = await getQuestionCountsBy('practice_test_id', list.map(t => t.id));
-  const stats = await getUserStats();
-  const saved = getResumableSnapshot();
-  showLoading(false);
+  const wrap = document.getElementById('modulePageWrap');
+  wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card-teal"><h2>Loading practice tests...</h2></div>${[1,2].map(() => '<div class="skel-card"><div class="skeleton" style="height:18px;width:65%"></div></div>').join('')}`;
+  let list, counts, stats, saved;
+  try {
+    const testsResult = await _cachedQuery(`subject_tests_${moduleId}_${subjectId}`, CONTENT_COUNTS_TTL, () => sb.from('practice_tests').select('id,title,display_order').eq('module_id', moduleId).eq('subject_id', subjectId).eq('is_active', true).order('display_order'), 'Tests error');
+    if (!isCurrent()) return;
+    if (testsResult.error) throw testsResult.error;
+    list = testsResult.data || [];
+    counts = await getQuestionCountsBy('practice_test_id', list.map(t => t.id));
+    if (!isCurrent()) return;
+    stats = await getUserStats();
+    saved = getResumableSnapshot();
+  } catch (error) {
+    if (isCurrent()) {
+      console.error('Subject practice tests failed to load:', error);
+      wrap.innerHTML = `<button class="back-btn" onclick="goBack()">← Back</button><div class="card text-center"><p>Could not load these practice tests. Check your connection and try again.</p><button class="btn btn-primary mt-3" onclick="openSubjectTestGroup(${moduleId},'${moduleName.replace(/'/g,"\\'")}',${subjectId},'${subjectName.replace(/'/g,"\\'")}')">Retry</button></div>`;
+    }
+    return;
+  }
 
   const fromYearName = window._lastOpenedModule?.fromYearName || null;
   const isOwnYear = _isYearContentUnlocked(fromYearName);
@@ -1228,7 +1319,6 @@ async function openSubjectTestGroup(moduleId, moduleName, subjectId, subjectName
       </div>`;
   }
 
-  const wrap = document.getElementById('modulePageWrap');
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back to ${moduleName}</button>
     <div class="card-teal" style="margin-bottom:16px"><h2>📖 ${subjectName} Practice Tests</h2><p>${moduleName}</p></div>
@@ -2219,8 +2309,13 @@ export function saveAppState() {
     } else if (screenId === 'module' && window._lastOpenedModule) {
       moduleState = window._lastOpenedModule;
     }
-    if (screenId === 'results' && window.activeTest) {
-      try { savedActiveTest = JSON.parse(JSON.stringify(window.activeTest)); } catch(e) {}
+    if (['results', 'review'].includes(screenId) && window.activeTest) {
+      try {
+        savedActiveTest = JSON.parse(JSON.stringify({
+          ...window.activeTest,
+          bookmarked: Array.from(window.activeTest.bookmarked || [])
+        }));
+      } catch(e) {}
     }
     if (screenId === 'review' && window.reviewState) {
       try { savedReviewState = JSON.parse(JSON.stringify({ ...window.reviewState, bookmarked: Array.from(window.reviewState.bookmarked || []) })); } catch(e) {}
@@ -2291,7 +2386,7 @@ export async function restoreAppState() {
       }
       if (!state.moduleState) return false; // can't restore without saved module params
       const m = state.moduleState;
-      await openModule(m.moduleId, m.moduleName, m.iconUrl || '', m.color || '');
+      if (!await openModule(m.moduleId, m.moduleName, m.iconUrl || '', m.color || '')) return false;
       restoreNavigationStack(state.navStack, state.screenId);
       // openModule already calls showScreen('module') internally, so skip generic render below
       setTimeout(() => window.scrollTo(0, state.scrollY || 0), 300);
@@ -2300,7 +2395,7 @@ export async function restoreAppState() {
 
     // ---- results screen: restore activeTest then re-render ----
     if (state.screenId === 'results') {
-      if (!state.savedActiveTest) return false;
+      if (!state.savedActiveTest || !isValidSessionSnapshot({ ...state.savedActiveTest, submitted: false })) return false;
       window.activeTest = state.savedActiveTest;
       renderResults(); // re-renders resultsPageWrap and calls showScreen('results')
       restoreNavigationStack(state.navStack, state.screenId);
@@ -2311,8 +2406,16 @@ export async function restoreAppState() {
     // ---- review screen: restore reviewState then re-render ----
     if (state.screenId === 'review') {
       if (!state.savedReviewState) return false;
+      const rs = state.savedReviewState;
+      if (!isValidSessionSnapshot({
+        mode: 'browse', questions: rs.questions, answers: rs.answers, currentIndex: rs.currentIndex,
+        startTime: Date.now(), timeLimit: null
+      })) return false;
       // Also restore activeTest so "Back to results" works if user presses it
-      if (state.savedActiveTest) window.activeTest = state.savedActiveTest;
+      if (state.savedActiveTest) {
+        if (!isValidSessionSnapshot({ ...state.savedActiveTest, submitted: false })) return false;
+        window.activeTest = state.savedActiveTest;
+      }
       window.reviewState = { ...state.savedReviewState, bookmarked: new Set(state.savedReviewState.bookmarked || []) };
       renderReview();
       showScreen('review', false);
