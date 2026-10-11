@@ -2,7 +2,7 @@ import { timeAgo } from './admin.js';
 import { APP_VERSION, _isStandalone, areNotificationAnnouncementsEnabled, getSetting, getStudentAnnouncements, getUserStats, isAIEnabled, markNotificationAsRead, notificationIsAlive, notificationIsUnread, renderHome, setNotificationAnnouncementsEnabled } from './app.js';
 import { logout, populateCollegeSelect } from './auth.js';
 import { showScreen } from './navigation.js';
-import { checkExpiredAttemptOnRender, getResumableSnapshot } from './quiz.js';
+import { checkExpiredAttemptOnRender, getResumableSnapshot, sendStudentMessage } from './quiz.js';
 import { db, sb } from './supabase.js';
 import { ICON_BOOK, ICON_BUILDING, ICON_MEDAL, ICON_TARGET, cacheGet, cacheSet, closeModal, esc, escJs, normalizePhone, rateLimited, renderAvatar, renderMd, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
@@ -70,35 +70,30 @@ async function showDonationPage() {
     ${campaignHtml}
     ${hasMethods ? `<div class="section-label">Payment details</div>${_payCardHtml('📱', 'JazzCash', jazzcash)}${_payCardHtml('📱', 'Easypaisa', easypaisa)}${_payCardHtml('🏦', 'Bank Account', bank)}` : ''}
     ${!hasMethods && !campaigns?.length ? '<div class="card text-center"><p class="text-muted">Payment details coming soon.</p></div>' : ''}
-    <button class="btn btn-primary mt-2" style="width:100%" onclick="openFeedbackModal('support')">💬 Donated? Let us know</button>
+    <button class="btn btn-primary mt-2" style="width:100%" onclick="openDonationFeedbackModal()">💬 Donated? Let us know</button>
     <div style="height:20px"></div>`;
 }
 window.showDonationPage = showDonationPage;
 
 
 
-// Opened from Profile → My Reports ("Send New Feedback") and from the Support page ("Donated? Let us know").
-// It is about the APP — what students think of it — not a bug form (broken questions are reported with the 🚩 button
-// on the question itself), so the wording changes with where it was opened from.
-function openFeedbackModal(context) {
-  const fromSupport = context === 'support';
+// Donation acknowledgements remain separate from the general Inbox report/feedback flow.
+function openDonationFeedbackModal() {
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(23,23,23,.8);z-index:10005;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(6px)';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:var(--radius-xl);padding:24px;width:100%;max-width:420px">
-      <div class="fw-700 mb-1">${fromSupport ? '💛 Thank you for supporting us' : '💬 Tell us about the app'}</div>
-      <p class="text-sm text-muted mb-3">${fromSupport
-        ? 'Tell us how LUMHSian is working for you, and what we could do better. If you donated, add your name and transaction ID so we can thank you personally.'
-        : 'How is the app working for you? Share what you like, what is missing, or what could be better.'}</p>
-      <textarea id="_rpt_msg" class="input-field" rows="4" placeholder="${fromSupport ? 'Your thoughts on the app (and donation details, if any)…' : 'Write your feedback about the app…'}" maxlength="2000" style="resize:vertical"></textarea>
+      <div class="fw-700 mb-1">💛 Thank you for supporting us</div>
+      <p class="text-sm text-muted mb-3">Tell us how LUMHSian is working for you. If you donated, add your name and transaction ID so we can thank you personally.</p>
+      <textarea id="_rpt_msg" class="input-field" rows="4" placeholder="Your thoughts (and donation details, if any)…" maxlength="2000" style="resize:vertical"></textarea>
       <div class="btn-row mt-3">
         <button class="btn btn-ghost" onclick="this.closest('[style*=fixed]').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitReport(this,null,'${fromSupport ? 'support' : ''}')">Send</button>
+        <button class="btn btn-primary" onclick="submitReport(this,null,'support')">Send</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
 }
-window.openFeedbackModal = openFeedbackModal;
+window.openDonationFeedbackModal = openDonationFeedbackModal;
 
 
 
@@ -197,11 +192,19 @@ export async function renderInbox(target = null) {
   wrap.innerHTML = `
     <button class="back-btn" onclick="goBack()">← Back</button>
     <div class="card-teal" style="margin:10px 0 6px"><h2>✉️ Inbox for Reports &amp; Messages</h2><p>Reports, feedback, replies, and direct messages with the admin</p></div>
-    <button class="btn btn-secondary btn-sm" style="width:100%;margin:6px 0" onclick="openFeedbackModal()">📝 Submit a report or feedback</button>
     <div class="ib-thread" id="ibThread">${skeletonList(2, false)}</div>
     <div class="ib-composer">
-      <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Send a direct message to the admin…" oninput="inboxGrow(this)"></textarea>
-      <button class="ib-send" id="ibSend" aria-label="Send" onclick="inboxSend()">➤</button>
+      <div class="ib-compose-mode">
+        <label for="ibMessageType">Send as</label>
+        <select id="ibMessageType" aria-label="Send as">
+          <option value="message">Direct message</option>
+          <option value="feedback">Report or feedback</option>
+        </select>
+      </div>
+      <div class="ib-compose-input">
+        <textarea id="ibInput" rows="1" maxlength="2000" placeholder="Write your message…" oninput="inboxGrow(this)"></textarea>
+        <button class="ib-send" id="ibSend" aria-label="Send" onclick="inboxSend()">➤</button>
+      </div>
     </div>`;
   const { messages, tableOk } = await loadInboxThread(email);
   if (window.currentUser?.email !== email || document.querySelector('.screen.active')?.id !== 'screen-inbox') return;
@@ -297,14 +300,56 @@ async function _ibDeliver(tmp) {
   _ibDraw(false);
 }
 
-function inboxSend() {
+async function inboxSend() {
   const input = document.getElementById('ibInput');
+  const mode = document.getElementById('ibMessageType')?.value || 'message';
+  const button = document.getElementById('ibSend');
   const S = window._inbox;
   if (!input || !S) return;
   const text = input.value.trim();
   if (!text) return;
-  const rl = rateLimited('inbox_send', 20, 15 * 60 * 1000);
+  const isReport = mode === 'feedback';
+  const rl = rateLimited(isReport ? 'submit_report' : 'inbox_send', isReport ? 5 : 20, 15 * 60 * 1000);
   if (!rl.allowed) return showToast(`Too many messages. Try again in ${Math.ceil(rl.waitSec / 60)} min.`);
+
+  if (isReport) {
+    if (button?.disabled) return;
+    if (button) button.disabled = true;
+    let result;
+    try {
+      result = await sendStudentMessage({ type: 'feedback', message: text });
+    } catch (error) {
+      console.error('Report submission failed', error);
+      showToast('⚠️ Could not submit. Your text is still here; please try again.', 6000);
+      if (button) button.disabled = false;
+      return;
+    }
+    if (!result.ok) {
+      const detail = result.error ? ` ${String(result.error).slice(0, 180)}` : '';
+      showToast(`⚠️ Could not submit. Your text is still here; please try again.${detail}`, 6000);
+      if (button) button.disabled = false;
+      return;
+    }
+
+    input.value = '';
+    inboxGrow(input);
+    try {
+      const { messages, tableOk } = await loadInboxThread(window.currentUser.email);
+      if (window._inbox === S && window.currentUser?.email && document.querySelector('.screen.active')?.id === 'screen-inbox') {
+        const pending = S.messages.filter(message => typeof message.id !== 'number' && !message.legacy);
+        S.messages = [...messages, ...pending].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        S.tableOk = tableOk;
+        _ibDraw(true);
+      }
+    } catch (error) {
+      console.warn('Inbox refresh after report submission failed', error);
+    } finally {
+      if (button) button.disabled = false;
+    }
+    showToast('Report or feedback submitted to the admin ✓');
+    return;
+  }
+
   const tmp = { id: 'tmp' + Date.now(), sender: 'student', kind: 'message', body: text, created_at: new Date().toISOString(), _state: 'sending' };
   S.messages.push(tmp);
   input.value = ''; inboxGrow(input);
