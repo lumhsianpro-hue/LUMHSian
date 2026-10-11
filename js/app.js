@@ -1,10 +1,10 @@
 import { adminContentTab, adminShowTab, applyWallpaper, renderAdminPanel, timeAgo } from './admin.js';
 import { handleAuthedSession } from './auth.js';
 import { goBack, restoreNavigationStack, showScreen } from './navigation.js';
-import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
+import { applyDarkMode, renderBookmarks, renderPlanner, renderProfile, renderStats } from './profile.js';
 import { checkExpiredAttemptOnRender, clearPersistedTest, getResumableSnapshot, persistActiveTest, renderQuickView, renderResults, renderReview, startCustomTest } from './quiz.js';
 import { _hasStoredSupabaseSession, _showReconnecting, db, getSessionWithRetry, sb } from './supabase.js';
-import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, ICON_X_CIRCLE, _debounce, attemptBadgeHtml, attemptLineHtml, cacheClear, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
+import { ICON_BELL, ICON_BOOK, ICON_BOOKMARK, ICON_BUILDING, ICON_CALENDAR, ICON_EDIT, ICON_FIRE, ICON_LOCK, ICON_ROBOT, ICON_STETHOSCOPE, ICON_TARGET, _debounce, attemptBadgeHtml, attemptLineHtml, cacheClear, cacheGet, cacheSet, esc, escJs, showConfirm, showLoading, showToast, skeletonList } from './utils.js';
 
 
 
@@ -720,7 +720,6 @@ export async function renderHome() {
       <div class="quick-tile" onclick="openCustomTestBuilder()"><span class="quick-tile-icon">🛠️</span><span class="quick-tile-label">Own Test</span></div>
       ${isAIEnabled() ? `<div class="quick-tile" onclick="openAITutor()"><span class="quick-tile-icon">${ICON_ROBOT}</span><span class="quick-tile-label">AI Tutor</span></div>` : ''}
       <div class="quick-tile" onclick="navGo('bookmarks')"><span class="quick-tile-icon">${ICON_BOOKMARK}</span><span class="quick-tile-label">Bookmark</span></div>
-      <div class="quick-tile" onclick="navGo('wrongattempts')"><span class="quick-tile-icon">${ICON_X_CIRCLE}</span><span class="quick-tile-label">Wrong Qs</span></div>
       <div class="quick-tile" onclick="openSavedTests()"><span class="quick-tile-icon">📁</span><span class="quick-tile-label">Saved Tests</span></div>
       <div class="quick-tile" onclick="navGo('planner')"><span class="quick-tile-icon">${ICON_CALENDAR}</span><span class="quick-tile-label">Planner</span></div>
     </div>
@@ -2197,7 +2196,7 @@ const APP_STATE_KEY = 'lum_app_state';
 const APP_STATE_MAX_AGE = 24 * 3600 * 1000;
 
  // treat anything older than this as a fresh session
-const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','profile','bookmarks','wrongattempts','planner','savedtests','admin','module','results','review'];
+const APP_STATE_RESTORABLE_SCREENS = ['home','modules','search','stats','profile','bookmarks','planner','savedtests','admin','module','results','review'];
 
 
 
@@ -2270,6 +2269,10 @@ export async function restoreAppState() {
     const state = JSON.parse(raw);
     if (!state || !state.screenId) return false;
     if (Date.now() - state.ts > APP_STATE_MAX_AGE) { clearAppState(); return false; }
+    if (state.screenId === 'wrongattempts') {
+      state.screenId = 'profile';
+      state.navStack = Array.isArray(state.navStack) ? state.navStack.filter(id => id !== 'wrongattempts') : [];
+    }
     if (!APP_STATE_RESTORABLE_SCREENS.includes(state.screenId)) return false;
     // Admin state should only ever be restored into an actual admin session, and vice versa
     if (state.screenId === 'admin' && !window.currentUser?.is_admin) return false;
@@ -2320,7 +2323,7 @@ export async function restoreAppState() {
 
     const renders = {
       home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
-      profile: renderProfile, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests,
+      profile: renderProfile, bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests,
       admin: () => renderAdminPanel(state.adminTab || 'overview')
     };
     if (renders[state.screenId]) await renders[state.screenId]();
@@ -3685,6 +3688,6 @@ function _showGuide(device, steps) {
 // functions below won't exist — show the "App updated · Refresh" prompt from index.html instead of leaving broken buttons.
 window.__lumBooted = true;
 setTimeout(() => {
-  const needed = ['leaveFinishedTest', 'waOpen', 'showDonationPage', '_closeLegalPage', 'adminGoBack', 'openSavedTests', 'openInbox', 'adminOpenMessages'];
+  const needed = ['leaveFinishedTest', 'showDonationPage', '_closeLegalPage', 'adminGoBack', 'openSavedTests', 'openInbox', 'adminOpenMessages'];
   if ((needed.some(n => typeof window[n] !== 'function') || !window.__lumNavReady) && typeof window.__lumShowUpdate === 'function') window.__lumShowUpdate();
 }, 5000);

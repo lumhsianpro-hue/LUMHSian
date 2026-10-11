@@ -183,7 +183,7 @@ async function _startCustomTestFresh(moduleIds, subjectIds, count, timerMinutes,
   // per-option feedback, review only at the end) or a Review (instant
   // feedback, browse freely) — same isCustom flag either way, which is what
   // keeps it OUT of stats/history (submitTest()) regardless of which mode it's
-  // started in. An Attempt still files its wrong answers under Wrong Questions.
+  // started in.
   // The timer stays optional in Attempt mode: set one and it counts down
   // like a normal attempt; leave it blank and it's simply untimed. Review
   // mode never has a timer, same as browsing anywhere else in the app.
@@ -998,22 +998,6 @@ window.bookmarkQuestion = bookmarkQuestion;
 
 
 // ==================== SUBMIT & RESULTS ====================
-// Batched save of every question answered wrong in a just-finished test, so
-// Profile → Wrong Attempts always reflects real mistakes without a per-question
-// round trip. Best-effort, same as logActivity — never blocks the results screen.
-async function saveWrongAttempts(questionIds) {
-  const { data: existing } = await db(sb.from('wrong_attempts').select('question_id,wrong_count').eq('email', window.currentUser.email).in('question_id', questionIds), 'Wrong attempts load failed');
-  const countMap = {};
-  (existing || []).forEach(w => { countMap[w.question_id] = w.wrong_count || 1; });
-  const rows = questionIds.map(qid => ({
-    email: window.currentUser.email, question_id: qid,
-    last_wrong_at: Date.now(), wrong_count: (countMap[qid] || 0) + 1
-  }));
-  await db(sb.from('wrong_attempts').upsert(rows, { onConflict: 'email,question_id' }), 'Wrong attempts save failed');
-}
-
-
-
 async function submitTest() {
   if (!window.activeTest || window.activeTest.submitted) return;
   window.activeTest.submitted = true;
@@ -1041,8 +1025,8 @@ async function submitTest() {
   // it's meant for free practice on a student's own custom question set, not
   // tracked performance. A test where the student answered zero questions is
   // also excluded — otherwise opening a test and immediately exiting counted
-  // as a full "attempt" toward stats, best score, and wrong-answer
-  // history. Everything in this block only runs for a real, answered attempt.
+  // as a full "attempt" toward stats and best score. Everything in this block
+  // only runs for a real, answered attempt.
   if (!window.activeTest.isCustom && attempted > 0) {
     const stats = await getUserStats();
     stats.total_tests = (stats.total_tests || 0) + 1;
@@ -1119,16 +1103,6 @@ async function submitTest() {
     // feed instead of only the aggregate counters.
     logActivity(`Submitted ${sessionType}: ${percent}% (${correct}/${total})`, { moduleId: window.activeTest.moduleId, paperId: window.activeTest.paperId, testId: window.activeTest.testId });
 
-    // Wrong Attempts — auto-save questions answered incorrectly so students can
-    // revisit and clear them later from Profile → Wrong Attempts.
-    const wrongIds = [];
-    for (let i = 0; i < window.activeTest.questions.length; i++) {
-      const a = window.activeTest.answers[i];
-      if (a !== null && a !== window.activeTest.questions[i].answer) wrongIds.push(window.activeTest.questions[i].id);
-    }
-    // Review mode never saves anything to Wrong Questions — only a real Attempt (or Practice) does
-    if (wrongIds.length && window.activeTest.mode !== 'browse') saveWrongAttempts(wrongIds);
-
   } else if (window.activeTest.isCustom && window.activeTest.mode === 'attempt' && attempted > 0) {
     // Custom (Build Your Own Test) attempts skip every other stat above —
     // they're not tied to one module/subject for progress-tracking purposes
@@ -1140,14 +1114,6 @@ async function submitTest() {
     stats.attempt_questions = (stats.attempt_questions || 0) + total;
     stats.attempt_correct = (stats.attempt_correct || 0) + correct;
     await saveUserStats(stats);
-    // Questions answered wrong (never skipped) in a Make Your Own Test attempt land in Wrong Questions too —
-    // filed under their real Module → Subject → Test (or Past Paper), see renderWrongAttempts() in profile.js.
-    const customWrongIds = [];
-    for (let i = 0; i < window.activeTest.questions.length; i++) {
-      const a = window.activeTest.answers[i];
-      if (a !== null && a !== window.activeTest.questions[i].answer) customWrongIds.push(window.activeTest.questions[i].id);
-    }
-    if (customWrongIds.length) saveWrongAttempts(customWrongIds);
   }
 
   renderResults();

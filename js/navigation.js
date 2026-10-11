@@ -1,5 +1,5 @@
 import { getUserStats, isFeatureEnabled, openModule, openPastPapersRoot, renderHome, renderModulesScreen, renderSavedTests, renderSearch, saveAppState, saveAppStateDebounced } from './app.js';
-import { renderBookmarks, renderPlanner, renderProfile, renderStats, renderWrongAttempts } from './profile.js';
+import { renderBookmarks, renderPlanner, renderProfile, renderStats } from './profile.js';
 import { leaveFinishedTest, requestExitTest } from './quiz.js';
 import { showToast } from './utils.js';
 
@@ -61,7 +61,7 @@ export function showScreen(id, pushToStack = true, preserveHistory = false) {
   updateBottomNav(id);
   if (typeof saveAppStateDebounced === 'function') saveAppStateDebounced();
   else if (typeof saveAppState === 'function') saveAppState();
-  const showNavFor = ['home','modules','search','stats','profile','bookmarks','wrongattempts','planner','savedtests','support'];
+  const showNavFor = ['home','modules','search','stats','profile','bookmarks','planner','savedtests','support'];
   document.getElementById('bottomNav')?.classList.toggle('show', showNavFor.includes(id));
 }
 window.showScreen = showScreen;
@@ -108,7 +108,7 @@ export function _returnToScreen(id) {
   // map at parse time (before that block has run) would throw. Evaluating it
   // lazily, only when _returnToScreen() is actually called, is safe.
   const renderers = {
-    home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, search: renderSearch, bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests,
+    home: renderHome, modules: renderModulesScreen, profile: renderProfile, stats: renderStats, search: renderSearch, bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests,
     module: () => {
       if (window._moduleScreenMode === 'pastpapers') {
         // Return to the same Past Papers level used to launch the test.
@@ -185,14 +185,14 @@ function _backWithinScreen(cur) {
     window.backToModule?.();
     return true;
   }
-  if ((cur === 'bookmarks' || cur === 'wrongattempts') && window._qp) {
+  if (cur === 'bookmarks' && window._qp) {
     const { kind } = window._qp;
     const path = window._qf?.[kind]?.path || '';
     window._qp = null;
     window.qfOpen?.(kind, path);
     return true;
   }
-  const folderKind = cur === 'bookmarks' ? 'bm' : cur === 'wrongattempts' ? 'wrong' : null;
+  const folderKind = cur === 'bookmarks' ? 'bm' : null;
   const folder = folderKind && window._qf?.[folderKind];
   if (folder?.path) {
     folder.path = folder.path.split('/').slice(0, -1).join('/');
@@ -235,7 +235,7 @@ function navGo(id) {
   const renders = {
     home: renderHome, modules: renderModulesScreen, search: renderSearch, stats: renderStats,
     profile: renderProfile,
-    bookmarks: renderBookmarks, wrongattempts: renderWrongAttempts, planner: renderPlanner, savedtests: renderSavedTests
+    bookmarks: renderBookmarks, planner: renderPlanner, savedtests: renderSavedTests
   };
   if (renders[id]) renders[id]();
   showScreen(id);
