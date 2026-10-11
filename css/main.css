@@ -114,12 +114,12 @@ p{font-size:14px;color:var(--ink-3);line-height:1.65}
 
 .bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--overlay-bg);backdrop-filter:blur(12px);border-top:1px solid var(--border);display:none;z-index:200;padding:8px 0 max(8px,env(safe-area-inset-bottom,0px))}
 .bottom-nav.show{display:flex}
-.nav-items{display:flex;width:100%;max-width:500px;margin:0 auto}
-.nav-item{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;cursor:pointer;border:none;background:transparent;color:var(--ink-4);transition:all var(--transition)}
+.nav-items{display:flex;width:100%;max-width:680px;margin:0 auto}
+.nav-item{flex:1;min-width:0;min-height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:7px 2px;cursor:pointer;border:none;background:transparent;color:var(--ink-4);transition:all var(--transition)}
 .nav-item.active{color:var(--gold-600)}
-.nav-item-icon{font-size:20px;transition:transform var(--transition)}
+.nav-item-icon{font-size:22px;line-height:1;transition:transform var(--transition)}
 .nav-item.active .nav-item-icon{transform:translateY(-1px)}
-.nav-item-label{font-size:clamp(7px,1.8vw,10px);font-weight:600;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap}
+.nav-item-label{max-width:100%;font-size:clamp(8.5px,2.5vw,11px);font-weight:600;text-transform:uppercase;letter-spacing:.1px;line-height:1.1;text-align:center;white-space:normal}
 
 /* ===== DESKTOP LAYOUT =====
    Below ~900px this app is deliberately still the same single-column mobile
@@ -153,8 +153,7 @@ p{font-size:14px;color:var(--ink-3);line-height:1.65}
 @media (max-width:370px){
   .bottom-nav{padding-top:5px}
   .nav-item{padding-left:0;padding-right:0}
-  .nav-item-icon{font-size:18px}
-  .nav-item-label{font-size:7px;letter-spacing:0}
+  .nav-item-label{letter-spacing:0}
 }
 
 /* ===== SCROLLBAR ===== */

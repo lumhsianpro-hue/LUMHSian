@@ -1425,20 +1425,45 @@ window.openReportModal = openReportModal;
 
 
 
-// Sends a student's report / feedback / chat message. ONE row for the admin's Reports tab (reports_feedback) plus a
-// copy in inbox_messages so it appears in the student's own chat. The copy is best effort: if the inbox table isn't
-// set up yet the admin still received the message.
+// Reports are canonical in reports_feedback; the linked inbox row makes them visible in the student's conversation.
 export async function sendStudentMessage({ type, question_id, message }) {
-  const email = window.currentUser.email;
-  const { data, error } = await sb.from('reports_feedback').insert({
-    type, question_id: question_id || null, user_email: email, user_name: window.currentUser.name, message
-  }).select('id').single();
-  if (error || !data) { console.warn('Message not sent', error); return { ok: false }; }
-  const { data: copy, error: e2 } = await sb.from('inbox_messages').insert({
-    user_email: email, sender: 'student', kind: type === 'question_report' ? 'report' : 'message', body: message, ref_id: data.id
-  }).select('id').single();
-  if (e2) console.warn('Inbox copy not saved (run the inbox SQL migration):', e2.message);
-  return { ok: true, reportId: data.id, inboxId: copy ? copy.id : null };
+  const student = window.currentUser;
+  if (!student?.email) return { ok: false, error: 'Your session has expired. Please sign in again.' };
+  if (!['question_report', 'feedback'].includes(type)) return { ok: false, error: 'Invalid report type.' };
+
+  let report;
+  try {
+    const { data, error } = await sb.from('reports_feedback').insert({
+      type,
+      question_id: type === 'question_report' ? question_id || null : null,
+      user_email: student.email,
+      user_name: student.name,
+      message,
+      status: 'pending'
+    }).select('id').single();
+    if (error) throw error;
+    if (!data) throw new Error('The database did not confirm the report was saved.');
+    report = data;
+  } catch (error) {
+    console.error('Report submission failed', error);
+    return { ok: false, error: error?.message || 'The report could not be saved.' };
+  }
+
+  let inboxId = null;
+  try {
+    const { data: copy, error } = await sb.from('inbox_messages').insert({
+      user_email: student.email,
+      sender: 'student',
+      kind: type === 'question_report' ? 'report' : 'feedback',
+      body: message,
+      ref_id: report.id
+    }).select('id').single();
+    if (error) console.warn('Inbox copy not saved; the canonical report remains available in the Inbox', error);
+    else inboxId = copy?.id ?? null;
+  } catch (error) {
+    console.warn('Inbox copy not saved; the canonical report remains available in the Inbox', error);
+  }
+  return { ok: true, reportId: report.id, inboxId };
 }
 
 async function submitReport(btn, questionId, context) {
@@ -1452,10 +1477,11 @@ async function submitReport(btn, questionId, context) {
   const res = await sendStudentMessage({ type: questionId ? 'question_report' : 'feedback', question_id: questionId, message: context === 'support' ? '[Support] ' + message : message });
   if (!res.ok) {
     btn.disabled = false;
-    return showToast('⚠️ Could not send. Your text is still here; please try again.', 4500);
+    const detail = res.error ? ` ${String(res.error).slice(0, 180)}` : '';
+    return showToast(`⚠️ Could not submit. Your text is still here; please try again.${detail}`, 6000);
   }
   overlay.remove();
-  showToast(questionId ? '🚩 Report sent ✓' : '💬 Message sent ✓');
+  showToast(questionId ? '🚩 Report submitted ✓' : '💬 Feedback submitted ✓');
 }
 window.submitReport = submitReport;
 
