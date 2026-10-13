@@ -3244,7 +3244,7 @@ function previewBulkExcel() {
 
       document.getElementById('bulkExcelPreview').innerHTML = `
         <div class="badge badge-green" style="margin-bottom:8px">${bulkXData.length} questions found</div>
-        ${bulkXData.slice(0, 3).map((q, i) => `<div class="card" style="margin-bottom:6px;font-size:13px"><strong>Q${i+1}:</strong> ${esc(q.text.substring(0, 80))}${q.text.length > 80 ? '...' : ''}</div>`).join('')}
+        ${bulkXData.slice(0, 3).map((q, i) => `<div class="card" style="margin-bottom:6px;font-size:13px"><strong>Q${i+1}:</strong> <span class="quiz-question-preview">${esc(q.text.substring(0, 80))}${q.text.length > 80 ? '...' : ''}</span></div>`).join('')}
         ${bulkXData.length > 3 ? `<div class="text-xs text-muted">...and ${bulkXData.length - 3} more</div>` : ''}`;
       document.getElementById('bulkExcelUploadBtn').style.display = 'block';
     } catch (err) {
@@ -3673,7 +3673,7 @@ function previewBulkJSON() {
       }));
       document.getElementById('bulkPreview').innerHTML = `
         <div class="badge badge-green" style="margin-bottom:8px">${bulkQData.length} questions found</div>
-        ${bulkQData.slice(0, 3).map((q, i) => `<div class="card" style="margin-bottom:6px;font-size:13px"><strong>Q${i+1}:</strong> ${esc(q.text?.substring(0, 80))}...</div>`).join('')}
+        ${bulkQData.slice(0, 3).map((q, i) => `<div class="card" style="margin-bottom:6px;font-size:13px"><strong>Q${i+1}:</strong> <span class="quiz-question-preview">${esc(q.text?.substring(0, 80))}...</span></div>`).join('')}
         ${bulkQData.length > 3 ? `<div class="text-xs text-muted">...and ${bulkQData.length - 3} more</div>` : ''}`;
       document.getElementById('bulkUploadBtn').style.display = 'block';
     } catch (err) { document.getElementById('bulkPreview').innerHTML = `<div class="badge badge-red">❌ Invalid JSON: ${esc(err.message)}</div>`; }
@@ -4884,7 +4884,17 @@ async function adminColleges(token = window._adminRenderToken) {
         <div class="admin-row-left" style="display:flex;gap:10px;align-items:center">
           ${c.logo_url ? `<img src="${c.logo_url}" style="width:40px;height:40px;border-radius:var(--radius-md);object-fit:contain">` : '<div style="width:40px;height:40px;border-radius:var(--radius-md);background:var(--surface-3);display:flex;align-items:center;justify-content:center">🏫</div>'}
           <div>
-            <div class="fw-700">${c.name} <span class="badge badge-teal" style="font-size:10px">${c.abbreviation || ''}</span></div>
+            <div class="fw-700"><span id="collegeName_${c.id}">${esc(c.name)}</span> <span class="badge badge-teal" style="font-size:10px">${esc(c.abbreviation || '')}</span>
+              <button id="collegeEditButton_${c.id}" class="btn btn-secondary btn-xs" style="margin-left:6px" onclick="adminEditCollege(${c.id})" aria-label="Edit college name">✏️ Edit</button>
+            </div>
+            <div id="collegeNameEditor_${c.id}" style="display:none;margin-top:8px">
+              <label class="input-label" for="collegeNameInput_${c.id}">College name</label>
+              <input id="collegeNameInput_${c.id}" class="input-field" value="${esc(c.name)}" autocomplete="off">
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <button id="collegeNameSave_${c.id}" class="btn btn-primary btn-xs" onclick="adminSaveCollegeName(${c.id})">Save</button>
+                <button id="collegeNameCancel_${c.id}" class="btn btn-secondary btn-xs" onclick="adminCancelCollegeName(${c.id})">Cancel</button>
+              </div>
+            </div>
             <div class="text-xs text-muted">${c.city || ''} · ${c.province || ''}</div>
             <div class="badge ${c.is_active ? 'badge-green' : 'badge-amber'} mt-1">${c.is_active ? 'Active' : 'Inactive'}</div>
           </div>
@@ -4895,6 +4905,90 @@ async function adminColleges(token = window._adminRenderToken) {
         </div>
       </div>`).join('') || '<div class="card"><p class="text-muted">No colleges added yet.</p></div>'}`;
 }
+
+
+
+function adminEditCollege(id) {
+  if (!window.currentUser?.is_admin) return showToast('Only admins can edit college names');
+  const editor = document.getElementById(`collegeNameEditor_${id}`);
+  const name = document.getElementById(`collegeNameInput_${id}`);
+  if (!editor || !name) return;
+  editor.style.display = 'block';
+  document.getElementById(`collegeEditButton_${id}`).style.display = 'none';
+  name.focus();
+  name.select();
+}
+window.adminEditCollege = adminEditCollege;
+
+
+
+function adminCancelCollegeName(id) {
+  const editor = document.getElementById(`collegeNameEditor_${id}`);
+  const name = document.getElementById(`collegeNameInput_${id}`);
+  if (!editor || !name) return;
+  name.value = document.getElementById(`collegeName_${id}`).textContent;
+  editor.style.display = 'none';
+  document.getElementById(`collegeEditButton_${id}`).style.display = '';
+}
+window.adminCancelCollegeName = adminCancelCollegeName;
+
+
+
+async function adminSaveCollegeName(id) {
+  if (!window.currentUser?.is_admin) return showToast('Only admins can edit college names');
+  const input = document.getElementById(`collegeNameInput_${id}`);
+  const saveButton = document.getElementById(`collegeNameSave_${id}`);
+  if (!input || !saveButton) return;
+  const name = input.value.trim();
+  if (!name) {
+    input.focus();
+    return showToast('College name cannot be empty');
+  }
+
+  const previousName = document.getElementById(`collegeName_${id}`).textContent;
+  if (name === previousName) {
+    adminCancelCollegeName(id);
+    return;
+  }
+
+  saveButton.disabled = true;
+  try {
+    const duplicate = await db(
+      sb.from('colleges').select('id').eq('name', name).neq('id', id).limit(1),
+      'College name check failed'
+    );
+    if (duplicate.error) {
+      showToast(`Could not check college name: ${duplicate.error.message}`);
+      return;
+    }
+    if (duplicate.data?.length) {
+      input.focus();
+      return showToast('A college with this name already exists');
+    }
+
+    const result = await db(
+      sb.from('colleges').update({ name }).eq('id', id).select('id,name').maybeSingle(),
+      'College name update failed'
+    );
+    if (result.error) {
+      if (result.error.code === '23505') showToast('A college with this name already exists');
+      else showToast(`Could not save college name: ${result.error.message}`);
+      return;
+    }
+    if (!result.data) {
+      showToast('College name was not updated. Check your admin access and try again.');
+      return;
+    }
+
+    cacheClear('colleges');
+    document.getElementById(`collegeName_${id}`).textContent = result.data.name;
+    adminCancelCollegeName(id);
+    showToast('College name updated ✓');
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+window.adminSaveCollegeName = adminSaveCollegeName;
 
 
 

@@ -6,6 +6,7 @@
 .admin-row-left{flex:1;min-width:0}
 .admin-row-actions{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
 .admin-row-actions .btn{width:auto}
+.quiz-question-preview{font-weight:500}
 .admin-tab-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
 .upload-area{border:2px dashed var(--border);border-radius:var(--radius-lg);padding:20px;text-align:center;cursor:pointer;transition:all var(--transition);color:var(--ink-4)}
 .upload-area:hover{border-color:var(--gold-400);background:var(--surface-3);color:var(--gold-700)}
